@@ -251,6 +251,11 @@ class Track:
     # "timing" 16 offsets in ms, one per 16th of the bar (+ late / - early), "accent" 16 velocity offsets,
     # "gate" note-length multiplier, "humanize" {"ms": n, "vel": n, "seed": n}.
     groove: dict = field(default_factory=dict)
+    # A Serum 2 preset (name, words from it, or a .SerumPreset path) to play this track's notes. The part is rendered
+    # through the real plug-in offline and reaches Live as audio; serum_params sets Serum parameters by name
+    # ({"macro_1": 60, "filter_1_freq_hz": 900}) — see `ableton-use serum params`.
+    serum: str | None = None
+    serum_params: dict = field(default_factory=dict)
     # Parameters of the track's instrument by displayed value, e.g. Simpler {"Ve Attack": 4, "Ve Release": 60, "Vol < Vel": 70}
     instrument_params: dict = field(default_factory=dict)
 
@@ -280,7 +285,8 @@ class Track:
                    color=d.get("color"), mute=bool(d.get("mute", False)), sample=d.get("sample"),
                    sample_root=None if d.get("sample_root") is None else float(d["sample_root"]),
                    audio=bool(d.get("audio", False)), effects=[dict(e) for e in d.get("effects", [])],
-                   groove=dict(d.get("groove") or {}), instrument_params=dict(d.get("instrument_params") or {}))
+                   groove=dict(d.get("groove") or {}), instrument_params=dict(d.get("instrument_params") or {}),
+                   serum=d.get("serum"), serum_params=dict(d.get("serum_params") or {}))
 
 
 @dataclass
@@ -646,6 +652,8 @@ class Song:
                     errs.append(f"track {t.name}: {e['device']} sidechain source {e['sidechain']!r} is not a track")
                 elif e.get("sidechain") == t.name:
                     errs.append(f"track {t.name}: {e['device']} cannot be sidechained from its own track")
+            if t.serum and (t.sample or t.audio):
+                errs.append(f"track {t.name}: a Serum track cannot also have sample= or audio=True")
             if t.sample and not t.is_drum and t.sample_root is None:
                 errs.append(f"track {t.name}: melodic sample needs sample_root (run `ableton-use sample ... --oneshot` to detect it)")
             if t.sample and self.base_dir is not None and not self.resolve(t.sample).exists():

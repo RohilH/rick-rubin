@@ -27,3 +27,4 @@ creative freedom, and render it into Ableton Live.
   the Control Surface re-selected.
 - Remote-script code must stay Python 3.7 compatible.
 - Tests: `.venv/bin/pytest -q`. The generator in `tests/fixture_songs.py` is test data only.
+- Serum 2 is hosted in-process (`ableton_use/serum.py`, via pedalboard): a `.SerumPreset` is converted to plug-in state (same XferJson/zstd/CBOR container; header hash = MD5 of the zstd block). Do not write files into `~/Library` from this project without David's say-so.

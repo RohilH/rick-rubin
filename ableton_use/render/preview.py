@@ -258,6 +258,12 @@ def render_preview(song: Song, out_path: str | Path, sr: int = SR, stems_dir: st
         buf = np.zeros(total, dtype=np.float32)
         mine = [c for c in clips if c.track == trk.name]
         env_pts = []
+        if trk.serum and mine:                               # the real plug-in, rendered offline
+            from ..samples import _resample, read_audio
+            from ..serum import track_stem
+            s_sr, s_x = read_audio(track_stem(song, trk, clips))
+            stem = _resample(s_x, s_sr, sr).mean(axis=1).astype(np.float32)[:total]
+            buf[: len(stem)] += stem
         for c in mine:
             if c.audio:
                 data = smp.get(c.audio)
@@ -267,7 +273,7 @@ def render_preview(song: Song, out_path: str | Path, sr: int = SR, stems_dir: st
                     seg = data[a: a + int(ln * spb * sr)]
                     j = min(total, i + len(seg))
                     buf[i:j] += seg[: j - i]
-            for n in c.notes:
+            for n in ([] if trk.serum else c.notes):
                 t0 = c.start + n.start
                 i = int(t0 * spb * sr)
                 if trk.sample:
@@ -290,7 +296,7 @@ def render_preview(song: Song, out_path: str | Path, sr: int = SR, stems_dir: st
                 if param in ("filter", "cutoff"):
                     for (b0, v0), (b1, v1) in zip(pts, pts[1:]):
                         env_pts.append(((c.start + b0, v0), (c.start + b1, v1)))
-        synth_tone = not trk.is_drum and not trk.sample and not trk.audio
+        synth_tone = not trk.is_drum and not trk.sample and not trk.audio and not trk.serum
         if synth_tone or env_pts:
             # synths get a role-typical tone filter; samples are only filtered by automation (an Auto Filter in Live)
             base = BASE_CUTOFF.get(trk.role, 16000.0) if synth_tone else 18000.0

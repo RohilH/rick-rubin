@@ -616,3 +616,58 @@ def test_init_copies_the_scaffold_and_audition_compares(tmp_path, capsys):
     assert main(["audition", str(root), "samples/raw/low.wav", "samples/raw/click.wav"]) == 0
     out = capsys.readouterr().out
     assert "| low.wav | 1.00 |" in out and "A0 55 Hz" in out and "sustains" in out and "| click.wav | 0.25 |" in out
+
+
+# ---------------------------------------------------------------- Serum hosted in-process (needs the plug-in)
+_SERUM_OK = Path("/Library/Audio/Plug-Ins/VST3/Serum2.vst3").exists()
+
+
+@pytest.mark.skipif(not _SERUM_OK, reason="Serum 2 VST3 not installed")
+def test_serum_track_is_rendered_through_the_plugin(tmp_path):
+    pytest.importorskip("pedalboard")
+    from ableton_use import serum
+    presets = serum.catalog()
+    if not presets:
+        pytest.skip("no Serum presets installed")
+    host = serum.SerumHost.get()
+    # state container round trip, and a preset really changes the instrument
+    comp, cont = serum.split_state(host.init_state)
+    assert serum.split_state(serum.join_state(comp, cont)) == (comp, cont)
+    assert serum._unpack(comp)[0]["component"] == "processor" and serum._unpack(cont)[0]["component"] == "controller"
+    name = host.load(presets[0].path)
+    assert serum._unpack(serum.split_state(bytes(host.plugin.raw_state))[1])[0]["presetName"] == name
+    with pytest.raises(KeyError, match="no parameter"):
+        host.set({"definitely_not_a_param": 1})
+    a = host.render([(48, 0.0, 0.5, 100)], 1.0)
+    assert a.shape == (44100, 2) and np.abs(a).max() > 0.001
+
+    song = Song("Serum Test", bpm=120, key="A minor")
+    kick = song.add_track("Kick", "kick")
+    syn = song.add_track("Synth", "lead", serum=str(presets[0].path), serum_params={"macro_1": 30}, sidechain=True)
+    four = song.pattern("four", kick, "x...x...x...x...")
+    riff = song.pattern("riff", syn, ["1.1 A2 0.5; 2.3 C3 0.5; 3.1 E3 1"])
+    song.add_section("a", 4, kind="drop", parts={kick: four, syn: riff}, automation={syn: {"filter": [0.3, 1.0]}})
+    song.add_section("b", 4, kind="drop", parts={kick: four})
+    p = Project.create(tmp_path / "trk", song)
+    song = p.load()
+    assert "Serum 2 preset" in pack(song) and "macro_1=30" in pack(song)
+    r = render_preview(song, tmp_path / "prev.wav", stems_dir=tmp_path / "stems")
+    _, st = read_audio(r.stems["Synth"])
+    half = len(st) // 2 - SR
+    assert np.abs(st[:half]).max() > 0.001 and np.abs(st[half + 3 * SR:]).max() < np.abs(st[:half]).max() * 0.2   # plays in section a only
+    stems = list((p.root / "serum").glob("Synth.*.wav"))
+    assert len(stems) == 1
+    _, sx = read_audio(stems[0])
+    assert abs(len(sx) / SR - song.duration_s) < 0.01                       # exactly the song's length
+    render_preview(song, tmp_path / "prev2.wav")
+    assert list((p.root / "serum").glob("Synth.*.wav")) == stems           # cached, not re-rendered
+    srv = FakeLiveServer()
+    with LiveBridge(port=srv.port) as b:
+        rep = push_song(song, b)
+    live = {t.name: t for t in srv.song.tracks}
+    assert live["Synth"].is_audio and "rendered to audio" in rep.tracks["Synth"]["instrument"] and not rep.warnings
+    clips = live["Synth"].arrangement_clips
+    assert len(clips) == 1 and clips[0].start_time == 0.0 and abs(clips[0].length - 32) < 0.01
+    assert clips[0].file_path.endswith(".baked.wav") and [d.name for d in live["Synth"].devices] == ["Compressor"]
+    song.track("Synth").sample = "x.wav"
+    assert any("cannot also have sample" in e for e in song.validate())

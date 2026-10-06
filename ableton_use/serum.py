@@ -220,3 +220,192 @@ def sheet(path: str | Path) -> str:
     if glob:
         L += ["", "## Global", "- " + glob]
     return "\n".join(L) + "\n"
+
+
+# ============================================================================ playing Serum without its window
+# Serum's plug-in state uses the same container as its preset files (an XferJson header whose
+# "hash" is the MD5 of the zstd block, then a zstd-compressed CBOR tree), split in two: a
+# "processor" tree with every module's parameters and a "controller" tree with UI state and the
+# preset's name. So a .SerumPreset can be turned into a plug-in state directly. Hosting the VST3
+# in-process (pedalboard) then gives a Serum that loads any preset, takes any of its ~2600
+# parameters by name, and renders MIDI to audio offline — no Live, no clicking.
+VST3_PATH = Path("/Library/Audio/Plug-Ins/VST3/Serum2.vst3")
+_JUCE64 = ".ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+"
+
+
+def _juce_decode(s: str) -> bytes:
+    n, _, data = s.partition(".")
+    bits = 0
+    for i, ch in enumerate(data):
+        bits |= _JUCE64.index(ch) << (6 * i)
+    return (bits & ((1 << (8 * int(n))) - 1)).to_bytes(int(n), "little")
+
+
+def _juce_encode(data: bytes) -> str:
+    bits = int.from_bytes(data, "little")
+    return f"{len(data)}." + "".join(_JUCE64[(bits >> (6 * i)) & 63] for i in range((len(data) * 8 + 5) // 6))
+
+
+def _unpack(blob: bytes) -> tuple[dict, dict]:
+    import cbor2
+    import zstandard
+    n = struct.unpack("<Q", blob[9:17])[0]
+    return json.loads(blob[17:17 + n]), cbor2.loads(zstandard.ZstdDecompressor().decompress(blob[17 + n + 8:], max_output_size=200_000_000))
+
+
+def _pack(meta: dict, tree: dict) -> bytes:
+    import hashlib
+    import cbor2
+    import zstandard
+    raw = cbor2.dumps(tree)
+    z = zstandard.ZstdCompressor(level=3).compress(raw)
+    j = json.dumps(dict(meta, hash=hashlib.md5(z).hexdigest()), separators=(",", ":")).encode()
+    return MAGIC + struct.pack("<Q", len(j)) + j + struct.pack("<II", len(raw), 2) + z
+
+
+def split_state(raw_state: bytes) -> tuple[bytes, bytes]:
+    """(processor blob, controller blob) from a hosted Serum's raw VST3 state."""
+    import re
+    xml = raw_state[8:].split(b"\x00")[0].decode()
+    return (_juce_decode(re.search(r"<IComponent>(.*?)</IComponent>", xml).group(1)),
+            _juce_decode(re.search(r"<IEditController>(.*?)</IEditController>", xml).group(1)))
+
+
+def join_state(comp: bytes, cont: bytes) -> bytes:
+    xml = ('<?xml version="1.0" encoding="UTF-8"?> <VST3PluginState><IComponent>' + _juce_encode(comp) +
+           "</IComponent><IEditController>" + _juce_encode(cont) + "</IEditController></VST3PluginState>").encode()
+    return b"VC2!" + struct.pack("<I", len(xml) + 1) + xml + b"\x00"
+
+
+def preset_state(preset: str | Path, init_state: bytes) -> bytes:
+    """The plug-in state that makes Serum sound like `preset`, built on a fresh instance's own state."""
+    comp0, cont0 = split_state(init_state)
+    (cm, ct), (km, kt) = _unpack(comp0), _unpack(cont0)
+    pm, pt = read_preset(preset)
+    comp_tree = {k: v for k, v in pt.items() if k in ct or k not in kt}
+    for k in ("fileType", "presetAuthor", "presetDescription", "presetName"):
+        comp_tree.pop(k, None)
+    comp_tree["component"] = "processor"
+    cont_tree = dict(kt)
+    cont_tree.update({k: v for k, v in pt.items() if k in kt})
+    cont_tree["component"] = "controller"
+    ver = {"version": pm.get("version", cm.get("version")), "productVersion": pm.get("productVersion", cm.get("productVersion"))}
+    names = {"presetName": pm.get("presetName", Path(preset).stem), "presetAuthor": pm.get("presetAuthor", ""),
+             "presetDescription": pm.get("presetDescription", "")}
+    return join_state(_pack(dict(cm, **ver), comp_tree), _pack(dict(km, **ver, **names), cont_tree))
+
+
+class SerumHost:
+    """One in-process Serum 2. Loading the plug-in takes a few seconds, so reuse the instance (`SerumHost.get()`)."""
+    _shared: "SerumHost | None" = None
+
+    def __init__(self, vst3: str | Path = VST3_PATH):
+        try:
+            import pedalboard
+        except ImportError as e:  # pragma: no cover
+            raise RuntimeError('playing Serum needs: pip install "ableton-use[serum]"') from e
+        if not Path(vst3).exists():
+            raise FileNotFoundError(f"Serum 2 VST3 not found at {vst3}")
+        self.plugin = pedalboard.load_plugin(str(vst3), plugin_name="Serum 2")
+        self.init_state = bytes(self.plugin.raw_state)
+        self.loaded: str | None = None
+
+    @classmethod
+    def get(cls) -> "SerumHost":
+        if cls._shared is None:
+            cls._shared = cls()
+        return cls._shared
+
+    def load(self, preset: str | Path | None, root: str | Path | None = None) -> str:
+        """Load a preset by name, words or path (None = the init patch). Returns the preset's name."""
+        if preset is None:
+            self.plugin.raw_state = self.init_state
+            self.loaded = None
+            return "- Init -"
+        path = find(str(preset), root)
+        self.plugin.raw_state = preset_state(path, self.init_state)
+        self.loaded = str(path)
+        return read_meta(path).get("presetName") or path.stem
+
+    def params(self, search: str | None = None) -> list[tuple[str, str, tuple]]:
+        """(name, current value as shown, (min, max)) for parameters whose name contains `search`."""
+        out = []
+        for name, prm in self.plugin.parameters.items():
+            if search and search.lower() not in name.lower():
+                continue
+            out.append((name, str(prm.string_value).strip(), (prm.min_value, prm.max_value)))
+        return out
+
+    def set(self, values: dict | None) -> None:
+        """Set parameters by name, e.g. {"macro_1": 60, "filter_1_freq_hz": 800, "env_1_release": 0.3}."""
+        for k, v in (values or {}).items():
+            if k not in self.plugin.parameters:
+                near = [n for n in self.plugin.parameters if k.split("_")[0] in n][:12]
+                raise KeyError(f"Serum has no parameter {k!r}" + (f"; similar: {', '.join(near)}" if near else ""))
+            setattr(self.plugin, k, v)
+
+    def render(self, notes: list[tuple[int, float, float, int]], seconds: float, sr: int = 44100):
+        """Audio (n, 2) for notes [(midi pitch, start_s, length_s, velocity)]. Pitches are Ableton's numbers (C3 = 60)."""
+        import numpy as np
+        from mido import Message
+        ev = []
+        for pitch, start, dur, vel in notes:
+            ev.append((max(0.0, start), 1, Message("note_on", note=int(pitch), velocity=int(max(1, min(127, vel))))))
+            ev.append((max(0.0, start + dur), 0, Message("note_off", note=int(pitch))))
+        msgs = []
+        for t, _, m in sorted(ev, key=lambda e: (e[0], e[1])):          # at equal times, note-offs first
+            msgs.append(m.copy(time=t))
+        audio = self.plugin(msgs, duration=float(seconds), sample_rate=sr, reset=True)
+        return np.ascontiguousarray(audio.T, dtype=np.float32)
+
+
+def render_preset(preset: str | Path | None, notes: list[tuple[int, float, float, int]], seconds: float,
+                  params: dict | None = None, sr: int = 44100, root: str | Path | None = None):
+    """Load a preset, set parameters, render the notes. Returns (preset name, audio (n, 2))."""
+    host = SerumHost.get()
+    name = host.load(preset, root)
+    host.set(params)
+    return name, host.render(notes, seconds, sr)
+
+
+def write_vstpreset(preset: str | Path, dst: str | Path, params: dict | None = None) -> Path:
+    """A standard VST3 preset file carrying this Serum preset — for hosts that load .vstpreset files."""
+    host = SerumHost.get()
+    host.load(preset)
+    host.set(params)
+    comp, cont = split_state(bytes(host.plugin.raw_state))
+    head = 48
+    lst = b"List" + struct.pack("<i", 2) + b"Comp" + struct.pack("<qq", head, len(comp)) + b"Cont" + struct.pack("<qq", head + len(comp), len(cont))
+    Path(dst).write_bytes(b"VST3" + struct.pack("<i", 1) + b"56534558667350736572756D20320000" + struct.pack("<q", head + len(comp) + len(cont)) + comp + cont + lst)
+    return Path(dst)
+
+
+def track_stem(song, track, clips) -> Path:
+    """The whole song's worth of one Serum track, rendered through the plug-in: every note of the
+    track's clips, the preset named in `track.serum`, parameters from `track.serum_params`. The file
+    is exactly the song's length and cached in <project>/serum/ by content, so unchanged tracks
+    are not rendered twice."""
+    import hashlib
+    import numpy as np
+    from .samples import write_wav24
+    spb = 60.0 / song.bpm
+    notes = sorted((n.pitch, round((c.start + n.start) * spb, 6), round(n.dur * spb, 6), n.vel)
+                   for c in clips if c.track == track.name for n in c.notes)
+    path = find(track.serum)
+    sig = hashlib.sha1(json.dumps([str(path), path.stat().st_mtime, track.serum_params, notes, song.bpm, song.total_bars],
+                                  sort_keys=True, default=str).encode()).hexdigest()[:10]
+    base = Path(song.base_dir) if song.base_dir is not None else Path(".")
+    out = base / "serum" / f"{track.name}.{sig}.wav"
+    if out.exists():
+        return out
+    sr = 44100
+    total = song.total_bars * 4 * spb
+    _, audio = render_preset(path, notes, total, track.serum_params, sr)
+    audio = audio[: int(round(total * sr))]
+    f = int(0.005 * sr)
+    audio[-f:] *= np.linspace(1, 0, f, dtype=np.float32)[:, None]
+    out.parent.mkdir(parents=True, exist_ok=True)
+    for old in out.parent.glob(f"{track.name}.*.wav"):               # one current stem per track
+        old.unlink()
+    write_wav24(out, sr, audio)
+    return out

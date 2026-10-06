@@ -169,6 +169,8 @@ def pack(song: Song, include_patterns: bool = True, bars: tuple[int, int] | None
         flags = [f for f, on in (("sidechain", t.sidechain), ("swing", t.swing), ("muted", t.mute)) if on]
         if t.audio:
             inst = "audio track"
+        elif t.serum:
+            inst = f"Serum 2 preset '{t.serum}' (rendered through the plug-in)" + (" " + ", ".join(f"{k}={v}" for k, v in t.serum_params.items()) if t.serum_params else "")
         elif t.sample:
             inst = f"Simpler '{t.sample}'" + (f" root {pname(round(t.sample_root))} ({t.sample_root:.2f})" if t.sample_root is not None else " one-shot")
         else:

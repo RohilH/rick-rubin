@@ -185,9 +185,23 @@ Workflow:
 
 **Stereo image: read the width.** `ableton-use width <dir> [file]` is a correlation meter and imager in table form: correlation (+1 mono, 0 very wide, negative = out of phase), side % (the share of energy that disappears in mono), L/R balance, loudness lost in mono, and side %/correlation in four bands — for the whole file and per section. Rules it checks: low end centred below 150 Hz, no negative correlation, under 3 LU lost in mono, no lean over 1.5 dB. Run it on samples before using them (wide risers and loops are common) and on audio captured from Live. The offline preview is built from mono stems, so its width only reflects panning.
 
-**Serum 2: read the patch.** `ableton-use serum list [--folder Pad] [--tag Poly] [--search "warm"]` searches the installed presets by folder, tag and words in the name or description; `ableton-use serum show "<name>"` prints a patch sheet — oscillators and their wavetables, filters, envelopes and LFOs, the FX rack, what each of the eight macros is wired to, and global settings. Only values that differ from Serum's init patch are listed. Read the sheet instead of asking for a screenshot of the plug-in: it says which macro opens the filter or brings in the reverb, which is what you need to suggest a preset or tell the user what to automate. What it cannot do yet is load the preset into the plug-in — tell the user which preset to pick in Serum's browser, or have them save it as a Live preset.
+**Serum 2 is a full instrument here — find, read, hear, play.** The library hosts the real Serum 2 plug-in in-process, loads any preset into it from the preset file, sets any of its ~2600 parameters by name, and renders notes to audio offline. Nothing needs Live or Serum's window.
 
-Plug-ins: an `instrument` name is looked up in Live's instruments and sounds, then your User Library, then VST/AU plug-ins, so `["Serum 2"]` loads Serum. Live exposes no plug-in presets or parameters to scripts, so it arrives on its default patch; save patches as Live presets or racks in the User Library to load them by name.
+- **Find:** `ableton-use serum list [--folder Bass] [--tag Mono] [--search "reese"]` — folders, tags and words from the name/description.
+- **Read:** `ableton-use serum show "<preset>"` — a patch sheet: oscillators and wavetables, filters, envelopes/LFOs, FX, what each of the eight macros is wired to. `ableton-use serum params "<preset>" --search macro` (or `filter_1`, `env_1`, `a_`…) lists parameter names, current values and ranges.
+- **Hear (by measurement):** `ableton-use serum render "<preset>" --note F0 --note F1 --secs 0.5 [--set macro_1=80] --out samples/raw/x.wav` renders it and prints its `audition` row (level, attack, decay, spectrum, pitch, width). Render several presets and `audition` them together; that is how you choose a patch. Mind the patch's own octave setting (the sheet shows it): play it in the register you will write in.
+- **Play:** give a track `serum="<preset>"` (and optionally `serum_params={"macro_1": 60, "filter_1_freq_hz": 900}`) and write its notes like any other part:
+
+  ```python
+  bass = song.add_track("Bass", "bass", serum="BS Gunman Reese", serum_params={"macro_1": 35},
+                        volume_db=-9, effects=[{"device": "Compressor", "sidechain": "Kick", "params": {"Threshold": -30, "Ratio": 5}}])
+  ```
+
+  The part is rendered through the plug-in (cached in `<project>/serum/`), so `eval`, `view`, `width` and the preview all measure Serum's real sound, and `push` places it in Live as one audio clip on an audio track — with the track's effects, sidechain and volume live in Live, and any `filter`/`volume` automation rendered in. Changing notes, preset or parameters re-renders on the next build.
+- **Explore with it** like with samples: several presets per part, several macro settings per preset, compared by `audition` and in context.
+- Limits: it reaches Live as audio, not as an editable Serum device (Live exposes no way to script a plug-in's preset); one preset and one set of parameter values per track (no parameter automation over time yet — use two tracks, or `filter`/`volume` automation on the result); macOS path of the VST3 is assumed.
+
+Plug-ins: an `instrument` name is looked up in Live's instruments and sounds, then your User Library, then VST/AU plug-ins, so `instrument="Serum 2"` puts a live Serum device on the track — but on its init patch, since Live exposes no plug-in presets or parameters to scripts. To actually use a Serum sound, use `serum=` as above.
 
 Presets are not samples: nothing here loads a third-party synth preset. Use a one-shot in Simpler, or name a Live instrument in `instrument`.
 

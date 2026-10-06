@@ -125,8 +125,12 @@ def main(argv: list[str] | None = None) -> int:
                    help="place piece N yourself, e.g. --move 3=2.3.1 (bar.beat.sixteenth); repeatable")
 
     s = sub.add_parser("serum", help="read Serum 2 presets: `serum list` to find one, `serum show NAME` for its patch sheet")
-    s.add_argument("action", choices=["list", "show"])
-    s.add_argument("name", nargs="?", help="show: preset name, words from it, or a .SerumPreset path")
+    s.add_argument("action", choices=["list", "show", "params", "render"])
+    s.add_argument("name", nargs="?", help="show/params/render: preset name, words from it, or a .SerumPreset path")
+    s.add_argument("--note", action="append", default=[], help="render: note(s) to play, e.g. --note C1 --note G1 (default C2); Ableton naming")
+    s.add_argument("--secs", type=float, default=1.0, help="render: how long each note is held")
+    s.add_argument("--set", action="append", default=[], metavar="PARAM=VALUE", help="render/params: set a Serum parameter first, e.g. --set macro_1=80")
+    s.add_argument("--out", help="render: where to write the wav (e.g. <project>/samples/raw/reese_C1.wav)")
     s.add_argument("--search", help="list: words that must appear in the name, description, author or folder")
     s.add_argument("--tag", help="list: Wavetable | Poly | Mono | Multisample | Sample | Granular | Spectral | Arp | Clip")
     s.add_argument("--folder", help="list: e.g. Pads, Bass, Leads")
@@ -297,6 +301,34 @@ def main(argv: list[str] | None = None) -> int:
             if not a.name:
                 ap.error("serum show needs a preset name")
             print(serum.sheet(serum.find(a.name, a.root)))
+        elif a.action in ("params", "render"):
+            if not a.name:
+                ap.error(f"serum {a.action} needs a preset name")
+            vals = {}
+            for kv in a.set:
+                k, _, v = kv.partition("=")
+                vals[k] = float(v) if v.replace(".", "", 1).replace("-", "", 1).isdigit() else v
+            host = serum.SerumHost.get()
+            name = host.load(a.name, a.root)
+            host.set(vals)
+            if a.action == "params":
+                rows = host.params(a.search)
+                for n, v, (lo, hi) in rows:
+                    print(f"{n:<34} {v:<22} range {lo:g}..{hi:g}")
+                print(f"{len(rows)} parameters of {name!r}" + (f" matching {a.search!r}" if a.search else " — narrow with --search (macro, filter_1, env_1, a_, fx_ ...)"))
+            else:
+                from .samples import audition_table, write_wav24
+                from .theory import note as parse_note
+                if not a.out:
+                    ap.error("serum render needs --out FILE.wav")
+                pitches = [parse_note(n) for n in (a.note or ["C2"])]
+                tail = 1.5
+                notes = [(p_, i * (a.secs + tail), a.secs, 100) for i, p_ in enumerate(pitches)]
+                audio = host.render(notes, len(pitches) * (a.secs + tail))
+                Path(a.out).parent.mkdir(parents=True, exist_ok=True)
+                write_wav24(a.out, 44100, audio)
+                print(f"{name!r} playing {' '.join(a.note or ['C2'])} -> {a.out}")
+                print(audition_table([a.out]))
         else:
             rows = serum.catalog(a.root, a.search or a.name, a.tag, a.folder)
             for r in rows:

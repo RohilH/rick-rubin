@@ -145,11 +145,13 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
     index: dict[str, int] = {}
     for t in song.tracks:
         say(f"track {t.name}")
-        i = bridge.call("create_audio_track" if t.audio else "create_midi_track", name=t.name, color_index=t.color)
+        i = bridge.call("create_audio_track" if (t.audio or t.serum) else "create_midi_track", name=t.name, color_index=t.color)
         index[t.name] = i
         info: dict[str, Any] = {"index": i}
         if t.audio:
             info["instrument"] = "audio track"
+        elif t.serum:
+            info["instrument"] = f"Serum 2 '{t.serum}' (rendered to audio)"
         elif t.sample:
             path = song.resolve(t.sample)
             if not path.exists():
@@ -166,7 +168,7 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
             info["instrument"] = r.get("loaded")
             if not r.get("loaded"):
                 rep.warnings.append(f"{t.name}: none of {t.instrument} found in the Live browser — load an instrument manually")
-        if t.instrument_params and not t.audio:
+        if t.instrument_params and not t.audio and not t.serum:
             dev = "Simpler" if t.sample else (info.get("instrument") or "")
             try:
                 r = bridge.call("device", track=i, device=dev, params=t.instrument_params)
@@ -179,8 +181,20 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
     # tracks are appended at the end, so the indices returned above stay valid
 
     cmds = []
+    for t in song.tracks:
+        mine = [c for c in clips if c.track == t.name]
+        if t.serum and mine:
+            # one unwarped clip for the whole song: the part as Serum plays it, with any filter/volume moves rendered in
+            from ..serum import track_stem
+            stem = track_stem(song, t, clips)
+            regions = [(c.start, {k: v for k, v in c.envelopes.items() if k in ("filter", "cutoff", "volume")}) for c in mine]
+            path = _baked_stem(song, stem, [(st, env) for st, env in regions if env])
+            cmds.append(("create_audio_clip", {"track": index[t.name], "path": str(path), "start": 0.0, "name": f"Serum · {t.serum}"}))
+            rep.notes += sum(len(c.notes) for c in mine)
     for c in clips:
         trk = song.track(c.track)
+        if trk.serum:
+            continue
         if c.audio:
             # Live drops envelopes when an audio clip is copied to the arrangement, so filter and volume moves
             # on loops are rendered into the audio itself (the same curves the preview uses)
@@ -296,6 +310,36 @@ def _segment_file(song: Song, rel: str, off: float, ln: float, env: dict | None 
         seg[-f:] *= ramp[::-1]
         out.parent.mkdir(parents=True, exist_ok=True)
         write_wav24(out, sr, seg)
+    return out
+
+
+def _baked_stem(song: Song, stem: Path, regions: list[tuple[float, dict]]) -> Path:
+    """`stem` with section automation rendered in. regions: (start beat, {param: [(beat in clip, value 0..1), ...]})."""
+    if not regions:
+        return stem
+    import hashlib
+    from ..render.preview import _apply_lowpass
+    from ..samples import read_audio, write_wav24
+    out = stem.with_name(stem.stem + "." + hashlib.sha1(json.dumps(regions, sort_keys=True).encode()).hexdigest()[:8] + ".baked.wav")
+    if out.exists() and out.stat().st_mtime >= stem.stat().st_mtime:
+        return out
+    sr, x = read_audio(stem)
+    x = x.copy()
+    spb = 60.0 / song.bpm
+    for start, env in regions:
+        for prm, pts in env.items():
+            pts = sorted(pts)
+            a, b = int((start + pts[0][0]) * spb * sr), min(len(x), int((start + pts[-1][0]) * spb * sr))
+            if b - a < 16:
+                continue
+            t = np.arange(b - a) / sr / spb + pts[0][0]
+            ctrl = np.interp(t, [q[0] for q in pts], [q[1] for q in pts])
+            if prm == "volume":
+                x[a:b] *= ctrl[:, None].astype(np.float32)
+            else:
+                cutoff = 60.0 * (18000.0 / 60.0) ** ctrl
+                x[a:b] = np.stack([_apply_lowpass(x[a:b, ch], cutoff, sr) for ch in range(x.shape[1])], axis=1)
+    write_wav24(out, sr, x)
     return out
 
 

@@ -132,6 +132,7 @@ ableton-use notes my-track samples/vocal.wav         # the notes a sample sings:
 ableton-use width my-track [file]                    # stereo image as numbers: correlation, side %, mono loss, per band
 ableton-use serum list --folder Pad                  # search installed Serum 2 presets
 ableton-use serum show "<preset>"                    # a preset as a text patch sheet
+ableton-use serum render "<preset>" --note F1 --out x.wav   # play a preset through the real plug-in, offline
 ```
 
 These exist so an agent can read what a producer would hear or see on a meter or a plug-in window. `transcribe` needs
@@ -165,7 +166,7 @@ ableton_use/
   render/preview.py  numpy sketch synth with sidechain + filter automation
   live/client.py  bridge client + push_song()
   live/remote_script/AbletonUse/  Live remote script (TCP JSON bridge; handlers testable without Live)
-  serum.py        Serum 2 preset catalog and text patch sheets
+  serum.py        Serum 2: preset catalog, patch sheets, and the plug-in hosted in-process (load presets, render parts)
   transcribe.py   syllable-level alignment of vocals to the grid, and re-timing
   pitch.py        the notes inside a single-voice sample
   samples.py      sample import: pitch detection, tempo-conforming loops, 24-bit WAV io
