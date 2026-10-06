@@ -111,7 +111,9 @@ ableton-use transcribe my-track samples/vocal.wav    # which word falls on which
 ableton-use width my-track [file]                    # stereo image as numbers: correlation, side %, mono loss, per band
 ```
 
-Both exist so an agent can read what a producer would hear or see on a meter. `transcribe` needs
+ableton-use serum list --folder Pad / serum show "<preset>"   reads Serum 2 presets as a text patch sheet
+
+These exist so an agent can read what a producer would hear or see on a meter or a plug-in window. `transcribe` needs
 `pip install "ableton-use[transcribe]"`; its result is cached next to the sample and printed in `score.md`.
 
 ## What gets built in Live
@@ -142,6 +144,7 @@ ableton_use/
   render/preview.py  numpy sketch synth with sidechain + filter automation
   live/client.py  bridge client + push_song()
   live/remote_script/AbletonUse/  Live remote script (TCP JSON bridge; handlers testable without Live)
+  serum.py        Serum 2 preset catalog and text patch sheets
   transcribe.py   words of a vocal sample on the song grid
   samples.py      sample import: pitch detection, tempo-conforming loops, 24-bit WAV io
   project.py      project folder, history/undo, project.md memory

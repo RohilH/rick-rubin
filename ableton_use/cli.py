@@ -99,6 +99,14 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("wav", nargs="?", help="file to analyse (default: live.wav if captured, else preview.wav); a sample path gets a whole-file report")
     s.add_argument("--bars", type=_bars, help="zoom in on a bar range of the mix")
 
+    s = sub.add_parser("serum", help="read Serum 2 presets: `serum list` to find one, `serum show NAME` for its patch sheet")
+    s.add_argument("action", choices=["list", "show"])
+    s.add_argument("name", nargs="?", help="show: preset name, words from it, or a .SerumPreset path")
+    s.add_argument("--search", help="list: words that must appear in the name, description, author or folder")
+    s.add_argument("--tag", help="list: Wavetable | Poly | Mono | Multisample | Sample | Granular | Spectral | Arp | Clip")
+    s.add_argument("--folder", help="list: e.g. Pads, Bass, Leads")
+    s.add_argument("--root", help="preset folder (default: Serum 2's own)")
+
     s = sub.add_parser("remember", help="append a session entry to project.md")
     s.add_argument("dir")
     for k in ("strategy", "decisions", "reasoning", "outstanding"):
@@ -212,6 +220,17 @@ def main(argv: list[str] | None = None) -> int:
         for w in words:
             print(f"{w.pos:<20} {w.off_ms:+6.0f}ms {w.start_s:6.2f}-{w.end_s:5.2f}s   {w.conf:.2f}  {w.text}")
         p.score()
+    elif a.cmd == "serum":
+        from . import serum
+        if a.action == "show":
+            if not a.name:
+                ap.error("serum show needs a preset name")
+            print(serum.sheet(serum.find(a.name, a.root)))
+        else:
+            rows = serum.catalog(a.root, a.search or a.name, a.tag, a.folder)
+            for r in rows:
+                print(f"{r.folder + '/' if r.folder else ''}{r.name}  [{', '.join(r.tags)}]" + (f"  — {r.description}" if r.description else ""))
+            print(f"{len(rows)} presets")
     elif a.cmd == "remember":
         Project(a.dir).remember(a.strategy, a.decisions, a.reasoning, a.outstanding)
         print("ok")

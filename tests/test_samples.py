@@ -321,3 +321,58 @@ def test_zoom_on_bars_and_tracks(sampled, capsys):
     assert "### hats" in p.score_path.read_text()          # score.md itself stays whole
     assert main(["eval", str(p.root), "--bars", "9-16", "--tracks", "Kick", "Bass"]) == 0
     assert "| groove[9-16] | groove |" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------- Serum 2 presets
+def test_serum_preset_sheet_and_catalog(tmp_path):
+    cbor2 = pytest.importorskip("cbor2")
+    zstandard = pytest.importorskip("zstandard")
+    import json
+    import struct
+    from ableton_use import serum
+
+    def write(path, name, tags, tree, desc=""):
+        meta = json.dumps({"fileType": "SerumPreset", "presetName": name, "presetAuthor": "me", "presetDescription": desc,
+                           "tags": tags + ["Preview"]}).encode()
+        body = zstandard.ZstdCompressor().compress(cbor2.dumps(tree))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(serum.MAGIC + struct.pack("<Q", len(meta)) + meta + struct.pack("<II", len(body), 2) + body)
+
+    tree = {
+        "Oscillator0": {"WTOsc0": {"plainParams": {"kParamTablePos": 128.4}, "relativePathToWT": "S2 Tables/Default Shapes.wav"},
+                        "SampleOsc0": {"plainParams": "default"}, "plainParams": {"kParamOctave": -2.0, "kParamUnison": 3.0}},
+        "Oscillator1": {"WTOsc1": {"plainParams": "default"}, "plainParams": "default"},
+        "Oscillator4": {"SubOsc4": {"plainParams": "default"}, "plainParams": {"kParamEnable": 1.0}},
+        "VoiceFilter0": {"plainParams": {"kParamEnable": 1.0, "kParamFreq": 0.49, "kParamType": "LH12"}},
+        "Env0": {"plainParams": {"kParamCurve1": 50.0, "kParamRelease": 0.8}}, "Env1": {"plainParams": {"kParamCurve1": 50.0}},
+        "LFO0": {"curveData": {}, "pathData": {}, "plainParams": {"kParamRate": 10.66}},
+        "FXRack0": {"FX": [{"FXReverb": {"plainParams": {"kParamType": "kHall", "kParamWet": 0.0}}, "type": 3}]},
+        "Macro0": {"name": "FILTER", "plainParams": {"kParamValue": 50.0}},
+        "ModSlot0": {"destModuleID": 0, "destModuleParamName": "kParamFreq", "destModuleTypeString": "VoiceFilter",
+                     "plainParams": {"kParamAmount": 29.4}, "source": [25, 0]},
+        "ModSlot1": {"destModuleID": 0, "destModuleParamName": "kParamFine", "destModuleTypeString": "Oscillator",
+                     "plainParams": {"kParamAmount": -12.0}, "source": [3, 0]},
+        "ModSlot2": {"plainParams": "default"},
+        "Global0": {"plainParams": {"kParamMonoToggle": 1.0}},
+    }
+    write(tmp_path / "Bass" / "Reese.SerumPreset", "BS Reese", ["Wavetable", "Mono"], tree, "growly")
+    write(tmp_path / "Pads" / "Warm.SerumPreset", "PD Warm Room", ["Wavetable", "Poly"], {}, "instant warmth")
+    (tmp_path / "Pads" / "junk.SerumPreset").write_bytes(b"nope")
+
+    assert [i.name for i in serum.catalog(tmp_path)] == ["BS Reese", "PD Warm Room"]
+    assert [i.name for i in serum.catalog(tmp_path, search="warm pad")] == ["PD Warm Room"]
+    assert [(i.name, i.folder, i.tags) for i in serum.catalog(tmp_path, tag="mono")] == [("BS Reese", "Bass", ["Wavetable", "Mono"])]
+    assert serum.find("reese", tmp_path).name == "Reese.SerumPreset"
+    with pytest.raises(FileNotFoundError):
+        serum.find("supersaw", tmp_path)
+    text = serum.sheet(serum.find("BS Reese", tmp_path))
+    assert "# BS Reese — Serum 2 preset" in text and 'tags: Wavetable, Mono · "growly"' in text
+    assert "- OSC A ON  wavetable 'Default Shapes' (TablePos 128); Octave -2, Unison 3" in text
+    assert "OSC B" not in text and "- SUB ON" in text
+    assert "- FILTER 1: Enable 1, Freq 0.49, Type LH12" in text
+    assert "- ENV 1: Release 0.8" in text and "ENV 2" not in text and "- LFO 1: Rate 10.7" in text
+    assert "- Reverb: Type Hall, Wet 0" in text
+    assert "- Macro 1 'FILTER' at 50% → VoiceFilter0.Freq +29" in text
+    assert "- source #3 → Oscillator0.Fine -12" in text and text.count("source #") == 1
+    assert "- MonoToggle 1" in text
+    assert main(["serum", "list", "--root", str(tmp_path), "--folder", "Bass"]) == 0
