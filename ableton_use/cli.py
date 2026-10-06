@@ -314,7 +314,8 @@ def main(argv: list[str] | None = None) -> int:
             if a.action == "params":
                 rows = host.params(a.search)
                 for n, v, (lo, hi) in rows:
-                    print(f"{n:<34} {v:<22} range {lo:g}..{hi:g}")
+                    rng = f"range {lo:g}..{hi:g}" if isinstance(lo, (int, float)) and isinstance(hi, (int, float)) else ""
+                    print(f"{n:<34} {v:<22} {rng}")
                 print(f"{len(rows)} parameters of {name!r}" + (f" matching {a.search!r}" if a.search else " — narrow with --search (macro, filter_1, env_1, a_, fx_ ...)"))
             else:
                 from .samples import audition_table, write_wav24

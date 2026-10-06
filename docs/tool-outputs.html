@@ -258,14 +258,20 @@ by Sam Smyers · tags: Wavetable, Mono · &quot;Interplanetary Criminal, Riko Da
 
 ## Global
 - MasterVolume 0.412, MonoToggle 1, PortaAlways 1</pre></section>
-<section><h3><code>ableton-use serum params &quot;BS Gunman Reese&quot; --search filter_1</code></h3><p>Parameter names, values and ranges from the hosted plug-in.</p><pre>Traceback (most recent call last):
-  File &quot;/Users/dadams/Code/daw-use/.venv/bin/ableton-use&quot;, line 10, in &lt;module&gt;
-    sys.exit(main())
-             ^^^^^^
-  File &quot;/Users/dadams/Code/daw-use/ableton_use/cli.py&quot;, line 317, in main
-    print(f&quot;{n:&lt;34} {v:&lt;22} range {lo:g}..{hi:g}&quot;)
-                                  ^^^^^^
-TypeError: unsupported format string passed to NoneType.__format__</pre></section>
+<section><h3><code>ableton-use serum params &quot;BS Gunman Reese&quot; --search filter_1</code></h3><p>Parameter names, values and ranges from the hosted plug-in.</p><pre>filter_1_level                     -0.0 dB                
+filter_1_on                        On                     range 0..1
+filter_1_type                      LH 12                  
+filter_1_freq_hz                   405                    range 8..22050
+filter_1_res                       2                      range 0..100
+filter_1_drive                     0                      range 0..100
+filter_1_var                       51                     range 0..100
+filter_1_wet                       100                    range 0..100
+filter_1_stereo                    50                     range 0..100
+filter_1_x                         0                      range 0..1
+filter_1_y                         0                      range 0..1
+filter_1_bus1                      --                     
+filter_1_bus2                      --                     
+13 parameters of &#x27;BS Gunman Reese [Sam Smyers]&#x27; matching &#x27;filter_1&#x27;</pre></section>
 <section><h3><code>ableton-use serum render</code></h3><p>Play a preset through the real plug-in offline; the audition row comes back.</p><pre>&#x27;BS Gunman Reese [Sam Smyers]&#x27; playing F2 -&gt; reese_f2.wav
 | file | sec | peak | loud | crest | attack | decay | centroid | sub% | bass% | lowmid% | mid% | high% | air% | pitch | notes | side% (low) |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
