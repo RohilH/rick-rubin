@@ -22,7 +22,7 @@ for a brief.
    ```bash
    git clone <repo> ~/Developer/ableton-use
    cd ~/Developer/ableton-use && pip install -e ".[all]"     # or: uv pip install -e ".[all]"
-   ableton-use templates                                     # smoke test
+   ableton-use --help                                        # smoke test
    ```
 
 2. **Register the skill:**
@@ -39,7 +39,7 @@ for a brief.
 
 4. **Verify:**
    ```bash
-   ableton-use status                  # {"bridge": "0.2.0", "live_version": "12.x.y"}
+   ableton-use status                  # {"bridge": "0.5.0", "live_version": "12.x.y"}
    ```
    If this fails, check that the control surface is selected, then check Live's `Log.txt` for "ableton-use".
 

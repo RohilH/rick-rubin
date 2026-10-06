@@ -7,7 +7,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from ableton_use import Key, Project, Song, generate  # noqa: E402
+from ableton_use import Key, Project, Song  # noqa: E402
+from fixture_songs import generate  # noqa: E402
 from ableton_use import edits  # noqa: E402
 from ableton_use.analysis import lint, loudness_lufs, measure  # noqa: E402
 from ableton_use.model import Note, Pattern, Section, Part, Track, dumps_compact, fmt_pos, parse_pos, steps_to_notes  # noqa: E402
@@ -99,7 +100,7 @@ def test_edit_ops():
     s = generate("classic", seed=1)
     log = edits.apply(s, [
         {"op": "set", "field": "key", "value": "Gm"},
-        {"op": "generate", "what": "bass", "name": "b2", "options": {"style": "rolling"}},
+        {"op": "pattern", "name": "b2", "track": "Bass", "bars": 1, "notes": [["A0", "1.1.2", 0.2, 100], ["A0", "1.3.4", 0.2, 90]]},
         {"op": "part", "section": "drop2", "track": "Bass", "pattern": "b2"},
         {"op": "part", "section": "bridge", "track": "Pad", "pattern": None},
         {"op": "fill", "section": "drop", "track": "Perc", "pattern": "clap_fill", "every": 8},
@@ -179,7 +180,7 @@ def test_score_is_compact_and_complete():
 
 # ---------------------------------------------------------------- project
 def test_project_flow(tmp_path):
-    p = Project.create(tmp_path / "trk", subgenre="classic", template="radio", seed=1)
+    p = Project.create(tmp_path / "trk", generate("classic", template="radio", seed=1))
     assert p.score_path.exists()
     p.edit([{"op": "section", "name": "drop", "set": {"energy": 8}}])
     assert p.load().section("drop").energy == 8

@@ -9,7 +9,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from fake_live import FakeLiveServer  # noqa: E402
 
-from ableton_use import Project, Song, generate  # noqa: E402
+from ableton_use import Project, Song  # noqa: E402
+from fixture_songs import generate  # noqa: E402
 from ableton_use import edits  # noqa: E402
 from ableton_use.analysis import lint  # noqa: E402
 from ableton_use.cli import main  # noqa: E402
@@ -44,7 +45,7 @@ def _clicks(path, bpm, bars):
 def sampled(tmp_path):
     """A radio-template project at 130 BPM with a sampled kick + bass and an 8-bar
     audio loop that enters 4 bars into the groove."""
-    p = Project.create(tmp_path / "trk", subgenre="classic", template="radio", key="F minor", bpm=BPM, seed=3)
+    p = Project.create(tmp_path / "trk", generate("classic", template="radio", key="F minor", bpm=BPM, seed=3))
     raw = tmp_path / "raw"
     raw.mkdir()
     kick = p.add_sample(_saw(raw / "kick.wav", 55.0, 0.3), "kick")
@@ -242,15 +243,15 @@ def test_push_samples_to_fake_live(sampled):
 
 # ---------------------------------------------------------------- cli
 def test_cli_sample(tmp_path, capsys):
-    p = Project.create(tmp_path / "trk", template="radio", bpm=BPM, seed=1)
+    p = Project.create(tmp_path / "trk", generate(template="radio", bpm=BPM, seed=1))
     src = _saw(tmp_path / "a1.wav", 110.0, 0.6)
     assert main(["sample", str(p.root), str(src), "--name", "stab", "--oneshot", "--melodic"]) == 0
     out = capsys.readouterr().out
-    assert "samples/stab.wav: one-shot, root A1 (45.0" in out and '"sample_root": 45.0' in out
+    assert "samples/stab.wav: one-shot, root A1 (45.0" in out and 'sample="samples/stab.wav", sample_root=45.00)' in out
     loop = _clicks(tmp_path / "l.wav", BPM, 2)
     assert main(["sample", str(p.root), str(loop), "--name", "lp", "--loop", "--src-bpm", "130"]) == 0
     out = capsys.readouterr().out
-    assert "samples/lp.wav: 2-bar loop (from 130 BPM)" in out and '"audio": "samples/lp.wav"' in out
+    assert "samples/lp.wav: 2-bar loop (from 130 BPM)" in out and 'audio="samples/lp.wav", bars=2)' in out
     with pytest.raises(SystemExit):
         main(["sample", str(p.root), str(loop), "--name", "lp", "--loop"])
 
@@ -386,13 +387,12 @@ def test_serum_preset_sheet_and_catalog(tmp_path):
 
 # ---------------------------------------------------------------- groove
 def test_groove_moves_and_accents_notes():
-    from ableton_use.model import GROOVES, resolve_groove
     s = generate("classic", template="radio", seed=1, bpm=120.0)
     hats, clap, kick = s.track("Hats"), s.track("Clap"), s.track("Kick")
     base = {c.track: c for c in s.flatten()[0] if c.section == "groove"}
     ms = lambda beats: beats * 60000.0 / s.bpm  # noqa: E731
 
-    clap.groove = {"template": "laid_back"}
+    clap.groove = {"timing": [0, 0, 0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0]}
     kick.groove = {"timing": [-10] + [0] * 15, "accent": [0] * 4 + [-30] + [0] * 11}
     hats.groove = {"swing": 60, "accent": [5, -20, 0, -10] * 4, "gate": 0.5, "humanize": {"ms": 3, "vel": 4, "seed": 2}}
     assert not s.validate()
@@ -415,13 +415,11 @@ def test_groove_moves_and_accents_notes():
     s2 = Song.from_json(s.to_json())
     assert s2.track("Hats").groove == hats.groove and "groove" not in s2.to_json()["tracks"]["Bass"]
     text = pack(s)
-    assert "groove laid_back" in text and "groove swing 60%, accent +5 -20 · -10" in text and "humanize ±3 ms ±4 vel" in text
-    assert resolve_groove({"template": "shuffle_16", "swing": 55})["swing"] == 55 and "accent" in resolve_groove({"template": "shuffle_16"})
-    clap.groove = {"template": "nope"}
+    assert "groove timing ms · · · · +12" in text and "groove swing 60%, accent +5 -20 · -10" in text and "humanize ±3 ms ±4 vel" in text
+    clap.groove = {"template": "laid_back"}
     kick.groove = {"timing": [1, 2, 3]}
     errs = s.validate()
-    assert any("unknown groove template" in e for e in errs) and any("needs 16 values" in e for e in errs)
-    assert all(len(g.get(k, [0] * 16)) == 16 for g in GROOVES.values() for k in ("timing", "accent"))
+    assert any("unknown groove keys ['template']" in e for e in errs) and any("needs 16 values" in e for e in errs)
 
 
 def test_instrument_params_reach_simpler(sampled):
@@ -435,3 +433,72 @@ def test_instrument_params_reach_simpler(sampled):
     assert {q.name: q.str_for_value(q.value) for q in simpler.parameters}["Volume"] == "-3.0 dB"
     assert len({t.name: t for t in srv.song.tracks}["Bass"].devices) == 2          # Simpler + sidechain compressor, no second Simpler
     assert rep.tracks["Bass"]["instrument_params"] == "Volume -3.0 dB" and any("no parameter 'Nope'" in w for w in rep.warnings)
+
+
+# ---------------------------------------------------------------- writing a song in Python
+SONG_PY = '''
+from ableton_use import Song
+
+song = Song("Hand Made", bpm=126, key="A minor", swing=56)
+kick = song.add_track("Kick", "kick", volume_db=-6)
+hats = song.add_track("Hats", "hat", volume_db=-16, groove={"swing": 58, "accent": [6, -20, 0, -12] * 4})
+bass = song.add_track("Bass", "bass", instrument="Operator", sidechain=True)
+keys = song.add_track("Keys", "chords", instrument=["Electric"], volume_db=-12)
+
+four = song.pattern("four", kick, "x...x...x...x...")
+gap = four.variant("four_gap", bars={1: "x...x...x......."})
+tick = song.pattern("tick", hats, "gxogxogx" * 2)
+line = song.pattern("line", bass, ["1.3 A0 0.4; 2.3 A0 0.4 v110; 3.3 A0 0.4; 4.4 G0 0.2",
+                                   "1.3 F0 0.4; 2.3 F0 0.4 v110; 3.3 G0 0.4; @3.5 G1 0.2 v80"])
+line8 = line.variant("line8", repeat=2, bars={4: "1.3 E0 0.4; 3.1 [E0] 1 v90"}, add={1: "1.1 A1 0.1 v60"})
+stab = song.pattern("stab", keys, {1: "1.1 [A2 C3 E3 G3] 0.25 v90; 2.4 A2+C3+E3+G3 0.5", 2: "2.3 [F2 A2 C3 E3] 1.5"})
+stab_hi = stab.variant("stab_hi", transpose=12, drop=lambda n: n.start >= 4)
+
+intro = song.add_section("intro", 8, energy=3, parts={kick: four, hats: tick.at(5)}, fills={kick: gap})
+drop = song.add_section("drop", 16, kind="drop", energy=9, parts={kick: four, hats: tick, bass: line, keys: stab},
+                        fills={kick: gap.every(8)}, automation={keys: {"filter": [0.4, 1.0]}})
+drop2 = drop.variant("drop2", energy=10, add={bass: line8, keys: stab_hi.at(9, 16)}, without=[hats], fills={hats: tick})
+outro = intro.variant("outro", bars=4, kind="outro", without=kick)
+song.arrange(intro, drop, intro, drop2, outro)
+'''
+
+
+def test_song_written_in_python(tmp_path, capsys):
+    from ableton_use.compose import bar_events
+    assert main(["init", str(tmp_path / "trk"), "--title", "Hand Made", "--bpm", "126", "--key", "A minor"]) == 0
+    p = Project(tmp_path / "trk")
+    assert p.source_path.exists() and p.load().tracks == [] and p.tempo() == 126       # the skeleton builds: an empty song
+    p.source_path.write_text(SONG_PY)
+    import os
+    os.utime(p.source_path, (p.song_path.stat().st_mtime + 2,) * 2)
+    song = p.load()                                                                     # rebuilt because song.py is newer
+    assert [s.name for s in song.sections] == ["intro", "drop", "intro (2)", "drop2", "outro"] and song.total_bars == 52
+    pat = song.patterns
+    assert [n.pitch for n in pat["four"].notes] == [36] * 4 and len(pat["four_gap"].notes) == 3
+    assert pat["tick"].notes[0].pitch == 42 and pat["tick"].bars == 1
+    line = pat["line"]
+    assert line.bars == 2 and (line.notes[0].pitch, line.notes[0].start, line.notes[1].vel) == (33, 0.5, 110)
+    assert any(abs(n.start - 7.5) < 1e-9 and n.pitch == 43 for n in line.notes)        # "@3.5" in bar 2
+    l8 = pat["line8"]
+    assert l8.bars == 4 and len(line.notes) == 8                                        # the original is untouched
+    assert [n.pitch for n in l8.notes if n.start >= 12] == [28, 28] and any(n.pitch == 45 and n.start == 0 for n in l8.notes)
+    assert [n for n in l8.notes if 4 <= n.start < 12] != []
+    assert len([n for n in pat["stab"].notes if n.start < 4]) == 8 and min(n.pitch for n in pat["stab_hi"].notes) == 57 + 12
+    assert all(n.start < 4 for n in pat["stab_hi"].notes)
+    d2 = song.section("drop2")
+    assert d2.parts["Bass"].pattern == "line8" and (d2.parts["Keys"].start, d2.parts["Keys"].end) == (8, 16)
+    assert "Hats" not in d2.parts and d2.fills["Hats"].pattern == "tick" and d2.fills["Kick"].every == 8 and d2.energy == 10
+    assert song.section("drop").parts["Bass"].pattern == "line" and "Hats" in song.section("drop").parts
+    assert "Kick" not in song.section("outro").parts and "Hats" not in song.section("outro").parts   # hats entered at bar 5 of 8; the outro is 4 bars
+    assert song.section("intro").parts["Hats"].start == 4 and song.track("Bass").instrument == ["Operator"]
+    assert "### line8" in p.score_path.read_text() and not [i for i in lint(song) if i.severity == "error"]
+    # the json op path is closed for python projects; a broken song.py says why
+    with pytest.raises(ValueError, match="edit that file"):
+        p.edit([{"op": "set", "field": "bpm", "value": 120}])
+    p.source_path.write_text(SONG_PY.replace("hats: tick.at(5)}", "hats: tick.at(5), 'Nobody': four}"))
+    os.utime(p.source_path, (p.song_path.stat().st_mtime + 4,) * 2)
+    with pytest.raises(ValueError, match="unknown track 'Nobody'"):
+        p.load()
+    for bad, msg in (("9.1 A0 1", "outside the bar"), ("1.1 H9 1", "cannot read event"), ("1.1 A0", "cannot read event")):
+        with pytest.raises(ValueError, match=msg):
+            bar_events(bad)

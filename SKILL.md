@@ -1,6 +1,6 @@
 ---
 name: ableton-use
-description: Produce house / EDM tracks by conversation and render them into Ableton Live. Generate, read, edit, self-evaluate and push full arrangements (drums, bass, chords, pads, hooks, builds, drops, automation, sidechain). Ask, confirm the plan, execute, self-eval, persist. Production-correctness rules are hard; everything else is artistic freedom.
+description: Write house / EDM tracks as Python code — every note, rhythm, groove and section written by you — then read, measure and render them into Ableton Live (samples, instruments, effects, sidechain, automation) and check the result on audio recorded back from Live. No templates or generators. Ask, confirm the plan, write, self-eval, push, capture, persist.
 ---
 
 # ableton-use
@@ -10,8 +10,8 @@ description: Produce house / EDM tracks by conversation and render them into Abl
 1. **You never listen. You read.** The track lives in `song.json`; `score.md` is its packed reading view (arrangement map, energy curve, every pattern as step strings / note events — ~6 KB for a 5-minute track). `eval.md` adds *measured* loudness, crest factor and spectral balance per section from an offline preview render. `view` draws piano roll + waveform + spectrogram for a bar range — **on demand, at decision points only**, never as a scan.
 2. **Rhythm and arrangement are primary; sound design follows.** House lives or dies on the groove and on 8/16/32-bar phrasing. Get those right in the score, then let Live's instruments do the timbre.
 3. **Ask → confirm → execute → self-eval → push → persist.** Never build until the user has approved a plain-English plan.
-4. **song.json is the source of truth; Ableton is a render target.** Edits go into the song, then get re-pushed (`--replace`). Never "fix" things inside Live and expect them to come back.
-5. **Artistic freedom is the default.** Every value in `ableton_use/house.py` (patterns, templates, voicings, volumes) is a worked example of idiomatic house, not a mandate. Deviate whenever the brief calls for it — invent sections, parts, grooves.
+4. **`song.py` is the source of truth; Ableton is a render target.** Changes go into `song.py`, then get re-pushed (`--replace`). Never "fix" things inside Live and expect them to come back.
+5. **You write the music. All of it.** There are no templates, generators or presets in this library and none may be added (see `CLAUDE.md`). Every note, rhythm, voicing, groove number and section in `song.py` is yours. The "House craft" notes below describe what the genre does; they are not parts to copy.
 6. **Verify before you present.** If `eval` fails, you are not done.
 
 ## Hard rules (production correctness — non-negotiable)
@@ -23,7 +23,7 @@ description: Produce house / EDM tracks by conversation and render them into Abl
 5. **Low end:** bass is monophonic, roughly C0–G2 (MIDI 24–55), sidechained to the kick, and mostly avoids kick hits. Nothing but kick and bass below C2 (MIDI 48).
 6. **Drops earn their impact:** every drop follows a build or breakdown and starts with the kick on bar 1. A beat of silence (`kick_gap`, the roll's silent last beat) before the drop is the classic move.
 7. **Pitch convention is Ableton's:** C3 = MIDI 60, C1 = 36 (kick), Drum Rack pads start at C1.
-8. **Edit through ops or the Python API, then re-read `score.md`.** Never hand-edit flattened MIDI.
+8. **Edit `song.py`, then re-read `score.md`.** Never hand-edit `song.json` or flattened MIDI; they are build outputs.
 9. **Self-eval before showing or pushing:** `ableton-use eval <dir>` must have 0 errors. Cap at 3 eval passes — then report what's left instead of looping.
 10. **Push only after eval passes, and only with the bridge connected** (`ableton-use status`). Re-pushes use `--replace`.
 11. **Strategy confirmation before execution.**
@@ -32,17 +32,19 @@ description: Produce house / EDM tracks by conversation and render them into Abl
 
 ## Setup
 
-First-time install lives in `install.md`. On cold start just verify: `ableton-use templates` runs (package installed), and — before any push — `ableton-use status` reaches Live. You drive everything through the `ableton-use` CLI (or `from ableton_use import Project` in a Python snippet) with your own shell and file tools; there is no separate agent runtime. Run `view` and Read the PNG it prints to look at it.
+First-time install lives in `install.md`. On cold start just verify: `ableton-use --help` runs (package installed), and — before any push — `ableton-use status` reaches Live. You drive everything through the `ableton-use` CLI (or `from ableton_use import Project` in a Python snippet) with your own shell and file tools; there is no separate agent runtime. Run `view` and Read the PNG it prints to look at it.
 
 ## Directory layout
 
 ```
 <project>/
-├── song.json      ← source of truth (tracks, patterns, sections)
+├── song.py        ← source of truth: the song, written by you in Python
+├── song.json      ← built from song.py; what the other tools read
 ├── score.md       ← packed score — your primary reading view
 ├── eval.md        ← latest self-eval
 ├── project.md     ← memory; append one section per session
 ├── preview.wav    ← offline sketch render (numpy synth)
+├── live.wav       ← the arrangement recorded from Live's own output (`capture`); zoom/ holds partial takes
 ├── midi/          ← song.mid + per-track .mid (manual fallback)
 ├── views/         ← on-demand timeline PNGs
 ├── samples/       ← imported one-shots and conformed loops (`sample`); raw downloads in samples/raw/
@@ -52,11 +54,9 @@ First-time install lives in `install.md`. On cold start just verify: `ableton-us
 ## Commands
 
 ```
-ableton-use templates                         # subgenres + arrangement templates
-ableton-use new <dir> --subgenre deep|classic|tech --template club|radio|dj_tool [--key "A minor"] [--bpm 122] [--seed N] [--progression "1 6 4 5"]
+ableton-use init <dir> --title "..." --bpm 126 --key "A minor"   # a project with an empty song.py
+ableton-use build <dir>                       # run song.py -> song.json + score.md (every other command does this when song.py changed)
 ableton-use score <dir> [--bars 33-48] [--tracks Bass Kick]   # print/refresh score.md; with a zoom, print just that slice
-ableton-use edit <dir> ops.json               # or '-' for stdin; see ops below
-ableton-use undo <dir>
 ableton-use transcribe <dir> samples/vocal.wav [--model small.en]   # words -> bar.beat.16th, cached, shown in score.md
 ableton-use width <dir> [file]                # stereo image: correlation, side %, mono loss, per band and section
 ableton-use sample <dir> <file> --name N --oneshot [--melodic]                       # Simpler one-shot; --melodic measures its pitch
@@ -74,28 +74,55 @@ ableton-use push <dir> [--replace]            # build the arrangement in Live
 ableton-use remember <dir> --strategy ... --decisions ... --reasoning ... --outstanding ...
 ```
 
-Python: `from ableton_use import Project, generate`; `Project(dir).edit(ops)`, `.evaluate()`, `.view((65, 80))`, `.push(replace=True)`.
+## Writing a song
 
-## Edit ops (JSON)
+A song is a Python file, `song.py`, that leaves a `Song` in a variable called `song`. You write it with your normal file tools; every command rebuilds from it. It is ordinary Python — use loops, functions and your own helpers freely.
 
-```json
-{"ops": [
-  {"op": "set", "field": "bpm", "value": 123},
-  {"op": "generate", "what": "bass", "name": "bass_roll", "options": {"style": "rolling", "progression": [1, 6, 4, 5]}},
-  {"op": "pattern", "name": "perc2", "track": "Perc", "pitch": "D2", "steps": "..x...x...x..x.x"},
-  {"op": "pattern", "name": "hook", "track": "Lead", "bars": 2, "notes": [["A3", "1.1.3", 0.5, 100], ["C4", "1.2.3", 0.25, 90]]},
-  {"op": "part", "section": "drop2", "track": "Bass", "pattern": "bass_roll"},
-  {"op": "part", "section": "drop", "track": "Lead", "pattern": "lead", "start": 8, "transpose": 12},
-  {"op": "part", "section": "bridge", "track": "Chords", "pattern": null},
-  {"op": "fill", "section": "drop", "track": "Clap", "pattern": "clap_fill", "every": 8},
-  {"op": "automation", "section": "build", "track": "Pad", "param": "filter", "points": [0.4, 1.0]},
-  {"op": "insert_section", "index": 4, "section": {"name": "break2", "kind": "breakdown", "bars": 8, "energy": 4, "parts": {"Pad": "pad"}}},
-  {"op": "track", "name": "Vox", "set": {"role": "vocal", "instrument": ["Simpler"], "volume_db": -10}}
-]}
+```python
+from ableton_use import Song
+
+song = Song("Night Bus", bpm=126, key="A minor", swing=56)
+
+# tracks — sample= plays a one-shot from Simpler, audio=True holds loops, instrument= names a Live instrument or plug-in
+kick = song.add_track("Kick", "kick", sample="samples/kick.wav", volume_db=-7)
+hats = song.add_track("Hats", "hat", sample="samples/hat.wav", volume_db=-16,
+                      groove={"swing": 58, "accent": [6, -18, 0, -12] * 4, "humanize": {"ms": 3, "vel": 5}})
+bass = song.add_track("Bass", "bass", sample="samples/bass.wav", sample_root=36.0, volume_db=-8,
+                      effects=[{"device": "Compressor", "sidechain": "Kick", "params": {"Threshold": -30, "Ratio": 5}}])
+keys = song.add_track("Keys", "chords", instrument="Drift", volume_db=-13)
+
+# patterns are variables. Step strings for one-pitch rhythms (16ths; x X o g 1-9 and . ; | between bars):
+four = song.pattern("four", kick, "x...x...x...x...")
+tick = song.pattern("tick", hats, "g.xgo.x.g.xgo.xo|g.xgo.x.g.xgoxxg")
+# event lines for pitched parts — one string per bar: "<beat>.<sixteenth> <pitch or [chord]> <beats> [vVEL]"
+line = song.pattern("line", bass, ["1.3 A0 0.35; 2.3 A0 0.35 v108; 3.3 A0 0.35; 4.4 G0 0.2",
+                                   "1.3 F0 0.35; 2.3 F0 0.35 v108; 3.3 G0 0.35; 4.3 E0 0.3"])
+stab = song.pattern("stab", keys, {1: "1.1 [A2 C3 E3 G3] 0.25 v90; 2.4 [A2 C3 E3 G3] 0.5", 2: "2.3 [F2 A2 C3 E3] 1.5"})
+
+# derive: the original is untouched, the new pattern is its own variable
+four_gap = four.variant("four_gap", bars={1: "x...x...x......."})            # replace a bar
+line_busy = line.variant("line_busy", add={1: "2.2 A0 0.2 v80; 2.4 A1 0.2"}, mono=True)   # add notes
+line8 = line.variant("line8", repeat=2, bars={4: "1.3 E0 0.35; 3.1 E1 0.5"})  # repeat, then change the last bar
+stab_hi = stab.variant("stab_hi", transpose=12, drop=lambda n: n.dur < 0.4)   # transpose, filter notes
+
+# sections place patterns on tracks; bar numbers inside a section are 1-based
+intro = song.add_section("intro", 16, kind="intro", energy=3, parts={kick: four, hats: tick.at(9)}, fills={kick: four_gap})
+drop = song.add_section("drop", 16, kind="drop", energy=9,
+                        parts={kick: four, hats: tick, bass: line_busy, keys: stab.at(1, 8)},
+                        fills={kick: four_gap.every(8)}, automation={keys: {"filter": [0.4, 1.0]}})
+# reuse a block and extend it
+drop2 = drop.variant("drop2", energy=10, add={keys: stab_hi, bass: line8}, without=[hats])
+song.arrange(intro, drop, intro, drop2)      # listing a section twice plays it twice
 ```
-Full reference: docstring of `ableton_use/edits.py`. `generate` kinds: bass (offbeat|rolling|syncopated), chords (stab|held|single), pad, lead, hats (straight|shuffle|busy), perc, roll. Automation params: `filter` (0..1, maps to an Auto Filter the bridge inserts), `volume`, `pan`, or `"Device:Parameter"`.
 
-Step strings: one char per 16th, `|` separates bars. `x`=100 `X`=127 `o`=72 `g`=45 (ghost) `1-9` scaled, `.` rest. Note positions: `"bar.beat.sixteenth"` (1-based, Ableton style) or float beats.
+- **Notation.** Positions are Ableton-style and 1-based: `2.3` is beat 2, third 16th. Off-grid: `@1.333` (beats from the bar start). Pitches use Ableton naming (C3 = 60); chords go in brackets. Lengths are beats. `score.md` prints patterns in the same notation, so what you read is what you write.
+- **`pattern.at(first, last)`** plays it on those bars of the section; **`.up(12)`** transposes it there; **`.every(8)`** makes it a fill at the end of every 8-bar phrase (no argument: once, at the end of the section).
+- **`pattern.variant(name, ...)`**: `repeat`, `length`, `bars={n: content}`, `add=`, `drop=`, `transpose`, `mono`. **`a.then(b, name)`** joins two patterns.
+- **`section.variant(name, ...)`**: `add` (set or replace parts), `without` (remove tracks), `fills`, `automation`, `bars`, `energy`, `kind`. Because `song.py` re-runs on every build, changing the original changes every variant.
+- **Groove is per track and explicit**: `swing` (% for that track), `timing` (16 offsets in ms, one per 16th of the bar; + is late), `accent` (16 velocity offsets), `gate` (note-length multiplier), `humanize` (`{"ms", "vel", "seed"}`, repeatable). There are no named grooves: decide where the clap sits against the kick, which 16ths the hats lean on, how much each part drifts — and write the numbers. Flat velocities and everything dead on the grid is the most common reason a beat sounds lifeless.
+- **`instrument_params`** sets the track instrument's own parameters by displayed value — for Simpler e.g. `{"Ve Attack": 4, "Ve Release": 60, "Vol < Vel": 75}`. Attack time and velocity sensitivity are per track; per-hit feel comes from velocity and timing.
+- **Automation** values run 0..1 over the section: `[start, end]` or `[[fraction, value], ...]`. `filter` is a low-pass sweep (60 Hz–18 kHz), `volume` and `pan` are the mixer; `"Device:Parameter"` reaches anything else on MIDI tracks. On audio-loop tracks, `filter` and `volume` are rendered into the audio.
+- Projects that are only a `song.json` (no `song.py`) can still be changed with JSON ops through `ableton_use.edits`; a project with a `song.py` is always edited there.
 
 ## Zooming in
 
@@ -145,16 +172,16 @@ Presets are not samples: nothing here loads a third-party synth preset. Use a on
 
 ## The process
 
-1. **Inventory.** If a project exists: read `project.md` (summarise the last session in one sentence) and `score.md`. If not, ask what they want, then `new` with the closest subgenre/template as a sketch.
+1. **Inventory.** If a project exists: read `project.md` (summarise the last session in one sentence), `song.py` and `score.md`. If not, ask what they want, then `init`.
 2. **Converse.** Ask questions shaped by the brief: reference tracks/artists, subgenre, BPM, key/mood, club vs radio length, vocal?, which instruments/plugins they own, what the drop should feel like. No fixed checklist.
 3. **Propose strategy** (4–8 sentences): tempo/key, arrangement with bar counts, groove, bass approach, harmony, hook, palette, what makes the drop land. **Wait for confirmation.**
-4. **Execute.** Generate a starting point, then edit. Re-read `score.md` after every edit batch.
+4. **Write.** Compose the parts in `song.py` — drums, bass, harmony, hook, arrangement, groove — by hand, for this brief. Re-read `score.md` after each round of changes; zoom with `--bars/--tracks` when the question is local.
 5. **Self-eval.** `eval`. Read every line. Lint errors are correctness bugs — fix them. Audio checks catch contrast (breakdown ≥3 LU under the drop), a flat energy curve, a swamped or missing low end, dull tops. `view` the transitions that matter (end of build → drop, breakdown entry) and check: the gap before the drop, the roll, sidechain pump visible on the waveform, the filter sweep. Fix → re-eval, max 3 passes.
 6. **Present.** Summarise the arrangement and what you changed and why. Offer the preview.wav as a sketch (not the final sound).
-7. **Push.** `status`, then `push` (`--replace` on re-push). Read the push report: missing instruments and unrouted sidechains are listed as warnings — tell the user exactly what to fix by hand.
+7. **Push and capture.** `status`, then `push` (`--replace` on re-push), then `capture` and judge the mix on Live's own audio (clipping on the master, sidechain depth, balance, width). Read the push report: missing instruments and unrouted sidechains are listed as warnings — tell the user exactly what to fix by hand.
 8. **Persist.** `remember` with strategy, decisions, reasoning log, outstanding items.
 
-## House craft (worked examples — not mandates)
+## House craft (what the genre does — knowledge, not parts to copy)
 
 - **Tempo/feel:** deep 118–122 with heavy swing (56–58%); classic/garage-tinged 122–125 (53–55%); tech 124–128, nearly straight (50–53%).
 - **Drums:** kick every beat; clap/snare on 2 and 4; open hat on every off-beat 8th; closed hats as swung 16ths with accent/ghost velocities; a syncopated rim/perc for movement. Fills on the last bar of 8-bar phrases. Drop the kick on beat 4 before a new phrase (`kick_gap`).
@@ -164,6 +191,9 @@ Presets are not samples: nothing here loads a third-party synth preset. Use a on
 - **Energy:** something enters or leaves every 8 bars; the breakdown must feel like a valley (≥3 LU quieter in eval) or the drop won't land.
 
 ## Anti-patterns
+
+- Reaching for stock rhythms or progressions instead of writing for the brief. If two of your tracks share a bassline, something went wrong.
+- Every hit at the same velocity, dead on the grid, with no per-track groove.
 
 - Listening "by proxy" through constant `view` calls. Read the score; view only at decision points.
 - Editing in Live and hoping it syncs back.

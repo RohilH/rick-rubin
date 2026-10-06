@@ -349,16 +349,10 @@ def capture_live(song: Song, bridge: LiveBridge, out_path: str | Path, bars: tup
         lom(tp + ".arm", op="set", value=True)
         setv("song.metronome", False)
         setv("song.loop", False)
-        # Move the playhead while stopped (that also moves Live's start marker); "seek" only sets the
-        # position — a second stop would send Live back to 1.1.1.
-        for _ in range(10):
-            bridge.call("transport", action="seek", beat=start)
-            time.sleep(0.15)
-            if not lom("song.is_playing") and abs(lom("song.current_song_time") - start) < 1e-3:
-                break
-        else:
-            raise BridgeError(f"could not place Live's playhead at beat {start:g} (is someone using the transport?)")
-        lom("song.record_mode", op="set", value=True)       # arrangement record: Live starts playing from the playhead
+        # Arrangement record starts from Live's start marker, not from the playhead
+        setv("song.start_time", float(start))
+        time.sleep(0.15)
+        lom("song.record_mode", op="set", value=True)       # Live starts playing and recording from the start marker
         for _ in range(20):
             if lom("song.is_playing"):
                 break

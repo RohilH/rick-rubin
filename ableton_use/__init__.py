@@ -7,9 +7,9 @@ MIDI files, an audio preview and a full Ableton Live arrangement are render targ
 """
 from .model import Song, Track, Pattern, Section, Part, Fill, Note
 from .theory import Key
-from .house import generate
+from .compose import bar_events, steps
 from .project import Project
 
 __version__ = "0.1.0"
-__all__ = ["Song", "Track", "Pattern", "Section", "Part", "Fill", "Note", "Key", "generate", "Project"]
+__all__ = ["Song", "Track", "Pattern", "Section", "Part", "Fill", "Note", "Key", "Project", "steps", "bar_events"]
 

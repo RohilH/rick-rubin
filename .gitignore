@@ -3,3 +3,6 @@ __pycache__/
 .pytest_cache/
 *.wav
 .venv/
+.idea/
+.DS_Store
+*.mp3

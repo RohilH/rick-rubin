@@ -1,7 +1,7 @@
-"""JSON edit operations on a Song — the agent's write interface.
+"""JSON edit operations on a Song.
 
-Every op is a small dict, so an LLM (or a human) can express changes precisely
-without rewriting song.json. `apply(song, ops)` mutates in place, validates, and
+For projects without a song.py (a bare song.json), or for programmatic tweaks:
+every op is a small dict. Projects written in Python are edited in song.py instead. `apply(song, ops)` mutates in place, validates, and
 returns a log of what changed. Ops:
 
   {"op": "set", "field": "bpm"|"key"|"swing"|"title", "value": ...}
@@ -9,8 +9,6 @@ returns a log of what changed. Ops:
   {"op": "remove_track", "name": "Riser"}
   {"op": "pattern", "name": "bass_b", "bars": 4, "track": "Bass", "notes": [["A0", "1.1.3", 0.25, 100], ...]}
   {"op": "pattern", "name": "hats2", "track": "Hats", "pitch": "F#1", "steps": "x.x.x.x.x.x.x.x."}
-  {"op": "generate", "what": "bass|chords|pad|lead|hats|perc|roll", "name": "...", "track": "...",
-        "options": {"style": "rolling", "progression": [1,6,4,5], "bars_per_chord": 1, "seed": 7}}
   {"op": "transpose_pattern", "name": "lead", "semitones": 12}
   {"op": "humanize", "name": "hats", "velocity": 8}
   {"op": "section", "name": "drop", "set": {"bars": 32, "energy": 9, "kind": "drop", "desc": "..."}}
@@ -26,7 +24,6 @@ returns a log of what changed. Ops:
 from __future__ import annotations
 
 import random
-from . import house
 from .model import Fill, Part, Pattern, Section, Song, Track
 
 
@@ -72,7 +69,7 @@ def _track(song: Song, op: dict) -> str:
     except KeyError:
         if "role" not in fields:
             raise ValueError(f"new track {name!r} needs a role")
-        t = Track(name, fields["role"], list(house.DEFAULT_INSTRUMENTS.get(fields["role"], [])))
+        t = Track(name, fields["role"])
         idx = op.get("index")
         song.tracks.insert(len(song.tracks) if idx is None else int(idx), t)
         created = True
@@ -113,37 +110,6 @@ def _pattern(song: Song, op: dict) -> str:
     existed = op["name"] in song.patterns
     song.patterns[p.name] = p
     return f"{'replaced' if existed else 'added'} pattern {p.name} ({p.bars} bars, {len(p.notes)} notes)"
-
-
-def _generate(song: Song, op: dict) -> str:
-    what, name = op["what"], op["name"]
-    o = op.get("options", {})
-    rng = random.Random(o.get("seed", hash(name) & 0xFFFF))
-    key = song.key_obj
-    prog = o.get("progression") or song.meta.get("progression") or [1, 6, 4, 5]
-    bpc = int(o.get("bars_per_chord", 1 if len(prog) >= 4 else 2))
-    track = op.get("track")
-    if what == "bass":
-        p = house.bass_pattern(name, track or "Bass", key, prog, bpc, o.get("style", "offbeat"), rng)
-    elif what in ("chords", "pad"):
-        chords = house.progression_chords(key, prog, int(o.get("size", 4)))
-        if what == "pad":
-            p = house.pad_pattern(name, track or "Pad", chords, bpc)
-        else:
-            p = house.chord_pattern(name, track or "Chords", chords, bpc, o.get("style", "stab"), rng)
-    elif what == "lead":
-        p = house.lead_pattern(name, track or "Lead", key, prog, bpc, rng)
-    elif what == "hats":
-        p = house.drum(name, "hat", house._HATS[o.get("style", "straight")] * 2, track or "Hats", rng, 6)
-    elif what == "perc":
-        steps = o.get("steps") or rng.choice(["...x..x....x..x.", "..o..x...o..x.o.", "...x.x.....x..x."])
-        p = house.drum(name, o.get("role", "perc"), steps, track or "Perc", rng, 8)
-    elif what == "roll":
-        p = house.snare_roll(name, track or "Clap", int(o.get("bars", 4)), o.get("role", "clap"))
-    else:
-        raise ValueError(f"cannot generate {what!r}")
-    song.patterns[name] = p
-    return f"generated {what} pattern {name} ({p.bars} bars, {len(p.notes)} notes)"
 
 
 def _transpose(song: Song, op: dict) -> str:
@@ -237,7 +203,7 @@ def _copy_parts(song: Song, op: dict) -> str:
 
 
 _OPS = {
-    "set": _set, "track": _track, "remove_track": _remove_track, "pattern": _pattern, "generate": _generate,
+    "set": _set, "track": _track, "remove_track": _remove_track, "pattern": _pattern,
     "transpose_pattern": _transpose, "humanize": _humanize, "section": _section, "insert_section": _insert_section,
     "remove_section": _remove_section, "move_section": _move_section, "part": _part, "fill": _fill,
     "automation": _automation, "copy_parts": _copy_parts,

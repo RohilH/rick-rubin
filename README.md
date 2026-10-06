@@ -66,28 +66,37 @@ The agent follows `SKILL.md`: inventory → questions → plan → confirm → e
 
 ### CLI
 
-```bash
-ableton-use new ~/music/sunrise --subgenre deep --template club --seed 4 --title "Sunrise Dub"
-ableton-use edit ~/music/sunrise ops.json      # JSON edit ops (see SKILL.md)
-ableton-use eval ~/music/sunrise               # lint + preview.wav + measurements -> eval.md
-ableton-use view ~/music/sunrise --bars 61-80  # PNG of the build into the drop
-ableton-use push ~/music/sunrise               # build it in Live (--replace to re-push)
+```
+ableton-use init ~/music/night-bus --title "Night Bus" --bpm 126 --key "A minor"
+# write the song in ~/music/night-bus/song.py (see "Writing a song" in SKILL.md), then:
+ableton-use score ~/music/night-bus            # the song as a compact text score
+ableton-use eval ~/music/night-bus             # lint + offline render + measurements
+ableton-use view ~/music/night-bus --bars 33-48
+ableton-use push ~/music/night-bus             # build it in Live
+ableton-use capture ~/music/night-bus          # record Live's output and measure that
 ```
 
-### Python
+### The song is Python
 
 ```python
-from ableton_use import Project
+from ableton_use import Song
 
-p = Project.create("~/music/sunrise", subgenre="deep", template="club", key="F dorian", seed=4)
-p.edit([
-    {"op": "generate", "what": "bass", "name": "bass_roll", "options": {"style": "rolling"}},
-    {"op": "part", "section": "drop2", "track": "Bass", "pattern": "bass_roll"},
-    {"op": "automation", "section": "build", "track": "Pad", "param": "filter", "points": [0.3, 1.0]},
-])
-print(p.evaluate().text)
-p.push(replace=True)
+song = Song("Night Bus", bpm=126, key="A minor", swing=56)
+kick = song.add_track("Kick", "kick", sample="samples/kick.wav")
+bass = song.add_track("Bass", "bass", sample="samples/bass.wav", sample_root=36.0, sidechain=True)
+
+four = song.pattern("four", kick, "x...x...x...x...")
+line = song.pattern("line", bass, ["1.3 A0 0.35; 2.3 A0 0.35 v108; 3.3 A0 0.35; 4.4 G0 0.2",
+                                   "1.3 F0 0.35; 2.3 F0 0.35 v108; 3.3 G0 0.35; 4.3 E0 0.3"])
+line_busy = line.variant("line_busy", add={1: "2.2 A0 0.2 v80; 2.4 A1 0.2"}, mono=True)
+
+drop = song.add_section("drop", 16, kind="drop", energy=9, parts={kick: four, bass: line})
+drop2 = drop.variant("drop2", energy=10, add={bass: line_busy})
+song.arrange(drop, drop2)
 ```
+
+There are no templates, generators or presets: the agent writes every note. Patterns and sections are plain
+Python variables that can be derived from (`variant`) and reused. `tracks/time-crisis/song.py` is a full example.
 
 ## Samples (Splice or your own)
 
@@ -135,9 +144,9 @@ The push report lists anything that needs a human: an instrument not found, a si
 ableton_use/
   model.py        Song / Track / Pattern / Section; flatten() -> arrangement clips
   theory.py       keys, scales, diatonic chords, voice leading, chord naming (C3 = 60)
-  house.py        subgenre profiles (classic/deep/tech), pattern generators, arrangement templates
+  compose.py      the two notations (step strings, event lines) used to write patterns
   score.py        packed text score (primary reading view)
-  edits.py        JSON edit ops (the agent's write interface)
+  edits.py        JSON edit ops for projects without a song.py
   analysis.py     lint rules + BS.1770 loudness + spectral checks -> eval.md
   views.py        on-demand piano-roll / waveform / spectrogram PNG
   render/midi.py  dependency-free SMF export
@@ -158,7 +167,7 @@ docs/HOUSE.md     research notes behind the defaults
 * The preview synth is only a sketch for measuring rhythm, balance and arrangement. It is not a mixdown. Compare its sections against each other, not against commercial masters.
 * Live's API cannot draw sound design. The agent chooses instruments by name and writes notes and automation; timbre is down to your presets.
 * The bridge is tested against a simulated Live Object Model, not a real Live install. The first real push is the moment to watch for API differences between Live versions. The push report and Live's `Log.txt` will show them.
-* House is the first-class genre. The model, edits and bridge are genre-agnostic, so adding profiles and templates for techno, garage or DnB is mostly data.
+* House is the first-class genre: the lint rules and the craft notes in SKILL.md are written for it. The model, notation and bridge are genre-agnostic.
 
 ## Tests
 
@@ -166,4 +175,4 @@ docs/HOUSE.md     research notes behind the defaults
 pip install -e ".[dev]" && pytest -q
 ```
 
-The tests cover theory, JSON round-trips, flattening and swing, the edit ops, lint rules, MIDI round-trips, preview rendering and analysis. They also run a full `push_song` over a real socket against a fake Live Object Model.
+The tests cover theory, JSON round-trips, flattening and swing, writing a song in Python, the edit ops, lint rules, MIDI round-trips, preview rendering and analysis. They also run a full `push_song` over a real socket against a fake Live Object Model.

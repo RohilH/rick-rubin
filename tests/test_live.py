@@ -8,7 +8,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from fake_live import FakeLiveServer, Param, _vol_fmt  # noqa: E402
 from handlers import _hz, _num, filter_mapper, norm_to_param, set_param_display  # noqa: E402
 
-from ableton_use import Song, generate  # noqa: E402
+from ableton_use import Song  # noqa: E402
+from fixture_songs import generate  # noqa: E402
 from ableton_use.score import pack  # noqa: E402
 from ableton_use.live import BridgeError, LiveBridge, push_song  # noqa: E402
 

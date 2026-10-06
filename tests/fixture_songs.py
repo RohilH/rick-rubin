@@ -1,21 +1,15 @@
-"""House-music generators and arrangement templates.
+"""Test data only: a deterministic song generator used as a fixture by the test-suite.
 
-Everything here is a *worked example* of idiomatic house — a starting point the
-agent edits, not a mandate. Conventions encoded (see docs/HOUSE.md for sources):
-  * 118-128 BPM, 4/4, four-on-the-floor kick, clap/snare on 2 & 4,
-    open hat on the off-beat 8th, swung 16th closed hats.
-  * Bass mostly avoids the kick (off-beats / rolling 16ths) and is sidechained.
-  * Phrasing in 8/16/32-bar blocks; something changes every 8, something big every 16.
-  * DJ-friendly: drums-only intro and outro of >=16 bars.
-"""
+The library itself has no generators or templates (see CLAUDE.md) — songs are written by hand in song.py.
+This file exists so the tests have full-size songs to flatten, lint, render and push."""
 from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
 
-from .model import (BEATS_PER_BAR, DRUM_MAP, STEP, Note, Part, Fill, Pattern, Section, Song, Track,
+from ableton_use.model import (BEATS_PER_BAR, DRUM_MAP, STEP, Note, Part, Fill, Pattern, Section, Song, Track,
                     steps_to_notes)
-from .theory import Key, voice_lead
+from ableton_use.theory import Key, voice_lead
 
 # ============================================================================ profiles
 @dataclass

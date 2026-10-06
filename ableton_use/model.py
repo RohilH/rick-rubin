@@ -33,32 +33,8 @@ DRUM_MAP = {
 
 _VEL_CHARS = {"x": 100, "X": 127, "o": 72, "g": 45}
 
-# Named feels. "timing" is ms per 16th of the bar (+ = late), "accent" is velocity added per 16th.
-# Worked examples of common house feels, not rules — any track can carry its own numbers.
-GROOVES: dict[str, dict] = {
-    # backbeat a touch behind the grid: the lazy clap that makes four-on-the-floor lean back
-    "laid_back": {"timing": [0, 0, 0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0]},
-    # off-beat 8ths pushed early: urgent, driving open hats
-    "pushed_offbeat": {"timing": [0, 0, -8, 0, 0, 0, -8, 0, 0, 0, -8, 0, 0, 0, -8, 0]},
-    # MPC-style 16th shuffle with the off-16ths ducked: classic swung closed hats
-    "shuffle_16": {"swing": 58, "accent": [8, -22, 0, -14, 6, -22, 0, -14, 8, -22, 0, -14, 6, -22, 0, -14]},
-    # heavier garage-leaning shuffle
-    "garage": {"swing": 62, "accent": [10, -28, -4, -10, 4, -28, -4, -10, 10, -28, -4, -10, 4, -28, -4, -10],
-               "timing": [0, 0, 0, 6, 0, 0, 0, 6, 0, 0, 0, 6, 0, 0, 0, 6]},
-    # downbeats leaned on, everything else relaxed: basslines and stabs that breathe with the kick
-    "downbeat_accent": {"accent": [10, -6, 0, -6, 4, -6, 0, -6, 8, -6, 0, -6, 4, -6, 0, -6]},
-    # a drummer's looseness and nothing else
-    "human": {"humanize": {"ms": 5, "vel": 8}},
-}
-
-
 def resolve_groove(g: dict) -> dict:
-    """A track's groove with its template (if any) filled in; explicit keys win."""
-    if not g:
-        return {}
-    out = dict(GROOVES[g["template"]]) if g.get("template") else {}
-    out.update({k: v for k, v in g.items() if k != "template"})
-    return out
+    return dict(g or {})
 
 
 # ============================================================================ notes & patterns
@@ -138,6 +114,8 @@ class Pattern:
     audio: str | None = None      # audio loop file (path relative to the project), conformed to exactly `bars` at song tempo
     key: str | None = None        # musical key of an audio loop, if any (metadata for lint)
 
+    _song: Any = field(default=None, repr=False, compare=False)   # set when created through Song.pattern()
+
     @property
     def length(self) -> float:
         return self.bars * BEATS_PER_BAR
@@ -145,6 +123,73 @@ class Pattern:
     @property
     def is_audio(self) -> bool:
         return self.audio is not None
+
+    # ---- placing a pattern in a section
+    def at(self, first: int = 1, last: int | None = None, transpose: int = 0) -> "Part":
+        """This pattern on bars `first`..`last` of a section (1-based, inclusive; last=None = to the end)."""
+        return Part(self.name, first - 1, last, transpose)
+
+    def up(self, semitones: int) -> "Part":
+        """This pattern transposed, for the whole section."""
+        return Part(self.name, 0, None, semitones)
+
+    def every(self, bars: int | None = None) -> "Fill":
+        """This pattern as a fill at the end of every `bars`-bar phrase (None = once, at the end of the section)."""
+        return Fill(self.name, bars)
+
+    # ---- deriving a new pattern from this one
+    def variant(self, name: str, *, bars: dict | None = None, add: Any = None, drop: Any = None, repeat: int = 1,
+                transpose: int = 0, length: int | None = None, mono: bool = False, desc: str = "") -> "Pattern":
+        """A new pattern built from this one — the original is untouched.
+
+        repeat=2            play it twice (4 bars -> 8) before the changes below
+        length=6            cut or pad to that many bars
+        bars={4: "..."}     replace whole bars (1-based) with new event text or a step string ("" empties the bar)
+        add={2: "..."}      add events to bars, keeping what is there (or one event string for bar 1, or Notes)
+        drop=lambda n: ...  remove the notes for which the function is true
+        transpose=12        shift every note by semitones
+        mono=True           cut each note where the next one starts (basslines, leads)"""
+        from .compose import to_notes, to_notes_bar
+        if self.is_audio:
+            raise ValueError("audio patterns have no notes to vary; import another loop or cut it with at()")
+        pitch = self.notes[0].pitch if self.notes else None
+        notes = [Note(n.pitch, n.start + r * self.length, n.dur, n.vel) for r in range(max(1, repeat)) for n in self.notes]
+        nbars = self.bars * max(1, repeat)
+        if length is not None:
+            nbars = int(length)
+        if bars:
+            nbars = max(nbars, max(int(b) for b in bars))
+        if isinstance(add, dict) and add:
+            nbars = max(nbars, max(int(b) for b in add))
+        notes = [n for n in notes if n.start < nbars * BEATS_PER_BAR]
+        for b, text in (bars or {}).items():
+            lo = (int(b) - 1) * BEATS_PER_BAR
+            notes = [n for n in notes if not lo <= n.start < lo + BEATS_PER_BAR]
+            notes += to_notes_bar(text, int(b) - 1, pitch)
+        if add is not None:
+            notes += to_notes(add, pitch)[0]
+        if drop is not None:
+            notes = [n for n in notes if not drop(n)]
+        if transpose:
+            notes = [Note(n.pitch + transpose, n.start, n.dur, n.vel) for n in notes]
+        notes = sorted(notes, key=lambda n: (n.start, n.pitch))
+        if mono:
+            for a, b in zip(notes, notes[1:]):
+                if b.start > a.start:
+                    a.dur = min(a.dur, b.start - a.start)
+        p = Pattern(name, nbars, notes, self.track, desc or self.desc, _song=self._song)
+        if self._song is not None:
+            self._song.patterns[name] = p
+        return p
+
+    def then(self, other: "Pattern", name: str, desc: str = "") -> "Pattern":
+        """This pattern followed by another, as one new pattern."""
+        notes = [Note(n.pitch, n.start, n.dur, n.vel) for n in self.notes]
+        notes += [Note(n.pitch, n.start + self.length, n.dur, n.vel) for n in other.notes]
+        p = Pattern(name, self.bars + other.bars, notes, self.track, desc, _song=self._song)
+        if self._song is not None:
+            self._song.patterns[name] = p
+        return p
 
     def is_steppable(self) -> bool:
         if not self.notes:
@@ -204,10 +249,13 @@ class Track:
     effects: list[dict] = field(default_factory=list)
     # Feel, baked into the notes by flatten(). Keys (all optional): "swing" % (overrides Song.swing for this track),
     # "timing" 16 offsets in ms, one per 16th of the bar (+ late / - early), "accent" 16 velocity offsets,
-    # "gate" note-length multiplier, "humanize" {"ms": n, "vel": n, "seed": n}, "template" a name from GROOVES.
+    # "gate" note-length multiplier, "humanize" {"ms": n, "vel": n, "seed": n}.
     groove: dict = field(default_factory=dict)
     # Parameters of the track's instrument by displayed value, e.g. Simpler {"Ve Attack": 4, "Ve Release": 60, "Vol < Vel": 70}
     instrument_params: dict = field(default_factory=dict)
+
+    def __hash__(self) -> int:          # tracks are used as dict keys when writing sections: {kick: four, bass: line}
+        return id(self)
 
     @property
     def is_drum(self) -> bool:
@@ -286,6 +334,41 @@ class Section:
     automation: dict[str, dict[str, list]] = field(default_factory=dict)
     desc: str = ""
 
+    _song: Any = field(default=None, repr=False, compare=False)
+
+    def variant(self, name: str, *, bars: int | None = None, kind: str | None = None, energy: int | None = None,
+                add: dict | None = None, without: Any = (), fills: dict | None = None, automation: dict | None = None,
+                desc: str = "") -> "Section":
+        """A new section built from this one — reuse a block and extend it:
+
+            drop2 = drop.variant("drop2", energy=10, add={pad: pad_chords, lead: hook.up(12)}, without=[perc])
+
+        `add` sets or replaces parts, `without` removes tracks (parts, fills and automation),
+        `fills` / `automation` are merged over the original's. The new section is appended
+        to the song; use song.arrange(...) to set the order."""
+        sec = Section(name, kind or self.kind, bars or self.bars, self.energy if energy is None else energy,
+                      {k: Part(v.pattern, v.start, v.end, v.transpose) for k, v in self.parts.items()},
+                      {k: Fill(v.pattern, v.every) for k, v in self.fills.items()},
+                      {k: dict(v) for k, v in self.automation.items()}, desc or self.desc, _song=self._song)
+        for t in ([without] if isinstance(without, (str, Track)) else list(without)):
+            tn = getattr(t, "name", t)
+            sec.parts.pop(tn, None)
+            sec.fills.pop(tn, None)
+            sec.automation.pop(tn, None)
+        sec.parts.update(_as_parts(add))
+        sec.fills.update(_as_fills(fills))
+        for tn, d in _as_automation(automation).items():
+            sec.automation.setdefault(tn, {}).update(d)
+        if sec.bars != self.bars:                      # parts that ran to an explicit end may not fit any more
+            for tn, part in list(sec.parts.items()):
+                if part.start >= sec.bars:
+                    del sec.parts[tn]
+                elif part.end is not None and part.end > sec.bars:
+                    part.end = None
+        if self._song is not None:
+            self._song.sections.append(sec)
+        return sec
+
     def to_json(self) -> dict:
         d: dict[str, Any] = {"name": self.name, "kind": self.kind, "bars": self.bars, "energy": self.energy}
         if self.desc:
@@ -303,6 +386,35 @@ class Section:
                    parts={k: Part.from_json(v) for k, v in d.get("parts", {}).items() if v},
                    fills={k: Fill.from_json(v) for k, v in d.get("fills", {}).items() if v},
                    automation=d.get("automation", {}), desc=d.get("desc", ""))
+
+
+def _as_part(v: Any) -> Part:
+    if isinstance(v, Part):
+        return v
+    if isinstance(v, Pattern):
+        return Part(v.name)
+    if isinstance(v, (tuple, list)):
+        head = v[0].name if isinstance(v[0], Pattern) else v[0]
+        rest = list(v[1:]) + [None] * (3 - len(v[1:]))
+        return Part(head, int(rest[0] or 0), rest[1], int(rest[2] or 0))
+    return Part.from_json(v)
+
+
+def _as_parts(d: dict | None) -> dict[str, Part]:
+    return {getattr(k, "name", k): _as_part(v) for k, v in (d or {}).items() if v is not None}
+
+
+def _as_fills(d: dict | None) -> dict[str, Fill]:
+    out = {}
+    for k, v in (d or {}).items():
+        if v is None:
+            continue
+        out[getattr(k, "name", k)] = v if isinstance(v, Fill) else Fill(v.name) if isinstance(v, Pattern) else Fill.from_json(v)
+    return out
+
+
+def _as_automation(d: dict | None) -> dict[str, dict]:
+    return {getattr(k, "name", k): dict(v) for k, v in (d or {}).items()}
 
 
 # ============================================================================ flattened output
@@ -385,6 +497,67 @@ class Song:
         self.patterns[p.name] = p
         return p
 
+    # ---- writing a song in Python (see compose.py for the notations)
+    def add_track(self, name: str, role: str, **fields: Any) -> Track:
+        """A new track. role: kick clap snare hat openhat perc crash fx (drums) · bass chords pad lead keys vocal ...
+        fields: sample, sample_root, audio, instrument, volume_db, pan, swing, sidechain, groove, effects,
+        instrument_params, color."""
+        if any(t.name == name for t in self.tracks):
+            raise ValueError(f"track {name!r} already exists")
+        inst = fields.pop("instrument", [])
+        t = Track(name, role, [inst] if isinstance(inst, str) else list(inst), **fields)
+        self.tracks.append(t)
+        return t
+
+    def pattern(self, name: str, track: Track | str, content: Any = None, *, bars: int | None = None,
+                pitch: int | str | None = None, dur: float | None = None, audio: str | None = None,
+                key: str | None = None, desc: str = "") -> Pattern:
+        """A named pattern for a track — a reusable variable.
+
+        content: a step string ("x...x...x...x..."), a list with one event string per bar
+        (["1.3 F0 0.35; 2.3 F0 0.35 v108", ...]), a dict {bar: events}, or Notes / (pitch, start, length, vel) tuples.
+        Drum tracks take their step pitch from their role; pass pitch= to override.
+        audio="samples/loop.wav" (with bars=N) makes it an audio loop for an audio track."""
+        from .compose import to_notes
+        trk = self.track(track) if isinstance(track, str) else track
+        if audio is not None:
+            if not bars:
+                raise ValueError("an audio pattern needs bars= (the length of the conformed loop)")
+            p = Pattern(name, int(bars), [], trk.name, desc, audio, key, _song=self)
+        else:
+            if pitch is None and trk.is_drum:
+                pitch = DRUM_MAP.get(trk.role, 60)
+            notes, implied = to_notes(content, pitch, dur) if content is not None else ([], None)
+            n = int(bars or implied or max(1, -(-int(max((x.start for x in notes), default=0) + 1) // BEATS_PER_BAR)))
+            p = Pattern(name, n, sorted(notes, key=lambda x: (x.start, x.pitch)), trk.name, desc, _song=self)
+        self.patterns[name] = p
+        return p
+
+    def add_section(self, name: str, bars: int, *, kind: str | None = None, energy: int = 5, parts: dict | None = None,
+                    fills: dict | None = None, automation: dict | None = None, desc: str = "") -> Section:
+        """A section, appended to the arrangement. parts: {track: pattern | pattern.at(9, 16) | pattern.up(12)},
+        fills: {track: pattern | pattern.every(8)}, automation: {track: {"filter": [0.3, 1.0]}} (0..1 over the section,
+        or [[fraction, value], ...])."""
+        if any(s.name == name for s in self.sections):
+            raise ValueError(f"section {name!r} already exists")
+        sec = Section(name, kind or name, int(bars), int(energy), _as_parts(parts), _as_fills(fills),
+                      _as_automation(automation), desc, _song=self)
+        self.sections.append(sec)
+        return sec
+
+    def arrange(self, *sections: Section) -> None:
+        """Set the order of the arrangement. A section listed twice plays twice (the repeat is named 'name (2)')."""
+        out: list[Section] = []
+        seen: dict[str, int] = {}
+        for sec in (sections[0] if len(sections) == 1 and isinstance(sections[0], (list, tuple)) else sections):
+            k = seen.get(sec.name, 0) + 1
+            seen[sec.name] = k
+            if k > 1:
+                sec = sec.variant(f"{sec.name} ({k})")
+                self.sections.remove(sec)
+            out.append(sec)
+        self.sections = out
+
     # ---- serialization
     def to_json(self) -> dict:
         return {
@@ -460,12 +633,10 @@ class Song:
                     errs.append(f"section {s.name}: MIDI pattern {pat.name!r} on audio track {tname!r}")
         for t in self.tracks:
             g = t.groove
-            if g.get("template") and g["template"] not in GROOVES:
-                errs.append(f"track {t.name}: unknown groove template {g['template']!r}; have {sorted(GROOVES)}")
             for key in ("timing", "accent"):
                 if key in g and (not isinstance(g[key], list) or len(g[key]) != STEPS_PER_BAR):
                     errs.append(f"track {t.name}: groove {key} needs {STEPS_PER_BAR} values, one per 16th of the bar")
-            bad = set(g) - {"template", "swing", "timing", "accent", "gate", "humanize"}
+            bad = set(g) - {"swing", "timing", "accent", "gate", "humanize"}
             if bad:
                 errs.append(f"track {t.name}: unknown groove keys {sorted(bad)}")
             for e in t.effects:

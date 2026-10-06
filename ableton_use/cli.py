@@ -6,7 +6,6 @@ import json
 import sys
 from pathlib import Path
 
-from . import house
 from .project import Project
 
 
@@ -19,15 +18,14 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="ableton-use", description="Agentic house-music production rendered to Ableton Live.")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    s = sub.add_parser("new", help="create a project with a generated house track")
+    s = sub.add_parser("init", help="start a project: an empty song.py to write the song in")
     s.add_argument("dir")
-    s.add_argument("--subgenre", default="classic", choices=sorted(house.PROFILES))
-    s.add_argument("--template", default="club", choices=sorted(house.TEMPLATES))
-    s.add_argument("--key")
-    s.add_argument("--bpm", type=float)
-    s.add_argument("--seed", type=int, default=0)
-    s.add_argument("--title")
-    s.add_argument("--progression", help="scale degrees, e.g. '1 6 4 5'")
+    s.add_argument("--title", required=True)
+    s.add_argument("--bpm", type=float, required=True)
+    s.add_argument("--key", required=True, help='e.g. "F minor", "D dorian"')
+
+    s = sub.add_parser("build", help="run song.py and refresh song.json + score.md (other commands do this automatically)")
+    s.add_argument("dir")
 
     def zoom(sp):
         sp.add_argument("--bars", type=_bars, help="zoom in on a bar range, e.g. 33-48")
@@ -118,16 +116,15 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("status", help="check the Live bridge connection")
     s.add_argument("--port", type=int, default=9889)
 
-    sub.add_parser("templates", help="list subgenres and arrangement templates")
-
     a = ap.parse_args(argv)
 
-    if a.cmd == "new":
-        prog = [int(x) for x in a.progression.split()] if a.progression else None
-        p = Project.create(a.dir, subgenre=a.subgenre, template=a.template, key=a.key, bpm=a.bpm, seed=a.seed,
-                           title=a.title, progression=prog)
-        print(f"created {p.song_path}\n")
-        print(p.score_path.read_text())
+    if a.cmd == "init":
+        p = Project.init(a.dir, a.title, a.bpm, a.key)
+        print(f"created {p.source_path}\nWrite the song there (SKILL.md, 'Writing a song'), then: ableton-use score {a.dir}")
+    elif a.cmd == "build":
+        p = Project(a.dir)
+        song = p.build()
+        print(f"built {p.song_path.name}: {len(song.tracks)} tracks, {len(song.patterns)} patterns, {song.total_bars} bars")
     elif a.cmd == "score":
         print(Project(a.dir).score(a.bars, a.tracks))
     elif a.cmd == "info":
@@ -186,40 +183,14 @@ def main(argv: list[str] | None = None) -> int:
             ap.error("--loop needs --src-bpm (the tempo the loop was recorded at)")
         r = Project(a.dir).add_sample(a.src, a.name, loop=a.loop, src_bpm=a.src_bpm, bars=a.bars, align=a.align, melodic=a.melodic, end_at=a.end_at)
         print(r.describe())
+        var = "".join(ch if ch.isalnum() else "_" for ch in a.name)
         if r.kind == "loop":
-            hint = [{"op": "track", "name": "<Track>", "set": {"role": "perc", "audio": True}},
-                    {"op": "pattern", "name": a.name, "track": "<Track>", "audio": r.rel, "bars": r.bars},
-                    {"op": "part", "section": "<section>", "track": "<Track>", "pattern": a.name}]
+            print("in song.py:")
+            print(f'  {var}_trk = song.add_track("{a.name.title()}", "perc", audio=True)')
+            print(f'  {var} = song.pattern("{a.name}", {var}_trk, audio="{r.rel}", bars={r.bars})')
         else:
-            fields = {"sample": r.rel}
-            if r.root is not None:
-                fields["sample_root"] = round(r.root, 2)
-            hint = [{"op": "track", "name": "<Track>", "set": fields}]
-        print("use it with:  " + json.dumps({"ops": hint}))
-    elif a.cmd == "width":
-        from .analysis import stereo_report
-        p = Project(a.dir)
-        if a.wav:
-            wav = Path(a.wav) if Path(a.wav).exists() else p.root / a.wav
-            full_mix = wav.resolve() in (p.live_path.resolve(), p.preview_path.resolve())
-        else:
-            wav, full_mix = (p.live_path if p.live_path.exists() else p.preview_path), True
-            if wav == p.preview_path:
-                print("(no Live capture yet — this is the offline sketch, whose stems are mono; width only reflects panning)\n")
-        text = stereo_report(wav, p.load() if full_mix else None, a.bars if full_mix else None)
-        if full_mix and not a.bars:
-            (p.root / "width.md").write_text(text)
-        print(text)
-    elif a.cmd == "transcribe":
-        from .transcribe import transcribe
-        p = Project(a.dir)
-        song = p.load()
-        words = transcribe(song.resolve(a.sample), a.bpm or song.bpm, a.model, a.language)
-        print(f"{a.sample} at {a.bpm or song.bpm:g} BPM — {len(words)} words")
-        print("pos (bar.beat.16th)  offset   time            conf  word")
-        for w in words:
-            print(f"{w.pos:<20} {w.off_ms:+6.0f}ms {w.start_s:6.2f}-{w.end_s:5.2f}s   {w.conf:.2f}  {w.text}")
-        p.score()
+            root = f", sample_root={r.root:.2f}" if r.root is not None else ""
+            print(f'in song.py:  song.add_track("{a.name.title()}", "<role>", sample="{r.rel}"{root})')
     elif a.cmd == "serum":
         from . import serum
         if a.action == "show":
@@ -242,11 +213,6 @@ def main(argv: list[str] | None = None) -> int:
         from .live import LiveBridge
         with LiveBridge(port=a.port) as b:
             print(json.dumps(b.call("ping")))
-    elif a.cmd == "templates":
-        for n, pr in house.PROFILES.items():
-            print(f"subgenre {n:8s} {pr.bpm:g} BPM, {pr.scale}, bass={pr.bass_style}, chords={pr.chord_style}, hats={pr.hat_style}")
-        for n, t in house.TEMPLATES.items():
-            print(f"template {n:8s} " + " ".join(f"{s['name']}:{s['bars']}" for s in t) + f"  = {sum(s['bars'] for s in t)} bars")
     return 0
 
 
