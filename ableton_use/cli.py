@@ -57,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--replace", action="store_true", help="delete same-named tracks first")
     s.add_argument("--no-instruments", action="store_true")
     s.add_argument("--host", default="127.0.0.1")
-    s.add_argument("--port", type=int, default=9877)
+    s.add_argument("--port", type=int, default=9889)
 
     s = sub.add_parser("sample", help="import a one-shot or loop into <dir>/samples/ (loops are conformed to the song tempo)")
     s.add_argument("dir")
@@ -69,6 +69,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--src-bpm", type=float, help="tempo of the source loop")
     s.add_argument("--bars", type=int, help="loop length in bars (default: nearest whole bar)")
     s.add_argument("--align", default="start", choices=["start", "end"], help="'end' keeps the tail (risers)")
+    s.add_argument("--end-at", type=float, help="seconds into the loop to cut at first; with --align end, puts that moment (a riser's peak) on the next downbeat")
     s.add_argument("--melodic", action="store_true", help="measure the one-shot's pitch (sample_root)")
 
     s = sub.add_parser("remember", help="append a session entry to project.md")
@@ -80,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--dest", help="Remote Scripts folder (default: your User Library)")
 
     s = sub.add_parser("status", help="check the Live bridge connection")
-    s.add_argument("--port", type=int, default=9877)
+    s.add_argument("--port", type=int, default=9889)
 
     sub.add_parser("templates", help="list subgenres and arrangement templates")
 
@@ -120,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
     elif a.cmd == "sample":
         if a.loop and not a.src_bpm:
             ap.error("--loop needs --src-bpm (the tempo the loop was recorded at)")
-        r = Project(a.dir).add_sample(a.src, a.name, loop=a.loop, src_bpm=a.src_bpm, bars=a.bars, align=a.align, melodic=a.melodic)
+        r = Project(a.dir).add_sample(a.src, a.name, loop=a.loop, src_bpm=a.src_bpm, bars=a.bars, align=a.align, melodic=a.melodic, end_at=a.end_at)
         print(r.describe())
         if r.kind == "loop":
             hint = [{"op": "track", "name": "<Track>", "set": {"role": "perc", "audio": True}},

@@ -4,7 +4,7 @@
 import math
 import traceback
 
-BRIDGE_VERSION = "0.2.0"
+BRIDGE_VERSION = "0.3.0"
 
 FILTER_PARAM_NAMES = ("Frequency", "Filter Freq", "Filter 1 Freq", "Filter Frequency", "Cutoff", "Filter Cutoff", "Freq")
 BROWSER_CATEGORIES = ("drums", "instruments", "sounds", "audio_effects", "user_library", "packs")
@@ -546,6 +546,68 @@ class Handlers(object):
                 cue.name = str(name)
         s.current_song_time = 0.0
         return made
+
+    # ------------------------------------------------------------------ generic Live Object Model access
+    def _lom_resolve(self, path):
+        """'song.tracks[3].mixer_device.volume' -> object. Only attribute names and
+        integer indices; roots are 'song' and 'app'."""
+        obj = None
+        for i, part in enumerate(str(path).split(".")):
+            name, idx = part, []
+            while name.endswith("]"):
+                name, _, n = name[:-1].rpartition("[")
+                idx.insert(0, int(n))
+            if not name.replace("_", "a").isalnum() or name.startswith("_"):
+                raise ValueError("bad path element %r" % part)
+            if i == 0:
+                if name not in ("song", "app"):
+                    raise ValueError("path must start with 'song' or 'app'")
+                obj = self.song if name == "song" else self._app()
+            else:
+                obj = getattr(obj, name)
+            for n in idx:
+                obj = obj[n]
+        return obj
+
+    def _jsonable(self, v, depth=0):
+        if v is None or isinstance(v, (bool, int, float, str)):
+            return v
+        if isinstance(v, dict):
+            return dict((str(k), self._jsonable(x, depth + 1)) for k, x in v.items())
+        if depth < 3 and not hasattr(v, "name") and not hasattr(v, "display_name"):
+            try:
+                return [self._jsonable(x, depth + 1) for x in list(v)[:512]]
+            except TypeError:
+                pass
+        for attr in ("display_name", "name"):
+            n = getattr(v, attr, None)
+            if isinstance(n, str):
+                return n
+        return str(v)
+
+    def cmd_lom(self, path, op="get", value=None, args=None, attr=None, choose=None):
+        """Read, write or call anything in the Live Object Model.
+        get:  value at `path`.
+        set:  path = value. With `choose`, pick the item of the list at path `choose`
+              whose name contains `value` (routing types/channels, e.g. 'Resampling').
+        call: path(*args)."""
+        if op == "get":
+            return self._jsonable(self._lom_resolve(path))
+        if op == "call":
+            return self._jsonable(self._lom_resolve(path)(*(args or [])))
+        if op == "set":
+            parent, _, name = str(path).rpartition(".")
+            target = self._lom_resolve(parent)
+            if choose:
+                options = list(self._lom_resolve(choose))
+                picks = [o for o in options if str(value).lower() in str(_rname(o)).lower()]
+                if not picks:
+                    raise ValueError("no %r among %s" % (value, [str(_rname(o)) for o in options]))
+                exact = [o for o in picks if str(_rname(o)).lower() == str(value).lower()]
+                value = (exact or picks)[0]
+            setattr(target, name, value)
+            return self._jsonable(getattr(target, name))
+        raise ValueError("op must be get, set or call")
 
     # ------------------------------------------------------------------ batching
     def cmd_batch(self, commands):

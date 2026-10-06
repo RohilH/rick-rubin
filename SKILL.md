@@ -58,7 +58,7 @@ ableton-use score <dir>                       # print/refresh score.md
 ableton-use edit <dir> ops.json               # or '-' for stdin; see ops below
 ableton-use undo <dir>
 ableton-use sample <dir> <file> --name N --oneshot [--melodic]                       # Simpler one-shot; --melodic measures its pitch
-ableton-use sample <dir> <file> --name N --loop --src-bpm B [--bars N] [--align end] # audio loop, conformed to the song tempo
+ableton-use sample <dir> <file> --name N --loop --src-bpm B [--bars N] [--align end] [--end-at S] # audio loop, conformed to the song tempo
 ableton-use eval <dir>                        # lint + preview render + measurements -> eval.md (exit 1 on errors)
 ableton-use view <dir> --bars 65-80 [--tracks Bass Kick]
 ableton-use preview <dir> [--stems]
@@ -97,7 +97,7 @@ Step strings: one char per 16th, `|` separates bars. `x`=100 `X`=127 `o`=72 `g`=
 Samples replace Live's stock instruments track by track. Two kinds:
 
 - **One-shots → Simpler.** A track with `sample` plays that file from a Simpler instead of `instrument`. Drum roles use One-Shot mode (every hit plays the whole sample; the score keeps the readable drum-map pitches). Melodic roles use Classic mode and need `sample_root`, the MIDI pitch the file actually sounds at (fractional = cents); the bridge sets Simpler's Transpose/Detune from it so notes in Live show their true pitch.
-- **Loops → audio tracks.** A track with `audio: true` holds audio patterns (`{"op": "pattern", "name": "top", "audio": "samples/top.wav", "bars": 8, "key": "F minor"}`). Parts, `start`/`end` and filter/volume automation work as for MIDI. Loops are **conformed on import**: tempo-matched to the song (pitch kept, needs ffmpeg) and cut to exact bars, then placed *unwarped* in Live — N bars of file is N bars of arrangement. `--align end` keeps the tail, so a riser's peak lands on the downbeat after it. Changing `bpm` later means re-importing the loops.
+- **Loops → audio tracks.** A track with `audio: true` holds audio patterns (`{"op": "pattern", "name": "top", "audio": "samples/top.wav", "bars": 8, "key": "F minor"}`). Parts, `start`/`end` and filter/volume automation work as for MIDI. Loops are **conformed on import**: tempo-matched to the song (pitch kept, needs ffmpeg) and cut to exact bars, then placed *unwarped* in Live — N bars of file is N bars of arrangement. `--align end` keeps the tail, so a riser's peak lands on the downbeat after it; if the file carries on past its peak (a tail, a second swell), measure where the peak is and pass `--end-at <seconds>`. Look at the loop in `view` after importing: FX names say little about their shape. Changing `bpm` later means re-importing the loops.
 
 Workflow:
 

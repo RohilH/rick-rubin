@@ -260,11 +260,8 @@ class Measurement:
 
 
 def measure(wav_path: str | Path, song: Song) -> Measurement:
-    from scipy.io import wavfile
-    sr, data = wavfile.read(wav_path)
-    x = data.astype(np.float32) / (32768.0 if data.dtype == np.int16 else 1.0)
-    if x.ndim == 1:
-        x = x[:, None]
+    from .samples import read_audio
+    sr, x = read_audio(wav_path)
     mono = x.mean(axis=1)
     spbar = 60.0 / song.bpm * BEATS_PER_BAR
     m = Measurement(loudness_lufs(x, sr), float(20 * np.log10(np.abs(x).max() + 1e-12)), int((np.abs(x) >= 0.999).sum()))

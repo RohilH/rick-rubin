@@ -142,27 +142,49 @@ def _atempo_chain(ratio: float) -> str:
 
 
 def stretch(src: str | Path, dst: str | Path, ratio: float) -> None:
-    """Change duration by 1/ratio keeping pitch (ratio>1 = faster). Needs ffmpeg."""
+    """Change duration by 1/ratio keeping pitch (ratio>1 = faster). Needs ffmpeg.
+
+    atempo swallows ~20 ms while its window fills, which would leave everything
+    after the first transient early. So the input is padded with a second of
+    silence on both sides and the output is trimmed by the padding *minus*
+    whatever went missing, which keeps onsets within a few ms of the grid."""
+    sr, x = read_audio(src)
     if abs(ratio - 1) < 1e-6:
-        sr, x = read_audio(src)
         write_wav24(dst, sr, x)
         return
     if not shutil.which("ffmpeg"):
         raise RuntimeError("ffmpeg is required to tempo-match loops (brew install ffmpeg)")
-    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(src), "-filter:a", _atempo_chain(ratio),
-                    "-ar", str(SR), "-c:a", "pcm_s24le", str(dst)], check=True)
+    dst = Path(dst)
+    tmp_in, tmp_out = dst.with_suffix(".pad.wav"), dst.with_suffix(".atempo.wav")
+    pad = np.zeros((sr, x.shape[1]), np.float32)
+    write_wav24(tmp_in, sr, np.concatenate([pad, x, pad]))
+    try:
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(tmp_in), "-filter:a", _atempo_chain(ratio),
+                        "-c:a", "pcm_s24le", str(tmp_out)], check=True)
+        _, y = read_audio(tmp_out)
+    finally:
+        tmp_in.unlink(missing_ok=True)
+        tmp_out.unlink(missing_ok=True)
+    lost = max(0, int(round((len(x) + 2 * sr) / ratio)) - len(y))
+    start = max(0, int(round(sr / ratio)) - lost)
+    write_wav24(dst, sr, y[start: start + int(round(len(x) / ratio))])
 
 
 def conform_loop(src: str | Path, dst: str | Path, src_bpm: float, bpm: float, bars: int | None = None,
-                 align: str = "start", fade_ms: float = 2.0) -> int:
+                 align: str = "start", fade_ms: float = 2.0, end_at: float | None = None) -> int:
     """Tempo-match `src` to `bpm` and cut it to exactly `bars` bars (default: nearest
-    whole number of bars). align='end' keeps the tail (for risers). Returns bars."""
+    whole number of bars). align='end' keeps the tail (for risers). `end_at` (seconds
+    into the conformed audio) drops everything after that moment first — with
+    align='end' it puts a riser's peak, rather than the end of its tail, on the
+    downbeat that follows. Returns bars."""
     dst = Path(dst)
     tmp = dst.with_suffix(".stretch.wav")
     stretch(src, tmp, bpm / src_bpm)
     sr, x = read_audio(tmp)
     tmp.unlink(missing_ok=True)
     x = _resample(x, sr, SR)
+    if end_at is not None:
+        x = x[: int(round(end_at * SR))]
     bar_s = BEATS_PER_BAR * 60.0 / bpm
     if bars is None:
         bars = max(1, int(round(len(x) / SR / bar_s)))
@@ -182,7 +204,7 @@ def conform_loop(src: str | Path, dst: str | Path, src_bpm: float, bpm: float, b
 
 def import_sample(project_dir: str | Path, src: str | Path, name: str, *, loop: bool = False,
                   src_bpm: float | None = None, bpm: float | None = None, bars: int | None = None,
-                  align: str = "start", melodic: bool = False) -> Imported:
+                  align: str = "start", melodic: bool = False, end_at: float | None = None) -> Imported:
     """Copy/conform a sample into <project>/samples/<name>.wav."""
     project_dir = Path(project_dir)
     out = project_dir / "samples" / f"{name}.wav"
@@ -191,7 +213,7 @@ def import_sample(project_dir: str | Path, src: str | Path, name: str, *, loop: 
     if loop:
         if not (src_bpm and bpm):
             raise ValueError("loops need src_bpm (the sample's tempo) and bpm (the song's)")
-        bars = conform_loop(src, out, src_bpm, bpm, bars, align)
+        bars = conform_loop(src, out, src_bpm, bpm, bars, align, end_at=end_at)
         return Imported(out, rel, "loop", bars=bars, src_bpm=src_bpm)
     sr, x = read_audio(src)
     write_wav24(out, SR, _resample(x, sr, SR))

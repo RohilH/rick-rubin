@@ -42,7 +42,7 @@ pip install -e ".[all]"        # numpy, scipy, matplotlib (for views)
 ableton-use install-bridge     # copies the AbletonUse remote script into Live's User Library
 ```
 
-To connect Live, restart it, then open **Settings → Link, Tempo & MIDI → Control Surface** and choose **AbletonUse**. Live shows "ableton-use bridge … listening on 127.0.0.1:9877". To check the connection:
+To connect Live, restart it, then open **Settings → Link, Tempo & MIDI → Control Surface** and choose **AbletonUse**. Live shows "ableton-use bridge … listening on 127.0.0.1:9889". To check the connection:
 
 ```bash
 ableton-use status

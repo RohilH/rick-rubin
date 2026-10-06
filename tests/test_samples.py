@@ -84,6 +84,11 @@ def test_conform_loop_trims_and_aligns_without_ffmpeg(tmp_path):
     _, b = read_audio(tmp_path / "b.wav")
     _, s = read_audio(src)
     assert len(b) == len(a) and np.allclose(b[1000:-1000], s[-len(b):][1000:-1000], atol=1e-4)
+    # end_at: that moment of the source becomes the end; shorter material is padded in front
+    conform_loop(src, tmp_path / "e.wav", BPM, BPM, bars=8, align="end", end_at=2 * BAR_S)
+    _, e = read_audio(tmp_path / "e.wav")
+    n2 = round(2 * BAR_S * SR)
+    assert len(e) == len(a) and not e[: len(e) - n2 - 10].any() and np.allclose(e[-n2 + 200:-200], s[200:n2 - 200][-len(e[-n2 + 200:-200]):], atol=1e-4)
     # nearest whole number of bars when bars is omitted
     assert conform_loop(src, tmp_path / "c.wav", BPM, BPM) == 9
 
@@ -94,9 +99,12 @@ def test_conform_loop_stretches_to_exact_bars(tmp_path):
     assert conform_loop(src, tmp_path / "out.wav", 126.0, BPM) == 4
     sr, x = read_audio(tmp_path / "out.wav")
     assert sr == SR and abs(len(x) / sr - 4 * BAR_S) < 1 / SR
-    # the clicks moved onto the 130 BPM grid: beat 9 (bar 3) is within a few ms
-    i = int(8 * 60.0 / BPM * SR)
-    assert np.abs(x[i - 600:i + 900]).max() > 0.2 and np.abs(x[i + 2000:i + 8000]).max() < 0.1
+    # every click moved onto the 130 BPM grid (atempo alone leaves them ~20 ms early)
+    m = np.abs(x[:, 0])
+    for beat in range(1, 16):
+        i = int(beat * 60.0 / BPM * SR)
+        w = m[i - 3000:i + 3000]
+        assert w.max() > 0.2 and abs(int(np.argmax(w > 0.5 * w.max())) - 3000) < 0.008 * SR, beat
 
 
 def test_import_sample_needs_tempo_for_loops(tmp_path):

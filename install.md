@@ -35,7 +35,7 @@ for a brief.
    ```bash
    ableton-use install-bridge          # copies AbletonUse/ into User Library/Remote Scripts
    ```
-   The user then restarts Live and opens **Settings → Link, Tempo & MIDI**. Under **Control Surface**, they choose **AbletonUse**. Live's status bar shows "ableton-use bridge … listening on 127.0.0.1:9877".
+   The user then restarts Live and opens **Settings → Link, Tempo & MIDI**. Under **Control Surface**, they choose **AbletonUse**. Live's status bar shows "ableton-use bridge … listening on 127.0.0.1:9889".
 
 4. **Verify:**
    ```bash

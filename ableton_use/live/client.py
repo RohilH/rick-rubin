@@ -15,7 +15,7 @@ import numpy as np
 
 from ..model import Song
 
-DEFAULT_PORT = 9877
+DEFAULT_PORT = 9889
 REMOTE_SCRIPT_DIR = Path(__file__).parent / "remote_script" / "AbletonUse"
 
 

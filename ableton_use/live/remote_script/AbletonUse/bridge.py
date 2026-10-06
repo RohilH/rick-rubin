@@ -15,7 +15,7 @@ from _Framework.ControlSurface import ControlSurface
 from .handlers import BRIDGE_VERSION, Handlers
 
 HOST = "127.0.0.1"
-PORT = 9877
+PORT = 9889
 MAX_PER_TICK = 64
 
 

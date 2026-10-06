@@ -120,17 +120,17 @@ class Project:
     def midi(self) -> list[Path]:
         return export_midi(self.load(), self.root / "midi")
 
-    def push(self, host: str = "127.0.0.1", port: int = 9877, replace: bool = False, load_instruments: bool = True, progress=None):
+    def push(self, host: str = "127.0.0.1", port: int = 9889, replace: bool = False, load_instruments: bool = True, progress=None):
         from .live import LiveBridge, push_song
         with LiveBridge(host, port) as b:
             return push_song(self.load(), b, replace=replace, load_instruments=load_instruments, progress=progress)
 
     def add_sample(self, src: str | Path, name: str, *, loop: bool = False, src_bpm: float | None = None,
-                   bars: int | None = None, align: str = "start", melodic: bool = False):
+                   bars: int | None = None, align: str = "start", melodic: bool = False, end_at: float | None = None):
         """Copy/conform a sample into <project>/samples/ at the song's tempo."""
         from .samples import import_sample
         return import_sample(self.root, src, name, loop=loop, src_bpm=src_bpm, bpm=self.load().bpm, bars=bars,
-                             align=align, melodic=melodic)
+                             align=align, melodic=melodic, end_at=end_at)
 
     # memory
     def remember(self, strategy: str = "", decisions: str = "", reasoning: str = "", outstanding: str = "") -> None:

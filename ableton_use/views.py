@@ -52,6 +52,26 @@ def timeline_view(song: Song, out_path: str | Path, bars: tuple[int, int] | None
         mine = [c for c in clips if c.track == t.name]
         ps = []
         for c in mine:
+            if c.audio:
+                # audio clip: the file's own waveform, one box per pass of the loop
+                from .samples import read_audio
+                sr_a, xa = read_audio(song.resolve(c.audio))
+                xa = np.abs(xa).max(axis=1)
+                for s0, ln, off in c.segments:
+                    a = c.start + s0
+                    if a >= t1 or a + ln <= t0:
+                        continue
+                    seg = xa[int(off * spb * sr_a): int((off + ln) * spb * sr_a)]
+                    k = max(1, len(seg) // 800)
+                    env = np.array([seg[i:i + k].max() for i in range(0, len(seg), k)])
+                    xs = a + np.arange(len(env)) * k / sr_a / spb
+                    ax.fill_between(xs, 0.5 - env / 2, 0.5 + env / 2, color="C0", lw=0)
+                    ax.add_patch(plt.Rectangle((a, 0.02), ln, 0.96, fill=False, ec="C0", lw=0.8))
+                for prm, pts in c.envelopes.items():
+                    ax.plot([c.start + q[0] for q in pts], [q[1] for q in pts], color="r", lw=1, alpha=0.7)
+                ax.set_ylim(0, 1)
+                ax.set_yticks([])
+                continue
             for n in c.notes:
                 st = c.start + n.start
                 if t0 <= st < t1:
@@ -77,10 +97,9 @@ def timeline_view(song: Song, out_path: str | Path, bars: tuple[int, int] | None
         ax.tick_params(labelsize=7)
 
     if wav:
-        from scipy.io import wavfile
-        sr, data = wavfile.read(wav)
-        x = data.astype(np.float32) / 32768.0
-        x = x.mean(axis=1) if x.ndim > 1 else x
+        from .samples import read_audio
+        sr, x = read_audio(wav)
+        x = x.mean(axis=1)
         a, b = int(t0 * spb * sr), min(len(x), int(t1 * spb * sr))
         seg = x[a:b]
         beats = t0 + np.arange(len(seg)) / sr / spb
@@ -89,7 +108,7 @@ def timeline_view(song: Song, out_path: str | Path, bars: tuple[int, int] | None
         env_hi = np.array([seg[i:i + step].max() for i in range(0, len(seg), step)])
         env_lo = np.array([seg[i:i + step].min() for i in range(0, len(seg), step)])
         axw.fill_between(beats[::step][: len(env_hi)], env_lo, env_hi, color="0.3", lw=0)
-        axw.set_ylabel("preview", rotation=0, ha="right", va="center", fontsize=9)
+        axw.set_ylabel(Path(wav).stem, rotation=0, ha="right", va="center", fontsize=9)
         axw.set_ylim(-1, 1)
         nfft = 2048
         hop = nfft // 2
