@@ -121,6 +121,7 @@ class Simpler(Device):
             Param("Transpose", -48.0, 48.0, 0.0, lambda v: "%d st" % round(v)),
             Param("Detune", -50.0, 50.0, 0.0, lambda v: "%d ct" % round(v)),
             Param("Volume", -36.0, 36.0, -12.0, lambda v: "%.1f dB" % v),
+            Param("Vol < Vel", 0.0, 100.0, 35.0, lambda v: "%.0f %%" % v),
         ])
         self.sample_path, self.playback_mode, self.voices = None, 0, 1
 

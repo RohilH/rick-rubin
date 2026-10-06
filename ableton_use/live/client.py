@@ -13,7 +13,7 @@ from typing import Any
 
 import numpy as np
 
-from ..model import Song
+from ..model import Song, simpler_velocity_db
 
 DEFAULT_PORT = 9889
 # what `sidechain: true` on a track means: a pumping house compressor keyed from the kick
@@ -21,6 +21,12 @@ DEFAULT_SIDECHAIN = {"device": "Compressor", "params": {"Threshold": -28, "Ratio
 # where instrument names are looked up, in order: Live's own, then the user's saved presets, then VST/AU plug-ins
 INSTRUMENT_CATEGORIES = ["drums", "instruments", "sounds", "user_library", "plugins"]
 REMOTE_SCRIPT_DIR = Path(__file__).parent / "remote_script" / "AbletonUse"
+
+
+def sample_unity_offset(track) -> float:
+    """dB by which Simpler would play a velocity-100 note above the file's level at this track's sensitivity."""
+    sens = float(track.instrument_params.get("Vol < Vel", 35.0)) if track.instrument_params else 35.0
+    return simpler_velocity_db(100, sens)
 
 
 class BridgeError(RuntimeError):
@@ -93,7 +99,8 @@ class PushReport:
     warnings: list[str] = field(default_factory=list)
 
     def text(self) -> str:
-        L = [f"Pushed to Live {self.live_version or '?'}: {len(self.tracks)} tracks, {self.clips} clips, {self.notes} notes"]
+        n_tracks = sum(1 for k in self.tracks if k != "master" and not k.startswith("return "))
+        L = [f"Pushed to Live {self.live_version or '?'}: {n_tracks} tracks, {self.clips} clips, {self.notes} notes"]
         for name, info in self.tracks.items():
             L.append(f"  - {name}: instrument={info.get('instrument')!s}" + (f", sidechain={info['sidechain']}" if info.get("sidechain") else ""))
             L += [f"      midi fx: {e}" for e in info.get("midi_effects", [])]
@@ -162,8 +169,11 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
                 rep.warnings.append(f"{t.name}: sample {path} not found")
             else:
                 voices = 1 if t.role in ("bass", "sub") else 8 if t.role in ("chords", "stab", "keys", "pad", "organ") else 4
+                # Simpler boosts by velocity (see model.simpler_velocity_db); cancel it at velocity 100 so that
+                # a velocity-100 hit plays the file at its own level, like an audio clip and like the preview
                 r = bridge.call("load_sample", track=i, path=str(path), mode="oneshot" if t.is_drum else "classic",
-                                root=t.sample_root, voices=None if t.is_drum else voices)
+                                root=t.sample_root, voices=None if t.is_drum else voices,
+                                volume_db=round(-sample_unity_offset(t), 2))
                 info["instrument"] = f"Simpler <- {Path(t.sample).name}"
                 if r.get("warning") or r.get("mode_error") or r.get("param_errors"):
                     rep.warnings.append(f"{t.name}: Simpler {r.get('warning') or r.get('mode_error') or r.get('param_errors')}")

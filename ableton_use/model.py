@@ -33,6 +33,22 @@ DRUM_MAP = {
 
 _VEL_CHARS = {"x": 100, "X": 127, "o": 72, "g": 45}
 
+def simpler_velocity_db(vel: float, sensitivity: float = 35.0) -> float:
+    """Gain in dB that Live's Simpler applies to a note of velocity `vel` at a given "Vol < Vel" setting (%),
+    relative to the sample's own level. Measured in Live 12.4 with a calibration tone: a straight line of
+    0.4 dB per velocity step at 100 %, crossing 0 dB at velocity ~70 — so at the default 35 % a velocity-100
+    hit is +4.2 dB and a velocity-32 hit -5.4 dB."""
+    return sensitivity / 100.0 * 0.4 * (vel - 70.3)
+
+
+def sample_gain_db(track: "Track", vel: float) -> float:
+    """Level of a sampled track's note relative to its file: velocity 100 plays the sample as it is.
+    `push` sets Simpler's Volume to cancel its velocity boost at 100, and the preview uses the same law,
+    so a sample track, an audio-loop track and the offline render agree on what 0 dB means."""
+    sens = float(track.instrument_params.get("Vol < Vel", 35.0)) if track.instrument_params else 35.0
+    return simpler_velocity_db(vel, sens) - simpler_velocity_db(100, sens)
+
+
 def resolve_groove(g: dict) -> dict:
     return dict(g or {})
 

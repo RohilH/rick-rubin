@@ -4,7 +4,7 @@
 import math
 import traceback
 
-BRIDGE_VERSION = "0.6.0"
+BRIDGE_VERSION = "0.7.0"
 
 FILTER_PARAM_NAMES = ("Frequency", "Filter Freq", "Filter 1 Freq", "Filter Frequency", "Cutoff", "Filter Cutoff", "Freq")
 BROWSER_CATEGORIES = ("drums", "instruments", "sounds", "audio_effects", "user_library", "packs")
@@ -419,7 +419,7 @@ class Handlers(object):
                 return d
         return None
 
-    def cmd_load_sample(self, track, path, mode="classic", root=None, voices=None):
+    def cmd_load_sample(self, track, path, mode="classic", root=None, voices=None, volume_db=0.0):
         """Put `path` in a Simpler on `track`. mode: 'oneshot' (drums: full sample per hit)
         or 'classic' (melodic). root = MIDI pitch the sample sounds at; Simpler's
         Transpose/Detune are set so incoming notes play at their true pitch."""
@@ -454,7 +454,7 @@ class Handlers(object):
         for p in dev.parameters:
             if p.name == "Volume":
                 try:
-                    report["volume"] = set_param_display(p, 0.0)   # default is -12 dB; track volume does the mixing
+                    report["volume"] = set_param_display(p, float(volume_db))   # Simpler's default is -12 dB; the client sends the value that makes velocity 100 play the file at its own level
                 except Exception as e:  # noqa: BLE001
                     report.setdefault("param_errors", []).append("Volume: %s" % e)
         if voices is not None:

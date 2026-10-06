@@ -14,7 +14,7 @@ import numpy as np
 from scipy.io import wavfile
 from scipy.signal import butter, sosfilt
 
-from ..model import BEATS_PER_BAR, DRUM_MAP, Song
+from ..model import sample_gain_db, BEATS_PER_BAR, DRUM_MAP, Song
 
 SR = 44100
 
@@ -338,7 +338,9 @@ def render_preview(song: Song, out_path: str | Path, sr: int = SR, stems_dir: st
                     w = w.copy()
                     w[:k] *= np.linspace(0, 1, k, dtype=np.float32)
                 j = min(total, i + len(w))
-                buf[i:j] += w[: j - i] * (n.vel / 127.0)
+                # sampled tracks follow Simpler's measured velocity law (velocity 100 = the file's own level)
+                amp = 10 ** (sample_gain_db(trk, n.vel) / 20) if trk.sample else n.vel / 127.0
+                buf[i:j] += w[: j - i] * amp
             for param, pts in c.envelopes.items():
                 if param in ("filter", "cutoff"):
                     for (b0, v0), (b1, v1) in zip(pts, pts[1:]):

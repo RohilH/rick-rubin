@@ -782,3 +782,27 @@ def test_several_parts_for_one_track_are_joined():
     assert per_bar == [4, 4, 4, 4, 8, 16, 8, 16 + 4]            # a, a, a, a, then b's two bars twice, with a layered on the last bar
     v = sec.variant("drop2", add={hats: [b.at(1, 8)]})
     assert s.patterns["drop2/Hats"].bars == 8 and v.parts["Hats"].pattern == "drop2/Hats" and "joined: b[1-8]" in s.patterns["drop2/Hats"].desc
+
+
+def test_sample_tracks_play_velocity_100_at_file_level(sampled, tmp_path):
+    from ableton_use.model import sample_gain_db, simpler_velocity_db
+    # the measured law: 0.4 dB per velocity step at 100 % sensitivity, 0 dB at velocity ~70
+    assert abs(simpler_velocity_db(100, 35) - 4.16) < 0.02 and abs(simpler_velocity_db(64, 35) + 0.88) < 0.02
+    assert abs(simpler_velocity_db(32, 100) + 15.3) < 0.1 and simpler_velocity_db(90, 0) == 0
+    p, _ = sampled
+    p.edit([{"op": "track", "name": "Hats", "set": {"sample": "samples/kick.wav", "instrument_params": {"Vol < Vel": 80}}}])
+    song = p.load()
+    kick, hats = song.track("Kick"), song.track("Hats")
+    assert sample_gain_db(kick, 100) == 0 and abs(sample_gain_db(kick, 64) + 5.04) < 0.02 and abs(sample_gain_db(hats, 64) + 11.52) < 0.02
+    srv = FakeLiveServer()
+    with LiveBridge(port=srv.port) as b:
+        push_song(song, b)
+    live = {t.name: t for t in srv.song.tracks}
+    vol = lambda name: {q.name: q.str_for_value(q.value) for q in live[name].devices[0].parameters}["Volume"]  # noqa: E731
+    assert vol("Kick") == "-4.2 dB" and vol("Hats") == "-9.5 dB"       # cancels Simpler's boost at velocity 100
+    # offline: a velocity-100 kick is the file itself (times the track fader)
+    song.track("Kick").volume_db = 0.0
+    r = render_preview(song, tmp_path / "p.wav", stems_dir=tmp_path / "st", tracks=["Kick"], master_peak=1.25 * 0.89)
+    _, st = read_audio(r.stems["Kick"])
+    _, src = read_audio(song.resolve("samples/kick.wav"))
+    assert abs(np.abs(st).max() / np.abs(src).max() - 1.0) < 0.05
