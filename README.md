@@ -116,7 +116,9 @@ Splice MCP connected can search, download and import in one go — see "Using Sp
 ## Reading tools for vocals and width
 
 ```
-ableton-use transcribe my-track samples/vocal.wav    # which word falls on which bar.beat.16th (local Whisper)
+ableton-use transcribe my-track samples/vocal.wav    # which syllable falls on which 16th, and how many ms off
+ableton-use retime my-track samples/vocal.wav --name vocal_q   # slide each word onto the grid
+ableton-use notes my-track samples/vocal.wav         # the notes a sample sings: pitch with octave, cents, length
 ableton-use width my-track [file]                    # stereo image as numbers: correlation, side %, mono loss, per band
 ableton-use serum list --folder Pad                  # search installed Serum 2 presets
 ableton-use serum show "<preset>"                    # a preset as a text patch sheet
@@ -154,7 +156,8 @@ ableton_use/
   live/client.py  bridge client + push_song()
   live/remote_script/AbletonUse/  Live remote script (TCP JSON bridge; handlers testable without Live)
   serum.py        Serum 2 preset catalog and text patch sheets
-  transcribe.py   words of a vocal sample on the song grid
+  transcribe.py   syllable-level alignment of vocals to the grid, and re-timing
+  pitch.py        the notes inside a single-voice sample
   samples.py      sample import: pitch detection, tempo-conforming loops, 24-bit WAV io
   project.py      project folder, history/undo, project.md memory
 SKILL.md          agent instructions: principles, hard rules, process, house craft

@@ -56,7 +56,9 @@ def timeline_view(song: Song, out_path: str | Path, bars: tuple[int, int] | None
             if c.audio:
                 # audio clip: the file's own waveform, one box per pass of the loop
                 from .samples import read_audio
+                from .pitch import load_notes
                 sr_a, xa = read_audio(song.resolve(c.audio))
+                sung = load_notes(song.resolve(c.audio))
                 xa = np.abs(xa).max(axis=1)
                 for s0, ln, off in c.segments:
                     a = c.start + s0
@@ -68,6 +70,14 @@ def timeline_view(song: Song, out_path: str | Path, bars: tuple[int, int] | None
                     xs = a + np.arange(len(env)) * k / sr_a / spb
                     ax.fill_between(xs, 0.5 - env / 2, 0.5 + env / 2, color="C0", lw=0)
                     ax.add_patch(plt.Rectangle((a, 0.02), ln, 0.96, fill=False, ec="C0", lw=0.8))
+                    if sung:                                   # pitch blobs: height = pitch within the sample's own range
+                        lo_p, hi_p = min(n.midi for n in sung) - 1, max(n.midi for n in sung) + 1
+                        for n in sung:
+                            nb = n.start_s / spb
+                            if off <= nb < off + ln:
+                                y = 0.08 + 0.84 * (n.midi - lo_p) / (hi_p - lo_p)
+                                ax.add_patch(plt.Rectangle((a + nb - off, y - 0.035), min(n.beats, off + ln - nb), 0.07, color="C1", alpha=0.9))
+                                ax.text(a + nb - off, y + 0.05, n.name, fontsize=5.5, color="C1", va="bottom")
                 for prm, pts in c.envelopes.items():
                     ax.plot([c.start + q[0] for q in pts], [q[1] for q in pts], color="r", lw=1, alpha=0.7)
                 ax.set_ylim(0, 1)

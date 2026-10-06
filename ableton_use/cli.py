@@ -85,17 +85,35 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--end-at", type=float, help="seconds into the loop to cut at first; with --align end, puts that moment (a riser's peak) on the next downbeat")
     s.add_argument("--melodic", action="store_true", help="measure the one-shot's pitch (sample_root)")
 
-    s = sub.add_parser("transcribe", help="words of a vocal sample with their bar.beat.sixteenth positions (cached; shown in score.md)")
-    s.add_argument("dir")
-    s.add_argument("sample", help="project-relative path, e.g. samples/vocal.wav")
-    s.add_argument("--bpm", type=float, help="tempo to map onto (default: the song's — right for conformed loops)")
-    s.add_argument("--model", default="small.en", help="Whisper model: tiny.en, base.en, small.en, medium.en, or multilingual names")
-    s.add_argument("--language")
-
     s = sub.add_parser("width", help="stereo image report: correlation, side %, mono loss, per band and per section")
     s.add_argument("dir")
     s.add_argument("wav", nargs="?", help="file to analyse (default: live.wav if captured, else preview.wav); a sample path gets a whole-file report")
     s.add_argument("--bars", type=_bars, help="zoom in on a bar range of the mix")
+
+    s = sub.add_parser("transcribe", help="syllables of a vocal sample with bar.beat.sixteenth positions and ms offsets (cached; shown in score.md)")
+    s.add_argument("dir")
+    s.add_argument("sample", help="project-relative path, e.g. samples/vocal.wav")
+    s.add_argument("--text", help="the lyric, if you know it — more reliable than recognising it")
+    s.add_argument("--bpm", type=float, help="tempo to map onto (default: the song's — right for conformed loops)")
+    s.add_argument("--model", default="small.en", help="Whisper model for the words: small.en, medium.en, large-v3 ...")
+    s.add_argument("--language")
+
+    s = sub.add_parser("notes", help="the notes inside a single-voice sample: pitch with octave, cents, position, length (cached; shown in score.md)")
+    s.add_argument("dir")
+    s.add_argument("sample", help="project-relative path, e.g. samples/vocal.wav")
+    s.add_argument("--bpm", type=float, help="tempo to map onto (default: the song's)")
+    s.add_argument("--fmin", type=float, default=65.0, help="lowest pitch to look for in Hz (lower it for bass: 30)")
+    s.add_argument("--fmax", type=float, default=1000.0)
+
+    s = sub.add_parser("retime", help="audio-quantize a vocal loop: slide each word (or syllable) so its vowel lands on the grid")
+    s.add_argument("dir")
+    s.add_argument("sample", help="a transcribed loop, e.g. samples/vocal.wav")
+    s.add_argument("--name", required=True, help="name of the new loop (samples/<name>.wav)")
+    s.add_argument("--by", default="word", choices=["word", "syllable"])
+    s.add_argument("--grid", type=int, default=16, choices=[4, 8, 16, 32], help="note value to land on (default 16ths)")
+    s.add_argument("--strength", type=float, default=1.0, help="0..1: how far towards the grid to move")
+    s.add_argument("--move", action="append", default=[], metavar="N=POS",
+                   help="place piece N yourself, e.g. --move 3=2.3.1 (bar.beat.sixteenth); repeatable")
 
     s = sub.add_parser("serum", help="read Serum 2 presets: `serum list` to find one, `serum show NAME` for its patch sheet")
     s.add_argument("action", choices=["list", "show"])
@@ -191,6 +209,51 @@ def main(argv: list[str] | None = None) -> int:
         else:
             root = f", sample_root={r.root:.2f}" if r.root is not None else ""
             print(f'in song.py:  song.add_track("{a.name.title()}", "<role>", sample="{r.rel}"{root})')
+    elif a.cmd == "width":
+        from .analysis import stereo_report
+        p = Project(a.dir)
+        if a.wav:
+            wav = Path(a.wav) if Path(a.wav).exists() else p.root / a.wav
+            full_mix = wav.resolve() in (p.live_path.resolve(), p.preview_path.resolve())
+        else:
+            wav, full_mix = (p.live_path if p.live_path.exists() else p.preview_path), True
+            if wav == p.preview_path:
+                print("(no Live capture yet — this is the offline sketch, whose stems are mono; width only reflects panning)\n")
+        text = stereo_report(wav, p.load() if full_mix else None, a.bars if full_mix else None)
+        if full_mix and not a.bars:
+            (p.root / "width.md").write_text(text)
+        print(text)
+    elif a.cmd == "transcribe":
+        from .transcribe import table, transcribe
+        p = Project(a.dir)
+        bpm = a.bpm or p.tempo()
+        words = transcribe((p.root / a.sample), bpm, a.model, a.language, a.text)
+        print(f"{a.sample} at {bpm:g} BPM — {len(words)} words, {sum(len(w.syllables) for w in words)} syllables")
+        print("(position and offset are of the vowel — what is heard as on or off the beat; 'cut at' is where the sound starts)")
+        print(table(words))
+    elif a.cmd == "notes":
+        from .pitch import sample_notes, table
+        from .transcribe import load_words
+        p = Project(a.dir)
+        song = p._run_source() if p.source_path.exists() else p.load()
+        notes = sample_notes(p.root / a.sample, a.bpm or song.bpm, song.key_obj, fmin=a.fmin, fmax=a.fmax)
+        print(f"{a.sample} at {a.bpm or song.bpm:g} BPM, song key {song.key} ('!' = outside it)")
+        print(table(notes, load_words(p.root / a.sample)))
+    elif a.cmd == "retime":
+        from .transcribe import load_words, retime_loop
+        p = Project(a.dir)
+        src = p.root / a.sample
+        words = load_words(src)
+        if words is None:
+            ap.error(f"{a.sample} has no transcription yet: run `ableton-use transcribe {a.dir} {a.sample}` first")
+        moves = {int(k): v for k, v in (m.split("=", 1) for m in a.move)}
+        dst = p.root / "samples" / f"{a.name}.wav"
+        rows = retime_loop(src, dst, p.tempo(), words, a.by, a.grid, a.strength, moves)
+        print(f"samples/{a.name}.wav — {len(rows)} pieces moved by {a.by}, onto 1/{a.grid} notes")
+        print(" n  piece        from        to          shift")
+        for r in rows:
+            print(f"{r['n']:2d}  {r['text']:<12} {r['from_pos']:<11} {r['to_pos']:<11} {r['shift_ms']:+6.0f} ms")
+        print(f'in song.py:  audio="samples/{a.name}.wav"')
     elif a.cmd == "serum":
         from . import serum
         if a.action == "show":

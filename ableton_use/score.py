@@ -29,6 +29,10 @@ def pattern_text(p: Pattern, song: Song) -> list[str]:
         words = load_words(song.resolve(p.audio))
         if words:
             lines.extend(words_text(words))
+        from .pitch import load_notes, notes_text
+        sung = load_notes(song.resolve(p.audio))
+        if sung:
+            lines.extend(notes_text(sung))
         return lines
     if not p.notes:
         lines.append("  (empty)")

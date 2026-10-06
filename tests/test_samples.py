@@ -257,23 +257,76 @@ def test_cli_sample(tmp_path, capsys):
 
 
 # ---------------------------------------------------------------- transcription (no model needed)
-def test_words_snap_to_sound_and_grid(tmp_path):
-    from ableton_use.transcribe import HOP_S, _envelope, load_words, sidecar, snap_to_audio, to_grid, words_text
-    # three bursts of sound at 120 BPM: beat 1 (0.5 s), beat 2.5 (1.25 s) and beat 4 (2.0 s), 0.2 s each
-    x = np.zeros((3 * SR, 1), np.float32)
-    for t in (0.5, 1.25, 2.0):
-        i = int(t * SR)
-        x[i:i + int(0.2 * SR), 0] = 0.5 * np.sin(np.arange(int(0.2 * SR)) * 0.05)
-    env = _envelope(x, SR)
-    # a model that starts the first word in silence, lets the second run across a gap, and starts the third late
-    raw = [("gonna", 0.0, 0.7, 0.9), ("take", 0.7, 1.95, 0.4), ("time", 2.05, 2.6, 0.99)]
-    snapped = snap_to_audio(raw, env)
-    assert [round(s, 2) for _, s, _, _ in snapped] == [0.5, 1.25, 2.0]
-    assert all(abs((e - s) - 0.2) < 4 * HOP_S for _, s, e, _ in snapped)
-    words = to_grid(snapped, 120.0)
-    assert [w.pos for w in words] == ["1.2.1", "1.3.3", "2.1.1"] and all(abs(w.off_ms) < 6 for w in words)
-    assert words_text(words) == ["  words bar 1: 2.1 gonna; 3.3 take?", "  words bar 2: 1.1 time"]
-    assert load_words(tmp_path / "none.wav") is None and sidecar("a/b.wav").name == "b.words.json"
+def _sung(path, sylls, total_s=4.0):
+    """A fake vocal: each syllable is 30 ms of quiet hiss (the consonant) then a tone (the vowel)."""
+    rng = np.random.default_rng(0)
+    x = np.zeros(int(total_s * SR), np.float32)
+    for start, cons_s, vowel_s in sylls:
+        i, c, v = int(start * SR), int(cons_s * SR), int(vowel_s * SR)
+        x[i:i + c] += 0.03 * rng.standard_normal(c).astype(np.float32)
+        t = np.arange(v) / SR
+        x[i + c:i + c + v] += (0.5 * np.sin(2 * np.pi * 220 * t) * np.minimum(1, t / 0.004)).astype(np.float32)
+    write_wav24(path, SR, x)
+    return path
+
+
+def test_syllables_and_attacks(tmp_path):
+    from ableton_use.transcribe import (beat_point, build_words, clean_words, envelope, load_words, save_words, sidecar,
+                                        snap_onset, syllabify, table, words_text)
+    cut = lambda w: [w[a:b] for a, _, b in syllabify(w)]  # noqa: E731
+    assert cut("gonna") == ["gon", "na"] and cut("take") == ["take"] and cut("some") == ["some"] and cut("time") == ["time"]
+    assert cut("crisis") == ["cri", "sis"] and cut("table") == ["tab", "le"] and cut("yesterday") == ["yes", "ter", "day"]
+    assert cut("i'm") == ["i'm"] and cut("mmm") == ["mmm"] and syllabify("take")[0] == (0, 1, 4)
+    assert clean_words("I’m gonna, TAKE... some-time!") == ["i'm", "gonna", "take", "sometime"]
+
+    # 120 BPM: a 16th is 125 ms. "gonna" starts on beat 2, "take" 20 ms late of beat 3 with a 30 ms consonant
+    wav = _sung(tmp_path / "v.wav", [(0.5, 0.03, 0.15), (0.75, 0.0, 0.15), (1.02, 0.03, 0.4)])
+    _, x = read_audio(wav)
+    env = envelope(x, SR)
+    assert abs(snap_onset(env, 0.52) - 0.5) < 0.006 and snap_onset(env, 2.5) == 2.5          # nothing rises at 2.5 s
+    assert abs(beat_point(env, 0.5, 0.62) - 0.53) < 0.008 and abs(beat_point(env, 0.75, 0.85) - 0.75) < 0.008
+    # letters as a CTC aligner gives them: 20 ms frames, placed mid-sound, never exactly on the onset
+    letters = [[(0.52, 0.54, 0.9), (0.58, 0.60, 0.9), (0.66, 0.68, 0.9), (0.76, 0.78, 0.8), (0.80, 0.82, 0.8)],
+               [(1.04, 1.06, 0.2), (1.10, 1.12, 0.3), (1.28, 1.30, 0.2), (1.32, 1.34, 0.2)]]
+    words = build_words(["gonna", "take"], letters, env, 120.0, len(x) / SR)
+    assert [w.text for w in words] == ["gonna", "take"] and [s.text for s in words[0].syllables] == ["gon", "na"]
+    gon, na = words[0].syllables
+    take = words[1].syllables[0]
+    assert abs(gon.start_s - 0.5) < 0.006 and abs(gon.vowel_s - 0.53) < 0.008 and gon.pos == "1.2.1" and 20 < gon.off_ms < 40
+    assert abs(na.start_s - 0.75) < 0.006 and na.pos == "1.2.3" and abs(na.off_ms) < 8
+    assert abs(take.start_s - 1.02) < 0.006 and abs(take.vowel_s - 1.05) < 0.008 and take.pos == "1.3.1" and 40 < take.off_ms < 60
+    assert abs(take.end_s - 1.45) < 0.02 and words[1].conf < 0.3 <= words[0].conf
+    lines = words_text(words)
+    assert lines[0].startswith("  words bar 1: 2.1 gon+") and "; 2.3 -na; 3.1 take?+" in lines[0]
+    assert "-na" in table(words) and "(gonna)" in table(words)
+    save_words(wav, words, 120.0, "test")
+    assert load_words(wav) == words and load_words(tmp_path / "none.wav") is None and sidecar("a/b.wav").name == "b.words.json"
+
+
+def test_retime_puts_attacks_on_the_grid(tmp_path):
+    from ableton_use.transcribe import beat_point, build_words, envelope, load_words, retime_loop, snap_onset
+    # three words, each late by a different amount (120 BPM, 16th = 125 ms)
+    wav = _sung(tmp_path / "v.wav", [(0.52, 0.02, 0.2), (1.02, 0.03, 0.3), (2.31, 0.0, 0.3)])
+    _, x = read_audio(wav)
+    env = envelope(x, SR)
+    letters = [[(0.54, 0.56, 0.9), (0.58, 0.60, 0.9)], [(1.04, 1.06, 0.9), (1.09, 1.11, 0.9)], [(2.33, 2.35, 0.9), (2.4, 2.42, 0.9)]]
+    words = build_words(["go", "to", "at"], letters, env, 120.0, len(x) / SR)
+    assert [round(w.off_ms) for w in words] != [0, 0, 0]
+    rows = retime_loop(wav, tmp_path / "q.wav", 120.0, words, grid=16, moves={3: "2.1.3"})
+    assert [r["text"] for r in rows] == ["go", "to", "at"] and [r["to_pos"] for r in rows] == ["1.2.1", "1.3.1", "2.1.3"]
+    assert rows[0]["shift_ms"] < -30 and rows[2]["to_beat"] == 4.5
+    _, y = read_audio(tmp_path / "q.wav")
+    assert len(y) == len(x)
+    env2 = envelope(y, SR)
+    for target in (0.5, 1.0, 2.25):                       # measured again in the new file: attacks sit on the grid
+        st = snap_onset(env2, target, before_s=0.08, after_s=0.08)
+        assert abs(beat_point(env2, st, st + 0.1) - target) < 0.008
+    moved = load_words(tmp_path / "q.wav")
+    assert [w.pos for w in moved] == ["1.2.1", "1.3.1", "2.1.3"] and all(abs(w.off_ms) < 1 for w in moved)
+    # half strength moves half way; by="syllable" yields one piece per syllable
+    half = retime_loop(wav, tmp_path / "h.wav", 120.0, words, strength=0.5)
+    assert abs(half[0]["shift_ms"] - rows[0]["shift_ms"] / 2) < 0.6
+    assert len(retime_loop(wav, tmp_path / "s.wav", 120.0, words, by="syllable")) == 3
 
 
 # ---------------------------------------------------------------- stereo image
@@ -502,3 +555,33 @@ def test_song_written_in_python(tmp_path, capsys):
     for bad, msg in (("9.1 A0 1", "outside the bar"), ("1.1 H9 1", "cannot read event"), ("1.1 A0", "cannot read event")):
         with pytest.raises(ValueError, match=msg):
             bar_events(bad)
+
+
+# ---------------------------------------------------------------- notes inside a sample
+def test_notes_inside_a_sample(tmp_path, capsys):
+    from ableton_use import Key
+    from ableton_use.pitch import _tidy, load_notes, notes_text, pitch_at, register, sample_notes, table
+    # a sung line at 120 BPM: F3 for a beat, a breath, F3 again, then Ab3 20 cents flat, then E3 (not in F minor)
+    def tone(midi, secs):
+        f = 440 * 2 ** ((midi - 69) / 12)
+        t = np.arange(int(secs * SR)) / SR
+        return 0.4 * (np.sin(2 * np.pi * f * t) + 0.5 * np.sin(4 * np.pi * f * t) + 0.25 * np.sin(6 * np.pi * f * t)) * np.minimum(1, t / 0.01)
+    gap = np.zeros(int(0.04 * SR))
+    x = np.concatenate([np.zeros(int(0.5 * SR)), tone(53, 0.46), gap, tone(53, 0.25), np.zeros(int(0.25 * SR)),
+                        tone(55.8, 0.5), tone(52, 0.5), np.zeros(int(0.5 * SR))]).astype(np.float32)
+    write_wav24(tmp_path / "v.wav", SR, x)
+    notes = sample_notes(tmp_path / "v.wav", 120.0, Key.parse("F minor"))
+    assert [n.name for n in notes] == ["F2", "G#2", "E2"]             # the breath did not split the first note
+    f, ab, e = notes
+    assert abs(f.midi - 53) < 0.1 and abs(f.start_s - 0.5) < 0.03 and abs(f.end_s - 1.25) < 0.04 and f.pos == "1.2.1"
+    assert abs(ab.cents + 20) <= 6 and ab.pos == "1.4.1" and abs(ab.beats - 1.0) < 0.12
+    assert (f.in_key, ab.in_key, e.in_key) == (True, True, False)
+    assert register(notes).startswith("range E2-G#2 (165-20") and "centre F#2" in register(notes)
+    lines = notes_text(notes)
+    assert lines[0].startswith("  pitch: range E2-G#2") and "2.1 F2 1.5" in lines[1] and "4.1 G#2-" in lines[1]
+    assert "E2!" in "".join(lines) and "E2    !" in table(notes)
+    assert pitch_at(notes, 1.55, 1.9).name == "G#2" and pitch_at(notes, 3.0, 3.2) is None and load_notes(tmp_path / "v.wav") == notes
+    # an octave blip next to a long note is that note; noise has no notes
+    assert _tidy([(0.0, 0.5, 53.0), (0.5, 0.58, 65.1), (0.58, 0.9, 53.1)]) == [(0.0, 0.9, pytest.approx(53.04, abs=0.05))]
+    write_wav24(tmp_path / "n.wav", SR, (0.3 * np.random.default_rng(1).standard_normal(SR)).astype(np.float32))
+    assert sample_notes(tmp_path / "n.wav", 120.0) == [] and "no pitched notes" in register([])
