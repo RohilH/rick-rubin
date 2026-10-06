@@ -53,6 +53,8 @@ def track_pitch(x: np.ndarray, sr: int, fmin: float = 65.0, fmax: float = 1000.0
     W = max(int(0.03 * sr), 2 * tau_max)                       # at least two periods of the lowest pitch
     n = W + tau_max
     nfft = 1 << int(np.ceil(np.log2(n + W)))
+    if len(m) < n + hop:                                       # shorter than one analysis frame: pad, so it reads as "no pitch" rather than failing
+        m = np.pad(m, (0, n + hop - len(m)))
     times, out = [], []
     taus = np.arange(1, tau_max + 1)
     for i in range(0, max(1, len(m) - n), hop):

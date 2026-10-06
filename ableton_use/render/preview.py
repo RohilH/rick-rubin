@@ -304,6 +304,7 @@ def render_preview(song: Song, out_path: str | Path, sr: int = SR, stems_dir: st
         buf = np.zeros(total, dtype=np.float32)
         mine = [c for c in clips if c.track == trk.name]
         env_pts = []
+        vol_pts: list[tuple[float, list]] = []
         if trk.serum and mine:                               # the real plug-in, rendered offline
             from ..samples import _resample, read_audio
             from ..serum import track_stem
@@ -342,6 +343,8 @@ def render_preview(song: Song, out_path: str | Path, sr: int = SR, stems_dir: st
                 if param in ("filter", "cutoff"):
                     for (b0, v0), (b1, v1) in zip(pts, pts[1:]):
                         env_pts.append(((c.start + b0, v0), (c.start + b1, v1)))
+                elif param == "volume":
+                    vol_pts.append((c.start, sorted(pts)))
         synth_tone = not trk.is_drum and not trk.sample and not trk.audio and not trk.serum
         if synth_tone or env_pts:
             # synths get a role-typical tone filter; samples are only filtered by automation (an Auto Filter in Live)
@@ -349,6 +352,11 @@ def render_preview(song: Song, out_path: str | Path, sr: int = SR, stems_dir: st
             ctrl = _filter_curve(env_pts, total, sr, spb)
             cutoff = 60.0 * (base / 60.0) ** ctrl
             buf = _apply_lowpass(buf, cutoff, sr)
+        for start, pts in vol_pts:                          # volume automation: a gain curve over that clip
+            a, b = int((start + pts[0][0]) * spb * sr), min(total, int((start + pts[-1][0]) * spb * sr))
+            if b > a:
+                tt = np.arange(b - a) / sr / spb + pts[0][0]
+                buf[a:b] *= np.interp(tt, [q[0] for q in pts], [q[1] for q in pts]).astype(np.float32)
         if trk.ducked:
             depth = DUCK_DEPTH.get(trk.role, 0.55)
             buf *= 1 - depth * (1 - duck)

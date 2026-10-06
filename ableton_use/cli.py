@@ -145,11 +145,11 @@ def main(argv: list[str] | None = None) -> int:
 
     s = sub.add_parser("serum", help="read Serum 2 presets: `serum list` to find one, `serum show NAME` for its patch sheet")
     s.add_argument("action", choices=["list", "search", "index", "show", "params", "render", "view"])
-    s.add_argument("words", nargs="*", help="search: more words (all must match); -word excludes")
+    s.add_argument("words", nargs="*", help="show/params/render/view: the preset's name (or words from it, or a path); "
+                                            "search/list: words that must all match (-word excludes)")
     s.add_argument("--sort", help="search: attack decay bright dark sub bass wide loud length")
     s.add_argument("--like", help="search: rank by closeness in sound to this preset")
     s.add_argument("--limit", type=int, default=25)
-    s.add_argument("name", nargs="?", help="show/params/render: preset name, words from it, or a .SerumPreset path")
     s.add_argument("--note", action="append", default=[], help="render: note(s) to play, e.g. --note C1 --note G1 (default C2); Ableton naming")
     s.add_argument("--secs", type=float, default=1.0, help="render: how long each note is held")
     s.add_argument("--set", action="append", default=[], metavar="PARAM=VALUE", help="render/params: set a Serum parameter first, e.g. --set macro_1=80")
@@ -384,6 +384,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f'in song.py:  audio="samples/{a.name}.wav"')
     elif a.cmd == "serum":
         from . import serum
+        a.name = " ".join(a.words) or None            # one preset name for show/params/render/view
         if a.action == "show":
             if not a.name:
                 ap.error("serum show needs a preset name")
@@ -394,7 +395,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"indexed {len(idx)} presets -> {serum.index_path()}" + (f"; {len(bad)} could not be rendered: {', '.join(bad[:8])}" if bad else ""))
         elif a.action == "search":
             from .samples import FEATURE_HEAD, feature_row
-            words = ([a.name] if a.name else []) + list(a.words) + (a.search.split() if a.search else [])
+            words = list(a.words) + (a.search.split() if a.search else [])
             hits = serum.search(words, a.folder, a.tag, a.sort, a.like, a.limit)
             print(f"each preset played as a 1 s C2; 'pitch' is what came out (shows the patch's own octave)")
             print(FEATURE_HEAD)

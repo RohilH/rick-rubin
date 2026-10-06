@@ -768,3 +768,17 @@ def test_character_words_and_project_sample_search(tmp_path, capsys):
     assert main(["sample", str(root), str(raw / "tick.wav"), "--name", "tick", "--oneshot"]) == 0
     out = capsys.readouterr().out
     assert "snappy" in out and "samples/tick.wav" in json.loads((root / "samples" / "manifest.json").read_text())["analysis"]
+
+
+def test_several_parts_for_one_track_are_joined():
+    s = Song("J", bpm=120, key="A minor")
+    hats = s.add_track("Hats", "hat")
+    a = s.pattern("a", hats, "x...x...x...x...")
+    b = s.pattern("b", hats, "x.x.x.x.x.x.x.x.|xxxxxxxxxxxxxxxx")
+    sec = s.add_section("drop", 8, kind="drop", parts={hats: [a.at(1, 4), b.at(5, 8), a.at(8, 8)]})
+    assert sec.parts["Hats"].pattern == "drop/Hats" and s.patterns["drop/Hats"].bars == 8 and not s.validate()
+    notes = s.patterns["drop/Hats"].notes
+    per_bar = [sum(1 for n in notes if bar * 4 <= n.start < bar * 4 + 4) for bar in range(8)]
+    assert per_bar == [4, 4, 4, 4, 8, 16, 8, 16 + 4]            # a, a, a, a, then b's two bars twice, with a layered on the last bar
+    v = sec.variant("drop2", add={hats: [b.at(1, 8)]})
+    assert s.patterns["drop2/Hats"].bars == 8 and v.parts["Hats"].pattern == "drop2/Hats" and "joined: b[1-8]" in s.patterns["drop2/Hats"].desc

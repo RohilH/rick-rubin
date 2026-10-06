@@ -446,12 +446,33 @@ def _patch_facts(tree: dict) -> dict:
     return {"voices": "mono" if glob.get("kParamMonoToggle") else "poly", "engines": sorted(engines), "fx": fx, "macros": macros}
 
 
-def build_index(root: str | Path | None = None, progress=None, limit: int | None = None) -> dict:
+def _index_worker(conn) -> None:
+    """Child process: plays presets it is sent and returns their measurements. Lives in its own process so a
+    preset whose render never returns can be killed without losing the whole build."""
+    from .samples import describe_audio, jsonable
+    host = SerumHost()
+    conn.send(("ready", None))
+    while True:
+        path = conn.recv()
+        if path is None:
+            return
+        try:
+            _, tree = read_preset(path)
+            host.load(path)
+            audio = host.render([(INDEX_NOTE, 0.0, 1.0, 100)], 2.5)
+            d = jsonable(describe_audio(44100, audio, Path(path).stem))
+            d.update(_patch_facts(tree))
+            conn.send(("ok", d))
+        except Exception as e:  # noqa: BLE001
+            conn.send(("error", f"{type(e).__name__}: {e}"))
+
+
+def build_index(root: str | Path | None = None, progress=None, limit: int | None = None, timeout_s: float = 30.0) -> dict:
     """Play every installed preset once (a 1 s C2) through the hosted plug-in and record what it sounds
     like — attack, decay, brightness, low-end share, width, the pitch that actually comes out — next to
-    its folder, tags, description and patch facts. Takes a few minutes the first time; later runs only
-    render presets that are new or changed."""
-    from .samples import describe_audio, jsonable
+    its folder, tags, description and patch facts. Later runs only render presets that are new or changed;
+    the file is saved as it goes; a preset that does not render within `timeout_s` is skipped and noted."""
+    import multiprocessing as mp
     from .theory import name as pitch_name
     path = index_path()
     old = {}
@@ -459,7 +480,6 @@ def build_index(root: str | Path | None = None, progress=None, limit: int | None
         data = json.loads(path.read_text())
         if data.get("version") == INDEX_VERSION:
             old = data.get("presets", {})
-    host = SerumHost.get()
     out: dict[str, dict] = {}
     todo = catalog(root)[:limit]
 
@@ -469,30 +489,55 @@ def build_index(root: str | Path | None = None, progress=None, limit: int | None
         tmp.write_text(json.dumps({"version": INDEX_VERSION, "note": INDEX_NOTE, "presets": presets}) + "\n")
         tmp.replace(path)
 
-    for n, info in enumerate(todo):
-        key = str(info.path)
-        mt = round(info.path.stat().st_mtime, 3)
-        if key in old and old[key].get("mtime") == mt:
-            out[key] = old[key]
-            continue
-        try:
-            _, tree = read_preset(info.path)
-            host.load(info.path)
-            audio = host.render([(INDEX_NOTE, 0.0, 1.0, 100)], 2.5)
-            d = jsonable(describe_audio(44100, audio, info.name))
-            silent = d["peak_db"] < -70
-        except Exception as e:  # noqa: BLE001
-            out[key] = {"name": info.name, "folder": info.folder, "tags": info.tags, "error": f"{type(e).__name__}: {e}", "mtime": mt}
-            continue
-        facts = _patch_facts(tree)
-        d.update({"name": info.name, "folder": info.folder, "tags": info.tags, "author": info.author, "description": info.description,
-                  "mtime": mt, "silent": silent, "played": pitch_name(INDEX_NOTE), **facts})
-        out[key] = d
-        if progress and (n % 25 == 0 or n == len(todo) - 1):
-            progress(f"{n + 1}/{len(todo)} {info.name}")
-        if n % 40 == 39:                                   # keep what is done: an interrupted build resumes from here
-            save({**old, **out})
-    host.load(None)
+    ctx = mp.get_context("spawn")
+    worker = None
+    conn = None
+
+    def start():
+        nonlocal worker, conn
+        conn, child = ctx.Pipe()
+        worker = ctx.Process(target=_index_worker, args=(child,), daemon=True)
+        worker.start()
+        if not conn.poll(120) or conn.recv()[0] != "ready":
+            raise RuntimeError("the Serum host did not start")
+
+    def stop():
+        nonlocal worker
+        if worker is not None and worker.is_alive():
+            worker.kill()
+            worker.join(5)
+        worker = None
+
+    try:
+        for n, info in enumerate(todo):
+            key = str(info.path)
+            mt = round(info.path.stat().st_mtime, 3)
+            if key in old and old[key].get("mtime") == mt:
+                out[key] = old[key]
+                continue
+            base = {"name": info.name, "folder": info.folder, "tags": info.tags, "author": info.author,
+                    "description": info.description, "mtime": mt, "played": pitch_name(INDEX_NOTE)}
+            if worker is None:
+                start()
+            conn.send(key)
+            if conn.poll(timeout_s):
+                status, d = conn.recv()
+                out[key] = {**d, **base, "silent": d["peak_db"] < -70} if status == "ok" else {**base, "error": d}
+            else:                                          # stuck: kill it, note it, carry on with a fresh host
+                stop()
+                out[key] = {**base, "error": f"did not render within {timeout_s:g} s"}
+            if progress and (n % 25 == 0 or n == len(todo) - 1):
+                progress(f"{n + 1}/{len(todo)} {info.name}")
+            if n % 40 == 39:
+                save({**old, **out})
+    finally:
+        if worker is not None and worker.is_alive():
+            try:
+                conn.send(None)
+                worker.join(3)
+            except Exception:  # noqa: BLE001
+                pass
+            stop()
     save(out)
     return out
 

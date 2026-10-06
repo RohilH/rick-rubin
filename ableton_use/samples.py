@@ -78,39 +78,18 @@ def _resample(x: np.ndarray, sr_in: int, sr_out: int) -> np.ndarray:
 
 # ============================================================================ pitch
 def detect_pitch(path: str | Path, fmin: float = 25.0, fmax: float = 2000.0) -> float:
-    """Fundamental of a one-shot as a fractional MIDI pitch (Ableton numbering: C3 = 60).
-
-    Analyses 150 ms just after the attack with a harmonic product spectrum and
-    checks it against autocorrelation. If they disagree by about an octave (a
-    common HPS failure), the autocorrelation estimate is used."""
+    """Fundamental of a one-shot as a fractional MIDI pitch (Ableton numbering: C3 = 60): the pitch of
+    its longest steady stretch, from the same tracker `ableton-use notes` uses (so the two always agree).
+    Raises ValueError when the sample has no steady pitch (noise, a drum hit, a chord)."""
+    from .pitch import segment_notes, track_pitch
     sr, x = read_audio(path)
-    m = x.mean(axis=1).astype(np.float64)
-    m /= np.abs(m).max() + 1e-12
-    i0 = int(np.argmax(np.abs(m) > 0.3)) + int(0.02 * sr)
-    seg = m[i0: i0 + int(0.15 * sr)]
-    if len(seg) < int(0.03 * sr):
-        seg = m[: int(0.15 * sr)]
-    seg = seg * np.hanning(len(seg))
-    n = 1 << 18
-    S = np.abs(np.fft.rfft(seg, n))
-    f = np.fft.rfftfreq(n, 1 / sr)
-    hps = S.copy()
-    for h in (2, 3, 4):
-        d = S[::h]
-        hps[: len(d)] *= d
-    band = (f > fmin) & (f < fmax)
-    f_hps = float(f[band][np.argmax(hps[band])])
-    ac = np.correlate(seg, seg, "full")[len(seg) - 1:]
-    lo, hi = int(sr / fmax), min(len(ac) - 1, int(sr / fmin))
-    lag = lo + int(np.argmax(ac[lo:hi]))
-    # parabolic interpolation for sub-sample lag
-    if 0 < lag < len(ac) - 1:
-        a, b, c = ac[lag - 1], ac[lag], ac[lag + 1]
-        lag = lag + 0.5 * (a - c) / (a - 2 * b + c + 1e-12)
-    f_ac = sr / lag
-    f0 = f_hps if abs(12 * np.log2(f_hps / f_ac)) < 1.0 else f_ac
-    # Standard MIDI numbering (60 = 261.6 Hz); Ableton only *names* it C3.
-    return float(69 + 12 * np.log2(f0 / 440.0))
+    times, midi = track_pitch(x, sr, fmin=fmin, fmax=fmax)
+    notes = segment_notes(times, midi, min_s=0.03)
+    if not notes:
+        raise ValueError(f"{Path(path).name}: no steady pitch found — not a single-note sample? (check with `ableton-use notes`)")
+    a, b, p = max(notes, key=lambda n: n[1] - n[0])
+    sel = (times >= a) & (times <= b) & ~np.isnan(midi)
+    return float(np.median(midi[sel])) if sel.any() else float(p)
 
 
 # ============================================================================ conform

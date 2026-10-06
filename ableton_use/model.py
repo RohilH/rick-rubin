@@ -371,7 +371,7 @@ class Section:
             sec.parts.pop(tn, None)
             sec.fills.pop(tn, None)
             sec.automation.pop(tn, None)
-        sec.parts.update(_as_parts(add))
+        sec.parts.update(_as_parts(add, self._song, name, sec.bars))
         sec.fills.update(_as_fills(fills))
         for tn, d in _as_automation(automation).items():
             sec.automation.setdefault(tn, {}).update(d)
@@ -416,8 +416,38 @@ def _as_part(v: Any) -> Part:
     return Part.from_json(v)
 
 
-def _as_parts(d: dict | None) -> dict[str, Part]:
-    return {getattr(k, "name", k): _as_part(v) for k, v in (d or {}).items() if v is not None}
+def _as_parts(d: dict | None, song: Any = None, section: str = "", bars: int = 0) -> dict[str, Part]:
+    """{track: part}. A *list* of parts for one track ([a.at(1, 16), b.at(17, 32)]) is joined into one
+    pattern as long as the section, named '<section>/<track>'."""
+    out = {}
+    for k, v in (d or {}).items():
+        if v is None:
+            continue
+        tn = getattr(k, "name", k)
+        if isinstance(v, list):
+            if song is None:
+                raise ValueError("several parts for one track need a section created through Song.add_section / Section.variant")
+            out[tn] = _join_parts(song, section, tn, [_as_part(x) for x in v], bars)
+        else:
+            out[tn] = _as_part(v)
+    return out
+
+
+def _join_parts(song: Any, section: str, track: str, parts: list[Part], bars: int) -> Part:
+    notes: list[Note] = []
+    for part in parts:
+        pat = song.patterns[part.pattern]
+        if pat.is_audio:
+            raise ValueError(f"{section}/{track}: audio loops cannot be joined into one part; use separate sections or one loop")
+        end = bars if part.end is None else min(part.end, bars)
+        for b in range(part.start, end):
+            lo = ((b - part.start) % pat.bars) * BEATS_PER_BAR
+            notes += [Note(n.pitch + part.transpose, b * BEATS_PER_BAR + (n.start - lo), n.dur, n.vel)
+                      for n in pat.notes if lo <= n.start < lo + BEATS_PER_BAR]
+    name = f"{section}/{track}"
+    song.patterns[name] = Pattern(name, bars, sorted(notes, key=lambda n: (n.start, n.pitch)), track,
+                                  "joined: " + ", ".join(f"{q.pattern}[{q.start + 1}-{q.end or bars}]" for q in parts), _song=song)
+    return Part(name)
 
 
 def _as_fills(d: dict | None) -> dict[str, Fill]:
@@ -569,12 +599,13 @@ class Song:
 
     def add_section(self, name: str, bars: int, *, kind: str | None = None, energy: int = 5, parts: dict | None = None,
                     fills: dict | None = None, automation: dict | None = None, desc: str = "") -> Section:
-        """A section, appended to the arrangement. parts: {track: pattern | pattern.at(9, 16) | pattern.up(12)},
+        """A section, appended to the arrangement. parts: {track: pattern | pattern.at(9, 16) | pattern.up(12)
+        | [a.at(1, 8), b.at(9, 16)]} (a list plays several patterns on one track, one after another),
         fills: {track: pattern | pattern.every(8)}, automation: {track: {"filter": [0.3, 1.0]}} (0..1 over the section,
         or [[fraction, value], ...])."""
         if any(s.name == name for s in self.sections):
             raise ValueError(f"section {name!r} already exists")
-        sec = Section(name, kind or name, int(bars), int(energy), _as_parts(parts), _as_fills(fills),
+        sec = Section(name, kind or name, int(bars), int(energy), _as_parts(parts, self, name, int(bars)), _as_fills(fills),
                       _as_automation(automation), desc, _song=self)
         self.sections.append(sec)
         return sec
