@@ -400,10 +400,11 @@ def main(argv: list[str] | None = None) -> int:
             words = list(a.words) + (a.search.split() if a.search else []) + ["-" + w for w in a.exclude]
             a.like = " ".join(a.like) if a.like else None
             hits = serum.search(words, a.folder, a.tag, a.sort, a.like, a.limit)
-            print(f"each preset played as a 1 s C2; 'pitch' is what came out (shows the patch's own octave)")
+            print("each preset measured on the key that makes it sound around C2 (so registers are comparable); 'oct' is the patch's own "
+                  "octave offset: -2 means playing C2 sounds as C0 — write its notes two octaves higher than you want to hear")
             print(FEATURE_HEAD)
             for _, d in hits:
-                label = f"{d['folder']}/{d['name']}" + (f" [{d['voices']}; fx {' '.join(d['fx']) or '-'}]")
+                label = f"{d['folder']}/{d['name']}" + (f" [{d['voices']}; oct {d.get('patch_octave', 0):+d}; fx {' '.join(d['fx']) or '-'}]")
                 print(feature_row(d, label))
             print(f"{len(hits)} shown" + (f" (closest to {a.like!r} first)" if a.like else "") + " — words can be character (snappy dark subby wide sustained ...), "
                   "folder, tag, mono/poly, engine (wavetable sample granular spectral sub noise), fx (reverb delay distortion ...) or macro names")

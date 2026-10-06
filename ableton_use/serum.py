@@ -413,7 +413,7 @@ def track_stem(song, track, clips) -> Path:
 
 # ============================================================================ searchable index of presets
 INDEX_NOTE = 48          # C2: every preset is played on the same key, so octave differences between patches show up
-INDEX_VERSION = 2
+INDEX_VERSION = 3
 
 
 def index_path() -> Path:
@@ -461,6 +461,21 @@ def _index_worker(conn) -> None:
             host.load(path)
             audio = host.render([(INDEX_NOTE, 0.0, 1.0, 100)], 2.5)
             d = jsonable(describe_audio(44100, audio, Path(path).stem))
+            # Patches carry their own octave (a bass preset often sounds two octaves under the key). To compare
+            # like with like, measure every pitched patch where it *sounds* around C2: play it again on the key
+            # that brings it there, and remember the offset.
+            octs = 0
+            if d.get("pitch_hz"):
+                import math
+                octs = int(round(math.log2(130.81 / d["pitch_hz"])))
+                key = INDEX_NOTE + 12 * octs
+                if octs and 12 <= key <= 108:
+                    audio = host.render([(key, 0.0, 1.0, 100)], 2.5)
+                    d = jsonable(describe_audio(44100, audio, Path(path).stem))
+                else:
+                    octs = 0
+            d["patch_octave"] = -octs                       # -2: playing C2 sounds as C0
+            d["measured_on"] = INDEX_NOTE + 12 * octs
             d.update(_patch_facts(tree))
             conn.send(("ok", d))
         except Exception as e:  # noqa: BLE001
@@ -468,9 +483,10 @@ def _index_worker(conn) -> None:
 
 
 def build_index(root: str | Path | None = None, progress=None, limit: int | None = None, timeout_s: float = 30.0) -> dict:
-    """Play every installed preset once (a 1 s C2) through the hosted plug-in and record what it sounds
-    like — attack, decay, brightness, low-end share, width, the pitch that actually comes out — next to
-    its folder, tags, description and patch facts. Later runs only render presets that are new or changed;
+    """Play every installed preset through the hosted plug-in (a 1 s note, on the key that makes the patch
+    sound around C2, so a bass patch set two octaves down is compared in the same register as everything else)
+    and record what it sounds like — attack, decay, brightness, low-end share, width — plus the patch's own
+    octave offset, its folder, tags, description and patch facts. Later runs only render presets that are new or changed;
     the file is saved as it goes; a preset that does not render within `timeout_s` is skipped and noted."""
     import multiprocessing as mp
     from .theory import name as pitch_name

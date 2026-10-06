@@ -194,6 +194,17 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
         bridge.call("set_track", index=i, volume_db=t.volume_db, pan=t.pan, mute=t.mute)
         rep.tracks[t.name] = info
     # tracks are appended at the end, so the indices returned above stay valid
+    if clean:
+        mine = {t.name for t in song.tracks}
+        st = bridge.call("get_state")["tracks"]
+        left = [t["index"] for t in st if t["name"] not in mine and not t["devices"] and not t["arrangement_clips"]
+                and not any(bridge.call("lom", path=f"song.tracks[{t['index']}].clip_slots[{j}].has_clip")
+                            for j in range(len(bridge.call("lom", path=f"song.tracks[{t['index']}].clip_slots"))))]
+        if left:                                           # e.g. the placeholder Live needed while the old tracks went
+            bridge.call("delete_tracks", indices=left)
+            index = {t["name"]: t["index"] for t in bridge.call("get_state")["tracks"] if t["name"] in mine}
+            for name, i in index.items():
+                rep.tracks[name]["index"] = i
 
     cmds = []
     for t in song.tracks:
@@ -455,6 +466,10 @@ def capture_live(song: Song, bridge: LiveBridge, out_path: str | Path, bars: tup
             time.sleep(0.1)
         else:
             lom("song.continue_playing", op="call")
+        time.sleep(1.2)
+        if lom("song.current_song_time") - start < 0.05:
+            raise BridgeError("Live's transport is not moving, so nothing can be recorded. That is what Live does when it has no "
+                              "audio output device: choose one in Live > Settings > Audio (Output Device), then run capture again.")
         secs = (end - start + tail_beats) * 60.0 / song.bpm
         say(f"recording bars {b0}-{b1} from Live ({secs:.0f} s, real time)")
         t_end = time.time() + secs + 20
