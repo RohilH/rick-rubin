@@ -462,6 +462,13 @@ def build_index(root: str | Path | None = None, progress=None, limit: int | None
     host = SerumHost.get()
     out: dict[str, dict] = {}
     todo = catalog(root)[:limit]
+
+    def save(presets: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"version": INDEX_VERSION, "note": INDEX_NOTE, "presets": presets}) + "\n")
+        tmp.replace(path)
+
     for n, info in enumerate(todo):
         key = str(info.path)
         mt = round(info.path.stat().st_mtime, 3)
@@ -483,9 +490,10 @@ def build_index(root: str | Path | None = None, progress=None, limit: int | None
         out[key] = d
         if progress and (n % 25 == 0 or n == len(todo) - 1):
             progress(f"{n + 1}/{len(todo)} {info.name}")
+        if n % 40 == 39:                                   # keep what is done: an interrupted build resumes from here
+            save({**old, **out})
     host.load(None)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"version": INDEX_VERSION, "note": INDEX_NOTE, "presets": out}) + "\n")
+    save(out)
     return out
 
 
