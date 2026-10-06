@@ -29,6 +29,10 @@ description: Produce house / EDM tracks by conversation and render them into Abl
 11. **Strategy confirmation before execution.**
 12. **All outputs in the project folder.** Never write inside the ableton-use repo.
 
+## Setup
+
+First-time install lives in `install.md`. On cold start just verify: `ableton-use templates` runs (package installed), and — before any push — `ableton-use status` reaches Live. You drive everything through the `ableton-use` CLI (or `from ableton_use import Project` in a Python snippet) with your own shell and file tools; there is no separate agent runtime. Run `view` and Read the PNG it prints to look at it.
+
 ## Directory layout
 
 ```

@@ -72,12 +72,6 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("templates", help="list subgenres and arrangement templates")
 
-    s = sub.add_parser("agent", help="run the built-in Claude agent on a project")
-    s.add_argument("dir")
-    s.add_argument("task")
-    s.add_argument("--model")
-    s.add_argument("--yes", action="store_true", help="auto-approve the plan")
-
     a = ap.parse_args(argv)
 
     if a.cmd == "new":
@@ -127,10 +121,6 @@ def main(argv: list[str] | None = None) -> int:
             print(f"subgenre {n:8s} {pr.bpm:g} BPM, {pr.scale}, bass={pr.bass_style}, chords={pr.chord_style}, hats={pr.hat_style}")
         for n, t in house.TEMPLATES.items():
             print(f"template {n:8s} " + " ".join(f"{s['name']}:{s['bars']}" for s in t) + f"  = {sum(s['bars'] for s in t)} bars")
-    elif a.cmd == "agent":
-        from .agent import DEFAULT_MODEL, Agent
-        confirm = (lambda plan: "approved") if a.yes else (lambda plan: input("\nApprove plan? (enter to approve, or type changes) ") or "approved")
-        print(Agent(a.dir, a.task, model=a.model or DEFAULT_MODEL, confirm=confirm).run())
     return 0
 
 

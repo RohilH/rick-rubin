@@ -11,11 +11,5 @@ from .house import generate
 from .project import Project
 
 __version__ = "0.1.0"
-__all__ = ["Song", "Track", "Pattern", "Section", "Part", "Fill", "Note", "Key", "generate", "Project", "Agent"]
+__all__ = ["Song", "Track", "Pattern", "Section", "Part", "Fill", "Note", "Key", "generate", "Project"]
 
-
-def __getattr__(name):
-    if name == "Agent":
-        from .agent import Agent
-        return Agent
-    raise AttributeError(name)

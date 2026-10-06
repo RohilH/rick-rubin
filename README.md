@@ -1,6 +1,6 @@
 # ableton-use
 
-**Produce house tracks by conversation with a coding agent, rendered straight into Ableton Live.**
+**A toolkit that lets coding agents (Claude Code, Codex, …) produce house tracks by conversation and render them straight into Ableton Live.** There is no custom agent harness: your coding agent is the harness. It reads `SKILL.md` and drives the `ableton-use` CLI / Python API with its own shell and file tools.
 
 Describe a track ("deep house, 121 BPM, dub chords, long DJ intro, big second drop"), the agent proposes a plan, builds the arrangement, checks its own work, and pushes a full Arrangement View into Live. That includes tracks, instruments, MIDI clips, section locators, filter automation and kick-keyed sidechain.
 
@@ -38,7 +38,7 @@ Sending raw audio to an LLM is token-expensive and gives poor feedback. MIDI dum
 ## Install
 
 ```bash
-pip install -e ".[all]"        # numpy, scipy, matplotlib (views), anthropic (built-in agent)
+pip install -e ".[all]"        # numpy, scipy, matplotlib (for views)
 ableton-use install-bridge     # copies the AbletonUse remote script into Live's User Library
 ```
 
@@ -52,7 +52,9 @@ Requirements: Live 11+. Live 12 is recommended. Arrangement clips are created di
 
 ## Use it
 
-### With Claude Code (or any coding agent) as a skill
+### With Claude Code (or any coding agent) — the intended way
+
+Paste the setup prompt from [`install.md`](install.md) into your agent, or do it by hand:
 
 ```bash
 ln -s "$PWD" ~/.claude/skills/ableton-use
@@ -87,15 +89,6 @@ print(p.evaluate().text)
 p.push(replace=True)
 ```
 
-### Built-in agent (Anthropic API)
-
-```bash
-export ANTHROPIC_API_KEY=...
-ableton-use agent ~/music/sunrise "tech house, 126, rolling bass, minimal stab, 32-bar intro"
-```
-
-The `Agent` class runs the same loop with tools for reading, planning, editing, rendering, evaluating, viewing, pushing and remembering. The `view` tool returns the timeline PNG to the model as an image.
-
 ## What gets built in Live
 
 * Tempo, 4/4, and one locator per section.
@@ -123,8 +116,8 @@ ableton_use/
   live/client.py  bridge client + push_song()
   live/remote_script/AbletonUse/  Live remote script (TCP JSON bridge; handlers testable without Live)
   project.py      project folder, history/undo, project.md memory
-  agent.py        optional Anthropic tool-use loop
 SKILL.md          agent instructions: principles, hard rules, process, house craft
+install.md        setup prompt + steps for your coding agent
 docs/HOUSE.md     research notes behind the defaults
 ```
 
