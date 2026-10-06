@@ -1,0 +1,16 @@
+# {title}
+
+A song project for ableton-use. {bpm} BPM, {key}.
+
+@{prefs}
+
+## How this project works
+
+- Read `{repo}/SKILL.md` before doing anything: it is the manual (notation, commands, Live bridge, tools).
+- `song.py` is the song — the only file you compose in. Every other command rebuilds from it.
+- `project.md` is this song's memory: the brief, the exploration log, decisions, what is still weak.
+  Read it first; add to it as you go, not only at the end.
+- `samples/raw/` holds untouched downloads, `samples/` the imported/conformed files, and
+  `samples/manifest.json` records every candidate — the ones used *and* the ones rejected, with the reason.
+- Run the tools from this folder: `{cli} score .`, `{cli} eval .`, `{cli} audition . samples/raw/*.wav`,
+  `{cli} push .`, `{cli} capture . --bars 33-40`.

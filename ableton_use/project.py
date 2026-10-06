@@ -68,12 +68,33 @@ class Project:
 
     @classmethod
     def init(cls, root: str | Path, title: str, bpm: float, key: str) -> "Project":
-        """A new project with an empty song.py to write the song in."""
+        """A new song project copied from the scaffold in <repo>/project-template: CLAUDE.md (which imports
+        the shared PREFERENCES.md), an empty song.py, project.md and a sample manifest. No musical content."""
         p = cls(root)
-        (p.root / "samples").mkdir(parents=True, exist_ok=True)
         if p.source_path.exists() or p.song_path.exists():
             raise FileExistsError(f"{p.root} already holds a song")
-        p.source_path.write_text(SONG_PY.format(title=title, bpm=f"{bpm:g}", key=key))
+        repo = Path(__file__).resolve().parent.parent
+        tpl = repo / "project-template"
+        prefs = repo / "PREFERENCES.md"
+        fill = {"title": title, "bpm": f"{bpm:g}", "key": key, "repo": str(repo), "prefs": str(prefs), "cli": "ableton-use"}
+        (p.root / "samples" / "raw").mkdir(parents=True, exist_ok=True)
+        if not tpl.is_dir():                                # installed without the repo around it: bare minimum
+            p.source_path.write_text(SONG_PY.format(**fill))
+            return p
+        for src in sorted(tpl.rglob("*")):
+            if src.is_dir() or src.name == ".gitkeep":
+                continue
+            dst = p.root / src.relative_to(tpl)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if dst.exists():
+                continue
+            text = src.read_text()
+            if src.name == "manifest.json" or src.suffix not in (".md", ".py"):
+                for k, v in fill.items():                   # json/other: plain replacement, braces are literal there
+                    text = text.replace("{" + k + "}", v)
+            else:
+                text = text.format(**fill)
+            dst.write_text(text)
         return p
 
     def exists(self) -> bool:

@@ -12,7 +12,8 @@ description: Write house / EDM tracks as Python code — every note, rhythm, gro
 3. **Ask → confirm → execute → self-eval → push → persist.** Never build until the user has approved a plain-English plan.
 4. **`song.py` is the source of truth; Ableton is a render target.** Changes go into `song.py`, then get re-pushed (`--replace`). Never "fix" things inside Live and expect them to come back.
 5. **You write the music. All of it.** There are no templates, generators or presets in this library and none may be added (see `CLAUDE.md`). Every note, rhythm, voicing, groove number and section in `song.py` is yours. The "House craft" notes below describe what the genre does; they are not parts to copy.
-6. **Verify before you present.** If `eval` fails, you are not done.
+6. **Explore; do not one-shot.** The first sample, preset, bassline or hook that works is a draft. Shortlist, compare by measurement and in context, iterate, and record what lost and why (`PREFERENCES.md`, and "Exploring" below).
+7. **Verify before you present.** If `eval` fails, you are not done.
 
 ## Hard rules (production correctness — non-negotiable)
 
@@ -54,7 +55,9 @@ First-time install lives in `install.md`. On cold start just verify: `ableton-us
 ## Commands
 
 ```
-ableton-use init <dir> --title "..." --bpm 126 --key "A minor"   # a project with an empty song.py
+ableton-use init <dir> --title "..." --bpm 126 --key "A minor"   # a song project from project-template/: CLAUDE.md, empty song.py, project.md, manifest
+ableton-use audition <dir> samples/raw/kick_*.wav   # candidates side by side: punch, decay, spectrum, pitch+octave, width
+ableton-use browse "sounds/Bass" [--search sub]     # what Live offers: instruments, presets, effects, plug-ins
 ableton-use build <dir>                       # run song.py -> song.json + score.md (every other command does this when song.py changed)
 ableton-use score <dir> [--bars 33-48] [--tracks Bass Kick]   # print/refresh score.md; with a zoom, print just that slice
 ableton-use transcribe <dir> samples/vocal.wav [--text "lyric"]   # syllables -> bar.beat.16th + ms off the grid
@@ -126,6 +129,18 @@ song.arrange(intro, drop, intro, drop2)      # listing a section twice plays it 
 - **Automation** values run 0..1 over the section: `[start, end]` or `[[fraction, value], ...]`. `filter` is a low-pass sweep (60 Hz–18 kHz), `volume` and `pan` are the mixer; `"Device:Parameter"` reaches anything else on MIDI tracks. On audio-loop tracks, `filter` and `volume` are rendered into the audio.
 - Projects that are only a `song.json` (no `song.py`) can still be changed with JSON ops through `ableton_use.edits`; a project with a `song.py` is always edited there.
 
+## Exploring
+
+Great tracks come from comparing options, not from accepting the first one. You cannot hear, so exploring means *measuring several things and reading the difference*. Budget most of a session for it.
+
+- **Samples, per role.** Search more than once with different words (character, genre, era, gear: "rubbery", "909", "dusty", "tight short"). Download a shortlist — typically 4–8 for the sounds that define the track (kick, bass, main hook, vocal), 2–4 for supporting ones — into `samples/raw/` and run `audition` on them together. Read the table for what the role needs: a kick's fundamental and decay (does it leave room for the bass? is its pitch in key?), a hat's centroid and length, a clap's body vs. snap, a bass one-shot's octave and sustain. Then test the finalists **in context**: point the track at each in turn and compare a zoomed `eval`/`capture` of the same bars. Log every candidate in `samples/manifest.json` — used or rejected, with the reason.
+- **Loops and vocals.** `transcribe`, `notes` and `width` each candidate before choosing; a loop that is late, flat or in the wrong key costs more to fix than to replace.
+- **Instruments and presets.** `browse "sounds/<category>"` lists Live's presets, `browse plugins` the plug-ins, `serum list/show` reads Serum patches. Try several for each synth part: load each (`instrument="<name>"`), `capture --bars ... --tracks <that track>`, and compare spectrum, level and width.
+- **Parts.** Write two or three genuinely different basslines / hooks / hat grooves as separate variables, swap them into the same section, and compare — score them against the vocal's syllables and notes, kick collisions, register, density. Keep the winner, note what the others taught you, delete the losers from `song.py` once the log has them.
+- **Arrangement and mix.** Change one thing at a time, capture the affected bars, compare numbers.
+
+Stop exploring a question when one option is clearly right for this track and you can say why — not when the first one passes lint.
+
 ## Zooming in
 
 `score`, `eval`, `view`, `width` and `capture` all take `--bars A-B`; all but `width` take `--tracks ...` too. Use the zoom whenever a question is local — "is the bass ducking under the kick in the drop?" is `eval --bars 41-48 --tracks Kick Bass` plus `view` on the same slice, not a re-read of the whole song. Bar numbers are always the song's. A solo render is normalised on its own, so compare shapes and ratios inside it, not its level against the full mix.
@@ -178,7 +193,7 @@ Presets are not samples: nothing here loads a third-party synth preset. Use a on
 
 ## The process
 
-1. **Inventory.** If a project exists: read `project.md` (summarise the last session in one sentence), `song.py` and `score.md`. If not, ask what they want, then `init`.
+1. **Inventory.** If a project exists: read its `CLAUDE.md` and `project.md` (summarise the last session in one sentence), `song.py` and `score.md`. If not, ask what they want, then `init` — which copies the scaffold in `project-template/`.
 2. **Converse.** Ask questions shaped by the brief: reference tracks/artists, subgenre, BPM, key/mood, club vs radio length, vocal?, which instruments/plugins they own, what the drop should feel like. No fixed checklist.
 3. **Propose strategy** (4–8 sentences): tempo/key, arrangement with bar counts, groove, bass approach, harmony, hook, palette, what makes the drop land. **Wait for confirmation.**
 4. **Write.** Compose the parts in `song.py` — drums, bass, harmony, hook, arrangement, groove — by hand, for this brief. Re-read `score.md` after each round of changes; zoom with `--bars/--tracks` when the question is local.

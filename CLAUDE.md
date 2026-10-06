@@ -1,5 +1,7 @@
 # daw-use / ableton-use — project rules
 
+@PREFERENCES.md
+
 ## No templates. The agent writes the music.
 
 This library exists so an agent can write a song — notes and all — as Python code, with full
@@ -16,6 +18,8 @@ creative freedom, and render it into Ableton Live.
   patterns to save time.
 
 ## Working notes
+
+- New songs start with `ableton-use init <dir> ...`, which copies `project-template/` (a scaffold with no musical content) and wires its `CLAUDE.md` to import `PREFERENCES.md`.
 
 - `song.py` is the source of truth; `song.json`, `score.md`, previews and the Live set are build outputs.
 - The Live bridge listens on 127.0.0.1:9889. After changing `handlers.py`, run

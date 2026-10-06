@@ -219,3 +219,56 @@ def import_sample(project_dir: str | Path, src: str | Path, name: str, *, loop: 
     write_wav24(out, SR, _resample(x, sr, SR))
     root = detect_pitch(out) if melodic else None
     return Imported(out, rel, "oneshot", root=root)
+
+
+# ============================================================================ audition
+def describe_sample(path: str | Path) -> dict:
+    """What a sample is, in numbers — so candidates can be compared without listening:
+    length, level, how fast it hits and dies, where its energy sits, its pitch and octave, its width."""
+    from .analysis import BANDS, loudness_lufs, stereo_stats
+    from .pitch import hz, sample_notes
+    sr, x = read_audio(path)
+    m = x.mean(axis=1).astype(np.float64)
+    peak = float(np.abs(m).max() + 1e-12)
+    rms = float(np.sqrt(np.mean(m * m)) + 1e-12)
+    # envelope at 1 ms: attack = 10% -> 90% of peak, decay = peak -> -20 dB
+    k = max(1, sr // 1000)
+    env = np.abs(m[: len(m) // k * k]).reshape(-1, k).max(axis=1)
+    ip = int(np.argmax(env))
+    pre = env[: ip + 1]
+    a10 = int(np.argmax(pre >= 0.1 * env[ip]))
+    a90 = int(np.argmax(pre >= 0.9 * env[ip]))
+    tail = np.maximum.accumulate(env[ip:][::-1])[::-1]              # level never rises again after this point
+    under = np.flatnonzero(tail < 0.1 * env[ip])
+    spec = np.abs(np.fft.rfft(m * np.hanning(len(m)))) ** 2
+    f = np.fft.rfftfreq(len(m), 1 / sr)
+    tot = spec[(f >= 20) & (f < 20000)].sum() + 1e-12
+    notes = sample_notes(path, 120.0, save=False, fmin=30.0)
+    main = max(notes, key=lambda n: n.end_s - n.start_s) if notes else None
+    lufs = loudness_lufs(x, sr) if len(x) >= 0.5 * sr else float("nan")
+    st = stereo_stats(x, sr)
+    return {
+        "file": Path(path).name, "seconds": len(x) / sr, "peak_db": 20 * np.log10(peak), "rms_db": 20 * np.log10(rms),
+        "lufs": lufs, "crest_db": 20 * np.log10(peak / rms), "attack_ms": float(a90 - a10), "decay_ms": float(under[0]) if len(under) else float("nan"),
+        "centroid_hz": float((f * spec).sum() / (spec.sum() + 1e-12)),
+        "bands": {nm: float(100 * spec[(f >= lo) & (f < hi)].sum() / tot) for nm, lo, hi in BANDS},
+        "pitch": main.name if main else None, "pitch_hz": hz(main.midi) if main else None, "cents": main.cents if main else None,
+        "n_notes": len(notes), "side_pct": st.side_pct, "correlation": st.correlation, "low_side_pct": st.bands["low"][0],
+    }
+
+
+def audition_table(paths: list[str | Path]) -> str:
+    """Candidates side by side. Columns: length, peak, loudness (LUFS, or RMS for short hits), crest,
+    attack (10-90%), decay (to -20 dB), spectral centroid, energy by band, main pitch with octave, stereo side %."""
+    rows = [describe_sample(p) for p in paths]
+    L = ["| file | sec | peak | loud | crest | attack | decay | centroid | sub% | bass% | lowmid% | mid% | high% | air% | pitch | notes | side% (low) |",
+         "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    for r in rows:
+        b = r["bands"]
+        loud = f"{r['lufs']:.1f} LUFS" if r["lufs"] == r["lufs"] and r["lufs"] != float("-inf") else f"{r['rms_db']:.1f} rms"
+        pitch = f"{r['pitch']} {r['pitch_hz']:.0f} Hz {r['cents']:+.0f}c" if r["pitch"] else "—"
+        decay = f"{r['decay_ms']:.0f} ms" if r["decay_ms"] == r["decay_ms"] else "sustains"
+        L.append(f"| {r['file']} | {r['seconds']:.2f} | {r['peak_db']:.1f} | {loud} | {r['crest_db']:.1f} | {r['attack_ms']:.0f} ms | {decay} | "
+                 f"{r['centroid_hz']:.0f} Hz | {b['sub']:.0f} | {b['bass']:.0f} | {b['lowmid']:.0f} | {b['mid']:.0f} | {b['high']:.0f} | {b['air']:.1f} | "
+                 f"{pitch} | {r['n_notes']} | {r['side_pct']:.1f} ({r['low_side_pct']:.1f}) |")
+    return "\n".join(L)

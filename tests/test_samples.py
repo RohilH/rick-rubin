@@ -585,3 +585,34 @@ def test_notes_inside_a_sample(tmp_path, capsys):
     assert _tidy([(0.0, 0.5, 53.0), (0.5, 0.58, 65.1), (0.58, 0.9, 53.1)]) == [(0.0, 0.9, pytest.approx(53.04, abs=0.05))]
     write_wav24(tmp_path / "n.wav", SR, (0.3 * np.random.default_rng(1).standard_normal(SR)).astype(np.float32))
     assert sample_notes(tmp_path / "n.wav", 120.0) == [] and "no pitched notes" in register([])
+
+
+# ---------------------------------------------------------------- exploring: scaffold + audition
+def test_init_copies_the_scaffold_and_audition_compares(tmp_path, capsys):
+    from ableton_use.samples import describe_sample
+    root = tmp_path / "new song"
+    assert main(["init", str(root), "--title", "New Song", "--bpm", "126", "--key", "A minor"]) == 0
+    assert {p.name for p in root.iterdir()} >= {"CLAUDE.md", "song.py", "project.md", "samples", ".gitignore"}
+    claude = (root / "CLAUDE.md").read_text()
+    prefs = [ln[1:] for ln in claude.splitlines() if ln.startswith("@")]
+    assert len(prefs) == 1 and Path(prefs[0]).name == "PREFERENCES.md" and "one-shot" in Path(prefs[0]).read_text()
+    assert "{" not in claude and "{title}" not in (root / "project.md").read_text()
+    import json
+    assert json.loads((root / "samples" / "manifest.json").read_text())["song"] == {"title": "New Song", "bpm": 126, "key": "A minor"}
+    song = Project(root).load()
+    assert (song.title, song.bpm, song.key, song.tracks, song.patterns) == ("New Song", 126, "A minor", [], {})   # nothing pre-written
+    with pytest.raises(FileExistsError):
+        Project.init(root, "x", 120, "C minor")
+    # audition: a long low tone vs a short bright click
+    t = np.arange(SR) / SR
+    write_wav24(root / "samples" / "raw" / "low.wav", SR, (0.5 * np.sin(2 * np.pi * 55 * t) * np.minimum(1, t / 0.05)).astype(np.float32))
+    click = np.zeros(SR // 4, np.float32)
+    click[:300] = 0.8 * np.random.default_rng(0).standard_normal(300) * np.linspace(1, 0, 300)
+    write_wav24(root / "samples" / "raw" / "click.wav", SR, click)
+    low, hi = describe_sample(root / "samples" / "raw" / "low.wav"), describe_sample(root / "samples" / "raw" / "click.wav")
+    assert low["pitch"] == "A0" and abs(low["pitch_hz"] - 55) < 1 and low["bands"]["sub"] > 90 and 25 < low["attack_ms"] < 50
+    assert hi["pitch"] is None and hi["centroid_hz"] > 3000 and hi["attack_ms"] < 3 and hi["decay_ms"] < 15 and low["decay_ms"] != low["decay_ms"]
+    capsys.readouterr()
+    assert main(["audition", str(root), "samples/raw/low.wav", "samples/raw/click.wav"]) == 0
+    out = capsys.readouterr().out
+    assert "| low.wav | 1.00 |" in out and "A0 55 Hz" in out and "sustains" in out and "| click.wav | 0.25 |" in out

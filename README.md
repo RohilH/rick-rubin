@@ -98,6 +98,16 @@ song.arrange(drop, drop2)
 There are no templates, generators or presets: the agent writes every note. Patterns and sections are plain
 Python variables that can be derived from (`variant`) and reused. `tracks/time-crisis/song.py` is a full example.
 
+## Starting a song, and house rules
+
+`ableton-use init` copies `project-template/` — a scaffold with no musical content: a `CLAUDE.md` for the
+song, an empty `song.py`, `project.md` (brief, exploration log, decisions) and a sample manifest. The
+project's `CLAUDE.md` imports `PREFERENCES.md` from this repo, so standing preferences (no templates;
+explore, don't one-shot; judge on Live's audio) are written once and apply to every song.
+
+`ableton-use audition <dir> <files...>` compares candidate samples by measurement and
+`ableton-use browse "sounds/Bass"` lists Live's instruments and presets — the tools that make exploring cheap.
+
 ## Samples (Splice or your own)
 
 ```

@@ -1,0 +1,7 @@
+{
+  "song": {"title": "{title}", "bpm": {bpm}, "key": "{key}"},
+  "credits_spent": 0,
+  "samples": [],
+  "rejected": [],
+  "searches": []
+}

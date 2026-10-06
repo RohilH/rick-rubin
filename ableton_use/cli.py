@@ -98,6 +98,15 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--model", default="small.en", help="Whisper model for the words: small.en, medium.en, large-v3 ...")
     s.add_argument("--language")
 
+    s = sub.add_parser("audition", help="compare candidate samples side by side by measurement (length, punch, spectrum, pitch+octave, width)")
+    s.add_argument("dir")
+    s.add_argument("files", nargs="+", help="sample files (project-relative or absolute); pass every candidate for one role together")
+
+    s = sub.add_parser("browse", help="list what Live's browser offers: instruments, presets, effects, plug-ins (needs the bridge)")
+    s.add_argument("path", nargs="?", default="", help='e.g. "sounds", "sounds/Bass", "instruments/Drift", "drums", "audio_effects", "plugins", "user_library"')
+    s.add_argument("--search", help="only names containing this text")
+    s.add_argument("--port", type=int, default=9889)
+
     s = sub.add_parser("notes", help="the notes inside a single-voice sample: pitch with octave, cents, position, length (cached; shown in score.md)")
     s.add_argument("dir")
     s.add_argument("sample", help="project-relative path, e.g. samples/vocal.wav")
@@ -231,6 +240,34 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{a.sample} at {bpm:g} BPM — {len(words)} words, {sum(len(w.syllables) for w in words)} syllables")
         print("(position and offset are of the vowel — what is heard as on or off the beat; 'cut at' is where the sound starts)")
         print(table(words))
+    elif a.cmd == "audition":
+        from .samples import audition_table
+        p = Project(a.dir)
+        files = [Path(f) if Path(f).exists() else p.root / f for f in a.files]
+        missing = [str(f) for f in files if not f.exists()]
+        if missing:
+            ap.error("not found: " + ", ".join(missing))
+        print(audition_table(files))
+    elif a.cmd == "browse":
+        from .live import LiveBridge
+        with LiveBridge(port=a.port) as b:
+            parts = [x for x in a.path.split("/") if x]
+            if not parts:
+                print("categories: sounds, instruments, drums, audio_effects, midi_effects, plugins, user_library, packs, samples, clips")
+                return 0
+            path = "app.browser." + parts[0]
+            for want in parts[1:]:
+                kids = b.call("lom", path=path + ".children")
+                hit = [i for i, k in enumerate(kids) if k.lower() == want.lower()] or [i for i, k in enumerate(kids) if want.lower() in k.lower()]
+                if not hit:
+                    ap.error(f"no {want!r} in {path.split('.', 2)[2]}; have: {', '.join(kids[:60])}")
+                path += f".children[{hit[0]}]"
+            kids = b.call("lom", path=path + ".children")
+            shown = [k for k in kids if not a.search or a.search.lower() in k.lower()]
+            for k in shown:
+                print(k)
+            print(f"{len(shown)} of {len(kids)} items in {a.path} — load one by name with instrument=\"<name without extension>\" "
+                  "(folders can be browsed further: browse \"" + a.path + "/<folder>\")")
     elif a.cmd == "notes":
         from .pitch import sample_notes, table
         from .transcribe import load_words
