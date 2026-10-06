@@ -192,6 +192,41 @@ def _apply_lowpass(x: np.ndarray, cutoff: np.ndarray, sr: int, block: int = 256)
     return out
 
 
+class _SampleBank:
+    """Loads project samples (mono, at the render rate) and makes pitched copies
+    the way Simpler's classic mode does: resample by 2^(semitones/12), cut at
+    note-off and apply a short release."""
+
+    def __init__(self, song: Song, sr: int):
+        self.song, self.sr = song, sr
+        self._cache: dict[str, np.ndarray] = {}
+        self._pitched: dict[tuple, np.ndarray] = {}
+
+    def get(self, rel: str) -> np.ndarray:
+        if rel not in self._cache:
+            from ..samples import _resample, read_audio
+            sr, x = read_audio(self.song.resolve(rel))
+            self._cache[rel] = _resample(x, sr, self.sr).mean(axis=1).astype(np.float32)
+        return self._cache[rel]
+
+    def pitched(self, rel: str, semis: float, dur_s: float, release_s: float = 0.05) -> np.ndarray:
+        key = (rel, round(semis, 3), round(dur_s, 3))
+        if key in self._pitched:
+            return self._pitched[key]
+        x = self.get(rel)
+        ratio = 2 ** (semis / 12)
+        n_out = int(len(x) / ratio)
+        y = np.interp(np.arange(n_out) * ratio, np.arange(len(x)), x).astype(np.float32)
+        hold, rel_n = int(dur_s * self.sr), int(release_s * self.sr)
+        if hold < len(y):
+            y = y[: hold + rel_n].copy()
+            tail = len(y) - hold
+            if tail > 0:
+                y[hold:] *= np.linspace(1, 0, tail, dtype=np.float32)
+        self._pitched[key] = y
+        return y
+
+
 def render_preview(song: Song, out_path: str | Path, sr: int = SR, stems_dir: str | Path | None = None,
                    seed: int = 0) -> PreviewResult:
     out_path = Path(out_path)
@@ -214,6 +249,7 @@ def render_preview(song: Song, out_path: str | Path, sr: int = SR, stems_dir: st
             duck[i:j] = np.minimum(duck[i:j], shape[: j - i])
 
     stems: dict[str, np.ndarray] = {}
+    smp = _SampleBank(song, sr)
     for trk in song.tracks:
         if trk.mute:
             continue
@@ -221,10 +257,23 @@ def render_preview(song: Song, out_path: str | Path, sr: int = SR, stems_dir: st
         mine = [c for c in clips if c.track == trk.name]
         env_pts = []
         for c in mine:
+            if c.audio:
+                data = smp.get(c.audio)
+                for s0, ln, off in c.segments:
+                    i = int((c.start + s0) * spb * sr)
+                    a = int(off * spb * sr)
+                    seg = data[a: a + int(ln * spb * sr)]
+                    j = min(total, i + len(seg))
+                    buf[i:j] += seg[: j - i]
             for n in c.notes:
                 t0 = c.start + n.start
                 i = int(t0 * spb * sr)
-                if trk.is_drum:
+                if trk.sample:
+                    if trk.is_drum:
+                        w = smp.get(trk.sample)            # Simpler one-shot: full sample, pitch ignored
+                    else:
+                        w = smp.pitched(trk.sample, n.pitch - (trk.sample_root or 60), n.dur * spb)
+                elif trk.is_drum:
                     w = voices.drum(_drum_kind(trk.role, n.pitch))
                 else:
                     w = voices.tone(trk.role, n.pitch, n.dur * spb)
@@ -234,8 +283,10 @@ def render_preview(song: Song, out_path: str | Path, sr: int = SR, stems_dir: st
                 if param in ("filter", "cutoff"):
                     for (b0, v0), (b1, v1) in zip(pts, pts[1:]):
                         env_pts.append(((c.start + b0, v0), (c.start + b1, v1)))
-        if not trk.is_drum or env_pts:
-            base = BASE_CUTOFF.get(trk.role, 16000.0)
+        synth_tone = not trk.is_drum and not trk.sample and not trk.audio
+        if synth_tone or env_pts:
+            # synths get a role-typical tone filter; samples are only filtered by automation (an Auto Filter in Live)
+            base = BASE_CUTOFF.get(trk.role, 16000.0) if synth_tone else 18000.0
             ctrl = _filter_curve(env_pts, total, sr, spb)
             cutoff = 60.0 * (base / 60.0) ** ctrl
             buf = _apply_lowpass(buf, cutoff, sr)

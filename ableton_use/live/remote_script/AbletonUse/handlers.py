@@ -4,7 +4,7 @@
 import math
 import traceback
 
-BRIDGE_VERSION = "0.1.0"
+BRIDGE_VERSION = "0.2.0"
 
 FILTER_PARAM_NAMES = ("Frequency", "Filter Freq", "Filter 1 Freq", "Filter Frequency", "Cutoff", "Filter Cutoff", "Freq")
 BROWSER_CATEGORIES = ("drums", "instruments", "sounds", "audio_effects", "user_library", "packs")
@@ -184,6 +184,19 @@ class Handlers(object):
                 pass
         return i
 
+    def cmd_create_audio_track(self, name, index=-1, color_index=None):
+        s = self.song
+        s.create_audio_track(int(index))
+        i = len(s.tracks) - 1 if int(index) < 0 else int(index)
+        t = s.tracks[i]
+        t.name = name
+        if color_index is not None:
+            try:
+                t.color_index = int(color_index)
+            except Exception:  # noqa: BLE001
+                pass
+        return i
+
     def cmd_set_track(self, index, name=None, volume_db=None, pan=None, mute=None, color_index=None):
         t = self._track(index)
         out = {}
@@ -257,6 +270,104 @@ class Handlers(object):
         self.song.view.selected_track = t
         self._app().browser.load_item(item)
         return {"device": item.name, "method": "browser", "index": len(t.devices) - 1 if len(t.devices) > before else None}
+
+    def _simpler(self, t):
+        for d in t.devices:
+            if getattr(d, "class_name", "") in ("OriginalSimpler", "Simpler") or d.name == "Simpler":
+                return d
+        return None
+
+    def cmd_load_sample(self, track, path, mode="classic", root=None, voices=None):
+        """Put `path` in a Simpler on `track`. mode: 'oneshot' (drums: full sample per hit)
+        or 'classic' (melodic). root = MIDI pitch the sample sounds at; Simpler's
+        Transpose/Detune are set so incoming notes play at their true pitch."""
+        t = self._track(track)
+        dev = self._simpler(t)
+        method = "existing"
+        if dev is None:
+            if hasattr(t, "insert_device"):
+                try:
+                    t.insert_device("Simpler", 0)
+                    method = "insert_device"
+                except Exception:  # noqa: BLE001
+                    dev = None
+            dev = self._simpler(t)
+            if dev is None:
+                item = self._find_browser_item("Simpler", ["instruments"])
+                if item is None:
+                    raise ValueError("cannot find Simpler")
+                self.song.view.selected_track = t
+                self._app().browser.load_item(item)
+                method = "browser"
+                dev = self._simpler(t)
+        if dev is None:
+            raise RuntimeError("Simpler did not load")
+        dev.replace_sample(str(path))
+        report = {"device": dev.name, "method": method, "sample": str(path)}
+        try:
+            dev.playback_mode = 1 if mode == "oneshot" else 0
+            report["mode"] = mode
+        except Exception as e:  # noqa: BLE001
+            report["mode_error"] = str(e)
+        if voices is not None:
+            try:
+                dev.voices = int(voices)
+            except Exception:  # noqa: BLE001
+                pass
+        if root is not None and mode != "oneshot":
+            shift = 60.0 - float(root)
+            semis = int(round(shift))
+            cents = (shift - semis) * 100.0
+            for p in dev.parameters:
+                try:
+                    if p.name == "Transpose":
+                        report["transpose"] = set_param_display(p, semis)
+                    elif p.name == "Detune":
+                        report["detune"] = set_param_display(p, cents)
+                except Exception as e:  # noqa: BLE001
+                    report.setdefault("param_errors", []).append("%s: %s" % (p.name, e))
+            if "transpose" not in report:
+                report["warning"] = "no Transpose parameter found; notes will sound %+d st off" % (-semis)
+        return report
+
+    def cmd_create_audio_clip(self, track, path, start, name=None, warping=False, envelopes=None, color_index=None):
+        """Place an audio file in the arrangement at `start` (beats). Files are expected
+        to be pre-conformed to the song tempo, so warping is off by default."""
+        t = self._track(track)
+        start = float(start)
+        method = "create_audio_clip"
+        if hasattr(t, "create_audio_clip"):
+            r = t.create_audio_clip(str(path), start)
+            clip = r if hasattr(r, "start_time") else self._arrangement_clip_at(t, start)
+        else:
+            method = "session+duplicate"
+            slot = None
+            for sl in t.clip_slots:
+                if not sl.has_clip:
+                    slot = sl
+                    break
+            if slot is None:
+                self.song.create_scene(-1)
+                slot = t.clip_slots[len(t.clip_slots) - 1]
+            slot.create_audio_clip(str(path))
+            t.duplicate_clip_to_arrangement(slot.clip, start)
+            slot.delete_clip()
+            clip = self._arrangement_clip_at(t, start)
+        if clip is None:
+            raise RuntimeError("audio clip not found after creation at beat %s" % start)
+        try:
+            clip.warping = bool(warping)
+        except Exception:  # noqa: BLE001
+            pass
+        if name:
+            clip.name = name
+        if color_index is not None:
+            try:
+                clip.color_index = int(color_index)
+            except Exception:  # noqa: BLE001
+                pass
+        env_report = self._apply_envelopes(t, clip, envelopes or {})
+        return {"start": clip.start_time, "length": clip.length, "method": method, "envelopes": env_report}
 
     def cmd_sidechain(self, track, source_track_name, threshold_db=-28.0, ratio=4.0, release_ms=120.0):
         """Insert a Compressor on `track` keyed from another track (the kick)."""
@@ -383,8 +494,12 @@ class Handlers(object):
                 clip.color_index = int(color_index)
             except Exception:  # noqa: BLE001
                 pass
+        env_report = self._apply_envelopes(t, clip, envelopes or {})
+        return {"start": clip.start_time, "length": clip.length, "method": method, "envelopes": env_report}
+
+    def _apply_envelopes(self, t, clip, envelopes):
         env_report = {}
-        for param, pts in (envelopes or {}).items():
+        for param, pts in envelopes.items():
             try:
                 p = self._resolve_param(t, param)
                 env = clip.automation_envelope(p)
@@ -402,7 +517,7 @@ class Handlers(object):
                 env_report[param] = p.name
             except Exception as e:  # noqa: BLE001
                 env_report[param] = "error: %s" % e
-        return {"start": clip.start_time, "length": clip.length, "method": method, "envelopes": env_report}
+        return env_report
 
     def cmd_clear_arrangement(self, track):
         t = self._track(track)

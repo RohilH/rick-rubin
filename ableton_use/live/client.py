@@ -123,10 +123,23 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
     index: dict[str, int] = {}
     for t in song.tracks:
         say(f"track {t.name}")
-        i = bridge.call("create_midi_track", name=t.name, color_index=t.color)
+        i = bridge.call("create_audio_track" if t.audio else "create_midi_track", name=t.name, color_index=t.color)
         index[t.name] = i
         info: dict[str, Any] = {"index": i}
-        if load_instruments and t.instrument:
+        if t.audio:
+            info["instrument"] = "audio track"
+        elif t.sample:
+            path = song.resolve(t.sample)
+            if not path.exists():
+                rep.warnings.append(f"{t.name}: sample {path} not found")
+            else:
+                voices = 1 if t.role in ("bass", "sub") else 8 if t.role in ("chords", "stab", "keys", "pad", "organ") else 4
+                r = bridge.call("load_sample", track=i, path=str(path), mode="oneshot" if t.is_drum else "classic",
+                                root=t.sample_root, voices=None if t.is_drum else voices)
+                info["instrument"] = f"Simpler <- {Path(t.sample).name}"
+                if r.get("warning") or r.get("mode_error") or r.get("param_errors"):
+                    rep.warnings.append(f"{t.name}: Simpler {r.get('warning') or r.get('mode_error') or r.get('param_errors')}")
+        elif load_instruments and t.instrument:
             r = bridge.call("load_instrument", track=i, queries=t.instrument)
             info["instrument"] = r.get("loaded")
             if not r.get("loaded"):
@@ -137,9 +150,22 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
 
     cmds = []
     for c in clips:
+        trk = song.track(c.track)
+        if c.audio:
+            path = str(song.resolve(c.audio))
+            for s0, ln, off in c.segments:
+                if off or abs(ln - _file_beats(song, c.audio)) > 1e-3:
+                    rep.warnings.append(f"clip {c.name}: segment at beat {c.start + s0:g} uses part of {c.audio} "
+                                        f"({ln:g} beats from {off:g}) — trim it in Live")
+                env = {k: _slice_env(pts, s0, s0 + ln) for k, pts in c.envelopes.items()}
+                cmds.append(("create_audio_clip", {"track": index[c.track], "path": path, "start": c.start + s0,
+                                                   "name": c.name, "envelopes": env}))
+            continue
+        # Simpler one-shot drums: Simpler plays its sample at C3, so send every hit there
+        notes = [[60 if (trk.sample and trk.is_drum) else n.pitch, round(n.start, 5), round(n.dur, 5), n.vel] for n in c.notes]
         cmds.append(("create_clip", {
             "track": index[c.track], "start": c.start, "length": c.length, "name": c.name,
-            "notes": [[n.pitch, round(n.start, 5), round(n.dur, 5), n.vel] for n in c.notes],
+            "notes": notes,
             "envelopes": {k: [[round(b, 5), v] for b, v in pts] for k, pts in c.envelopes.items()},
         }))
         rep.notes += len(c.notes)
@@ -170,6 +196,28 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
     bridge.call("transport", action="stop", beat=0)
     bridge.call("show_message", text=f"ableton-use: pushed '{song.title}' ({rep.clips} clips)")
     return rep
+
+
+def _slice_env(pts, a: float, b: float) -> list[list[float]]:
+    """Envelope points [(beat, v)] restricted to [a, b] and re-based to a, with
+    values interpolated at both edges."""
+    pts = sorted(pts)
+
+    def at(t):
+        if t <= pts[0][0]:
+            return pts[0][1]
+        for (t0, v0), (t1, v1) in zip(pts, pts[1:]):
+            if t0 <= t <= t1:
+                return v0 if t1 == t0 else v0 + (v1 - v0) * (t - t0) / (t1 - t0)
+        return pts[-1][1]
+    out = [[0.0, at(a)]] + [[round(t - a, 5), v] for t, v in pts if a < t < b] + [[round(b - a, 5), at(b)]]
+    return out
+
+
+def _file_beats(song: Song, rel: str) -> float:
+    from ..samples import read_audio
+    sr, x = read_audio(song.resolve(rel))
+    return len(x) / sr * song.bpm / 60.0
 
 
 # ============================================================================ install

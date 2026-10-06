@@ -13,6 +13,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ableton_use" / "li
 from handlers import Handlers  # noqa: E402
 
 
+SONG_TEMPO = [120.0]
+
+
 class Param:
     def __init__(self, name, lo, hi, value, fmt):
         self.name, self.min, self.max, self.value, self._fmt = name, lo, hi, value, fmt
@@ -45,9 +48,10 @@ class Envelope:
 
 
 class Clip:
-    def __init__(self, start, length):
+    def __init__(self, start, length, path=None):
         self.start_time, self.length, self.name, self.notes, self.envs = start, length, "", [], {}
-        self.is_midi_clip = True
+        self.is_midi_clip = path is None
+        self.file_path, self.warping = path, True
 
     def add_new_notes(self, specs):
         self.notes.extend(specs)
@@ -72,14 +76,37 @@ class Mixer:
         self.panning = Param("Track Panning", -1.0, 1.0, 0.0, lambda v: "%dC" % (v * 50))
 
 
+class Simpler(Device):
+    def __init__(self):
+        Device.__init__(self, "Simpler", "OriginalSimpler", [
+            Param("Transpose", -48.0, 48.0, 0.0, lambda v: "%d st" % round(v)),
+            Param("Detune", -50.0, 50.0, 0.0, lambda v: "%d ct" % round(v)),
+        ])
+        self.sample_path, self.playback_mode, self.voices = None, 0, 1
+
+    def replace_sample(self, path):
+        self.sample_path = path
+
+
 class Track:
-    def __init__(self, name):
+    def __init__(self, name, audio=False):
         self.name, self.mute, self.color_index = name, False, 0
         self.devices, self.arrangement_clips = [], []
         self.mixer_device = Mixer()
-        self.has_midi_input = True
+        self.has_midi_input = not audio
+        self.is_audio = audio
+
+    def create_audio_clip(self, path, start):
+        assert self.is_audio, "create_audio_clip on a MIDI track"
+        import wave
+        with wave.open(path) as w:
+            secs = w.getnframes() / w.getframerate()
+        c = Clip(start, secs * SONG_TEMPO[0] / 60.0, path)
+        self.arrangement_clips.append(c)
+        return c
 
     def create_midi_clip(self, start, length):
+        assert not self.is_audio
         c = Clip(start, length)
         self.arrangement_clips.append(c)
         return c
@@ -87,7 +114,11 @@ class Track:
     def delete_clip(self, c):
         self.arrangement_clips.remove(c)
 
-    def insert_device(self, name):
+    def insert_device(self, name, index=None):
+        if name == "Simpler":
+            d = Simpler()
+            self.devices.insert(0 if index is None else index, d)
+            return
         if name == "Auto Filter":
             d = Device(name, "AutoFilter", [Param("Frequency", 20.0, 18500.0, 18500.0, lambda v: "%.0f Hz" % v)])
         elif name == "Compressor":
@@ -116,7 +147,8 @@ class View:
 class Song:
     def __init__(self):
         self.tracks = [Track("1-MIDI")]
-        self.tempo, self.signature_numerator, self.signature_denominator = 120.0, 4, 4
+        self.tempo = 120.0
+        self.signature_numerator, self.signature_denominator = 4, 4
         self.cue_points, self.current_song_time, self.is_playing = [], 0.0, False
         self.view = View()
         self.song_length = 0
@@ -127,6 +159,21 @@ class Song:
             self.tracks.append(t)
         else:
             self.tracks.insert(i, t)
+
+    def create_audio_track(self, i):
+        t = Track("Audio", audio=True)
+        if i < 0:
+            self.tracks.append(t)
+        else:
+            self.tracks.insert(i, t)
+
+    @property
+    def tempo(self):
+        return SONG_TEMPO[0]
+
+    @tempo.setter
+    def tempo(self, v):
+        SONG_TEMPO[0] = v
 
     def delete_track(self, i):
         del self.tracks[i]

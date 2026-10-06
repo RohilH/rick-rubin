@@ -108,10 +108,16 @@ class Pattern:
     notes: list[Note] = field(default_factory=list)
     track: str | None = None      # owning track (informational)
     desc: str = ""
+    audio: str | None = None      # audio loop file (path relative to the project), conformed to exactly `bars` at song tempo
+    key: str | None = None        # musical key of an audio loop, if any (metadata for lint)
 
     @property
     def length(self) -> float:
         return self.bars * BEATS_PER_BAR
+
+    @property
+    def is_audio(self) -> bool:
+        return self.audio is not None
 
     def is_steppable(self) -> bool:
         if not self.notes:
@@ -125,6 +131,11 @@ class Pattern:
             d["track"] = self.track
         if self.desc:
             d["desc"] = self.desc
+        if self.audio is not None:
+            d["audio"] = self.audio
+            if self.key:
+                d["key"] = self.key
+            return d
         if self.notes and self.is_steppable():
             d["pitch"] = pitch_name(self.notes[0].pitch)
             d["steps"] = notes_to_steps(self.notes, self.bars)
@@ -143,7 +154,7 @@ class Pattern:
                 bars = max(1, -(-len(d["steps"].replace("|", "").replace(" ", "")) // STEPS_PER_BAR))
         else:
             notes = [Note.from_json(n) for n in d.get("notes", [])]
-        return cls(name, bars, notes, d.get("track"), d.get("desc", ""))
+        return cls(name, bars, notes, d.get("track"), d.get("desc", ""), d.get("audio"), d.get("key"))
 
 
 # ============================================================================ tracks & sections
@@ -158,6 +169,9 @@ class Track:
     swing: bool = False       # apply Song.swing to 16th offbeats
     color: int | None = None  # Live color index 0-69
     mute: bool = False
+    sample: str | None = None         # one-shot played by Simpler (path relative to the project) instead of `instrument`
+    sample_root: float | None = None  # MIDI pitch the sample sounds at (melodic samples; fractional = cents)
+    audio: bool = False               # audio track holding audio-loop patterns
 
     @property
     def is_drum(self) -> bool:
@@ -174,7 +188,9 @@ class Track:
         return cls(name=name, role=d["role"], instrument=[inst] if isinstance(inst, str) else list(inst),
                    volume_db=float(d.get("volume_db", 0)), pan=float(d.get("pan", 0)),
                    sidechain=bool(d.get("sidechain", False)), swing=bool(d.get("swing", False)),
-                   color=d.get("color"), mute=bool(d.get("mute", False)))
+                   color=d.get("color"), mute=bool(d.get("mute", False)), sample=d.get("sample"),
+                   sample_root=None if d.get("sample_root") is None else float(d["sample_root"]),
+                   audio=bool(d.get("audio", False)))
 
 
 @dataclass
@@ -257,6 +273,9 @@ class ArrangementClip:
     notes: list[Note]            # times relative to clip start
     envelopes: dict[str, list[tuple[float, float]]] = field(default_factory=dict)  # param -> [(beat_in_clip, value)]
     section: str = ""
+    audio: str | None = None     # audio file for audio clips
+    # audio clips: [(start_in_clip, length, offset_into_file)] in beats; one Live clip per segment
+    segments: list[tuple[float, float, float]] = field(default_factory=list)
 
 
 @dataclass
@@ -276,6 +295,14 @@ class Song:
     patterns: dict[str, Pattern] = field(default_factory=dict)
     sections: list[Section] = field(default_factory=list)
     meta: dict[str, Any] = field(default_factory=dict)
+    base_dir: Path | None = field(default=None, repr=False, compare=False)   # project folder (not serialized)
+
+    def resolve(self, rel: str) -> Path:
+        """Absolute path of a project-relative sample path."""
+        p = Path(rel).expanduser()
+        if p.is_absolute() or self.base_dir is None:
+            return p
+        return (self.base_dir / p).resolve()
 
     # ---- access
     @property
@@ -345,7 +372,9 @@ class Song:
 
     @classmethod
     def load(cls, path: str | Path) -> "Song":
-        return cls.from_json(json.loads(Path(path).read_text()))
+        s = cls.from_json(json.loads(Path(path).read_text()))
+        s.base_dir = Path(path).resolve().parent
+        return s
 
     # ---- integrity
     def validate(self) -> list[str]:
@@ -376,7 +405,25 @@ class Song:
             for tname in s.automation:
                 if tname not in names:
                     errs.append(f"section {s.name}: automation on unknown track {tname!r}")
+        tracks = {t.name: t for t in self.tracks}
+        for s in self.sections:
+            for tname, part in list(s.parts.items()) + [(k, v) for k, v in s.fills.items()]:
+                pat = self.patterns.get(part.pattern)
+                trk = tracks.get(tname)
+                if pat is None or trk is None:
+                    continue
+                if pat.is_audio and not trk.audio:
+                    errs.append(f"section {s.name}: audio pattern {pat.name!r} on MIDI track {tname!r} (set the track's audio=true)")
+                if trk.audio and not pat.is_audio:
+                    errs.append(f"section {s.name}: MIDI pattern {pat.name!r} on audio track {tname!r}")
+        for t in self.tracks:
+            if t.sample and not t.is_drum and t.sample_root is None:
+                errs.append(f"track {t.name}: melodic sample needs sample_root (run `ableton-use sample ... --oneshot` to detect it)")
+            if t.sample and self.base_dir is not None and not self.resolve(t.sample).exists():
+                errs.append(f"track {t.name}: sample file not found: {t.sample}")
         for p in self.patterns.values():
+            if p.is_audio and self.base_dir is not None and not self.resolve(p.audio).exists():
+                errs.append(f"pattern {p.name}: audio file not found: {p.audio}")
             for n in p.notes:
                 if not (0 <= n.pitch <= 127):
                     errs.append(f"pattern {p.name}: pitch {n.pitch} out of range")
@@ -445,7 +492,29 @@ class Song:
                 for param, spec in sec.automation.get(tname, {}).items():
                     env[param] = _expand_env(spec, sec.bars * BEATS_PER_BAR, first * BEATS_PER_BAR, length)
                 name = "+".join(sorted({src[0].name for src in bar_src.values()}))
-                clips.append(ArrangementClip(tname, f"{sec.name} · {name}", (sbar + first) * BEATS_PER_BAR, length, notes, env, sec.name))
+                clip = ArrangementClip(tname, f"{sec.name} · {name}", (sbar + first) * BEATS_PER_BAR, length, notes, env, sec.name)
+                if trk.audio:
+                    clip.notes = []
+                    audio_pats = {src[0].audio for src in bar_src.values()}
+                    if len(audio_pats) != 1:
+                        raise ValueError(f"section {sec.name}/{tname}: one audio file per section clip (got {sorted(map(str, audio_pats))})")
+                    clip.audio = audio_pats.pop()
+                    # contiguous runs of bars that read the file in order -> one Live clip each
+                    segs: list[list[float]] = []
+                    prev = None
+                    for b in range(first, last):
+                        src = bar_src.get(b)
+                        if src is None:
+                            prev = None
+                            continue
+                        pat, pbar, _ = src
+                        if prev is not None and prev[0] is pat and pbar == prev[1] + 1:
+                            segs[-1][1] += BEATS_PER_BAR
+                        else:
+                            segs.append([(b - first) * BEATS_PER_BAR, BEATS_PER_BAR, pbar * BEATS_PER_BAR])
+                        prev = (pat, pbar)
+                    clip.segments = [tuple(x) for x in segs]
+                clips.append(clip)
         return clips, markers
 
 
