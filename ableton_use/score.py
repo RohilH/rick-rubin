@@ -23,6 +23,9 @@ def pattern_text(p: Pattern, song: Song) -> list[str]:
         head += f", {p.track}"
     head += ")" + (f" — {p.desc}" if p.desc else "")
     lines = [head]
+    if p.is_audio:
+        lines.append(f"  audio loop '{p.audio}'" + (f", key {p.key}" if p.key else "") + f" — repeats every {p.bars} bar{'s' if p.bars > 1 else ''}")
+        return lines
     if not p.notes:
         lines.append("  (empty)")
         return lines
@@ -117,8 +120,13 @@ def pack(song: Song, include_patterns: bool = True) -> str:
     L.append("## Tracks")
     for t in song.tracks:
         flags = [f for f, on in (("sidechain", t.sidechain), ("swing", t.swing), ("muted", t.mute)) if on]
-        inst = t.instrument[0] if t.instrument else "?"
-        L.append(f"- {t.name} ({t.role}) {t.volume_db:+.0f} dB, pan {t.pan:+.1f}, inst '{inst}'" + (f" [{', '.join(flags)}]" if flags else ""))
+        if t.audio:
+            inst = "audio track"
+        elif t.sample:
+            inst = f"Simpler '{t.sample}'" + (f" root {pname(round(t.sample_root))} ({t.sample_root:.2f})" if t.sample_root is not None else " one-shot")
+        else:
+            inst = f"inst '{t.instrument[0] if t.instrument else '?'}'"
+        L.append(f"- {t.name} ({t.role}) {t.volume_db:+.0f} dB, pan {t.pan:+.1f}, {inst}" + (f" [{', '.join(flags)}]" if flags else ""))
     L.append("")
     L.append("## Sections")
     L.append("| # | section | kind | bars | time | energy | playing | fills | automation |")

@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from ..model import Song
 
 DEFAULT_PORT = 9877
@@ -152,11 +154,9 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
     for c in clips:
         trk = song.track(c.track)
         if c.audio:
-            path = str(song.resolve(c.audio))
             for s0, ln, off in c.segments:
-                if off or abs(ln - _file_beats(song, c.audio)) > 1e-3:
-                    rep.warnings.append(f"clip {c.name}: segment at beat {c.start + s0:g} uses part of {c.audio} "
-                                        f"({ln:g} beats from {off:g}) — trim it in Live")
+                # a segment that is not the whole file gets its own pre-cut file, so clips stay unwarped and exact
+                path = str(_segment_file(song, c.audio, off, ln))
                 env = {k: _slice_env(pts, s0, s0 + ln) for k, pts in c.envelopes.items()}
                 cmds.append(("create_audio_clip", {"track": index[c.track], "path": path, "start": c.start + s0,
                                                    "name": c.name, "envelopes": env}))
@@ -214,10 +214,28 @@ def _slice_env(pts, a: float, b: float) -> list[list[float]]:
     return out
 
 
-def _file_beats(song: Song, rel: str) -> float:
-    from ..samples import read_audio
-    sr, x = read_audio(song.resolve(rel))
-    return len(x) / sr * song.bpm / 60.0
+def _segment_file(song: Song, rel: str, off: float, ln: float) -> Path:
+    """The file to place for `ln` beats of `rel` starting `off` beats in: the file
+    itself when that is all of it, otherwise a cut written next to it (samples/cuts/)."""
+    from ..samples import read_audio, write_wav24
+    src = song.resolve(rel)
+    sr, x = read_audio(src)
+    spb = 60.0 / song.bpm
+    a, n = int(round(off * spb * sr)), int(round(ln * spb * sr))
+    if a == 0 and abs(len(x) - n) <= 2:
+        return src
+    out = src.parent / "cuts" / f"{src.stem}.{off:g}+{ln:g}.wav"
+    if not out.exists() or out.stat().st_mtime < src.stat().st_mtime:
+        seg = x[a:a + n].copy()
+        if len(seg) < n:
+            seg = np.concatenate([seg, np.zeros((n - len(seg), x.shape[1]), np.float32)])
+        f = min(len(seg) // 2, max(1, int(0.002 * sr)))
+        ramp = np.linspace(0, 1, f, dtype=np.float32)[:, None]
+        seg[:f] *= ramp
+        seg[-f:] *= ramp[::-1]
+        out.parent.mkdir(parents=True, exist_ok=True)
+        write_wav24(out, sr, seg)
+    return out
 
 
 # ============================================================================ install

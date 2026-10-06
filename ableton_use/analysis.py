@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 
 from .model import BEATS_PER_BAR, STEP, Song
-from .theory import name as pname
+from .theory import Key, name as pname
 
 MELODIC = {"bass", "sub", "chords", "stab", "pad", "lead", "arp", "pluck", "keys", "organ", "vocal"}
 NON_BASS_MELODIC = MELODIC - {"bass", "sub"}
@@ -163,6 +163,30 @@ def lint(song: Song) -> list[Issue]:
         trk = tracks.get(p.track or "")
         if trk and trk.role in ("hat", "perc", "shaker") and len(p.notes) >= 8 and len({n.vel for n in p.notes}) == 1:
             add("info", "H11-groove", p.name, "every hit has the same velocity — add accents/ghosts")
+
+    # H14 samples: Simpler range, loop lengths, loop keys
+    for t in song.tracks:
+        if t.sample and not t.is_drum and t.sample_root is not None:
+            far = sorted({n.pitch for c in clips if c.track == t.name for n in c.notes if abs(n.pitch - t.sample_root) > 24})
+            if far:
+                add("warn", "H14-samples", t.name, f"notes {pname(far[0])}-{pname(far[-1])} are more than 2 octaves from the sample's "
+                    f"root {pname(round(t.sample_root))} — a repitched one-shot sounds thin or smeared that far out")
+    for sec in song.sections:
+        for tn, part in sec.parts.items():
+            pat = song.patterns[part.pattern]
+            if pat.is_audio:
+                span = (sec.bars if part.end is None else part.end) - part.start
+                if span % pat.bars:
+                    add("info", "H14-samples", sec.name, f"{tn} plays {span} bars of the {pat.bars}-bar loop {pat.name!r} — the last pass is cut short")
+    for p in song.patterns.values():
+        if p.is_audio and p.key:
+            try:
+                pk = Key.parse(p.key)
+            except ValueError:
+                add("warn", "H4-key", p.name, f"audio loop has an unreadable key {p.key!r}")
+                continue
+            if {(pk.root + i) % 12 for i in pk.intervals} != {(key.root + i) % 12 for i in key.intervals}:
+                add("warn", "H4-key", p.name, f"audio loop is in {pk}, the song is in {song.key} (not the same key or its relative)")
 
     # H12 unused
     used = {p.pattern for s in song.sections for p in s.parts.values()} | {f.pattern for s in song.sections for f in s.fills.values()}

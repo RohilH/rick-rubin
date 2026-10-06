@@ -39,7 +39,7 @@ for a brief.
 
 4. **Verify:**
    ```bash
-   ableton-use status                  # {"bridge": "0.1.0", "live_version": "12.x.y"}
+   ableton-use status                  # {"bridge": "0.2.0", "live_version": "12.x.y"}
    ```
    If this fails, check that the control surface is selected, then check Live's `Log.txt` for "ableton-use".
 
@@ -48,7 +48,7 @@ for a brief.
 - Ableton Live 11 or later. Live 12 is recommended.
   - Arrangement clips are created natively on Live 12. On Live 11, each clip is built in a session slot and copied to the arrangement.
   - Device insertion by name uses Live 12.3+. On older versions it goes through the browser.
-- `ffmpeg` is optional. It is only needed to turn `preview.wav` into an mp3 for sharing.
+- `ffmpeg` is needed to tempo-match sample loops whose tempo differs from the song's (`brew install ffmpeg`), and to turn `preview.wav` into an mp3 for sharing. Everything else works without it.
 
 ## Day to day
 

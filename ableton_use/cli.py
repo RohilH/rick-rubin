@@ -59,6 +59,18 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=9877)
 
+    s = sub.add_parser("sample", help="import a one-shot or loop into <dir>/samples/ (loops are conformed to the song tempo)")
+    s.add_argument("dir")
+    s.add_argument("src")
+    s.add_argument("--name", required=True)
+    g = s.add_mutually_exclusive_group(required=True)
+    g.add_argument("--loop", action="store_true", help="tempo-match and cut to whole bars; plays on an audio track")
+    g.add_argument("--oneshot", action="store_true", help="copy as-is; plays in a Simpler")
+    s.add_argument("--src-bpm", type=float, help="tempo of the source loop")
+    s.add_argument("--bars", type=int, help="loop length in bars (default: nearest whole bar)")
+    s.add_argument("--align", default="start", choices=["start", "end"], help="'end' keeps the tail (risers)")
+    s.add_argument("--melodic", action="store_true", help="measure the one-shot's pitch (sample_root)")
+
     s = sub.add_parser("remember", help="append a session entry to project.md")
     s.add_argument("dir")
     for k in ("strategy", "decisions", "reasoning", "outstanding"):
@@ -105,6 +117,21 @@ def main(argv: list[str] | None = None) -> int:
     elif a.cmd == "push":
         rep = Project(a.dir).push(a.host, a.port, a.replace, not a.no_instruments, progress=lambda m: print("·", m, file=sys.stderr))
         print(rep.text())
+    elif a.cmd == "sample":
+        if a.loop and not a.src_bpm:
+            ap.error("--loop needs --src-bpm (the tempo the loop was recorded at)")
+        r = Project(a.dir).add_sample(a.src, a.name, loop=a.loop, src_bpm=a.src_bpm, bars=a.bars, align=a.align, melodic=a.melodic)
+        print(r.describe())
+        if r.kind == "loop":
+            hint = [{"op": "track", "name": "<Track>", "set": {"role": "perc", "audio": True}},
+                    {"op": "pattern", "name": a.name, "track": "<Track>", "audio": r.rel, "bars": r.bars},
+                    {"op": "part", "section": "<section>", "track": "<Track>", "pattern": a.name}]
+        else:
+            fields = {"sample": r.rel}
+            if r.root is not None:
+                fields["sample_root"] = round(r.root, 2)
+            hint = [{"op": "track", "name": "<Track>", "set": fields}]
+        print("use it with:  " + json.dumps({"ops": hint}))
     elif a.cmd == "remember":
         Project(a.dir).remember(a.strategy, a.decisions, a.reasoning, a.outstanding)
         print("ok")

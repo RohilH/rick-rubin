@@ -89,10 +89,26 @@ print(p.evaluate().text)
 p.push(replace=True)
 ```
 
+## Samples (Splice or your own)
+
+```
+ableton-use sample my-track kick.wav  --name kick --oneshot              # drum one-shot -> Simpler (One-Shot mode)
+ableton-use sample my-track organ.wav --name bass --oneshot --melodic    # measures the pitch -> sample_root
+ableton-use sample my-track top.wav   --name top  --loop --src-bpm 128 --bars 8   # tempo-matched, cut to 8 bars
+ableton-use sample my-track riser.wav --name riser --loop --src-bpm 130 --bars 8 --align end
+```
+
+Each command prints the edit op that wires the sample into the song. One-shots play from a Simpler on a MIDI
+track (melodic ones are tuned from their *measured* pitch — filenames lie about octaves); loops sit unwarped on
+audio tracks because they are conformed to the song tempo on import (needs `ffmpeg`). The preview render and the
+self-eval use the same files, so what you measure is what Live will play for those tracks. An agent with the
+Splice MCP connected can search, download and import in one go — see "Using Splice / samples" in `SKILL.md`.
+
 ## What gets built in Live
 
 * Tempo, 4/4, and one locator per section.
-* One MIDI track per song track, with name, colour, volume (dB-accurate) and pan.
+* One MIDI track per song track (an audio track for loop tracks), with name, colour, volume (dB-accurate) and pan.
+* Sample tracks: a Simpler holding the one-shot, in One-Shot mode for drums or tuned Classic mode for melodic parts. Loop tracks: unwarped audio clips, one per pass of the loop.
 * An instrument loaded by browser name, tried in order. For example, a drum track tries `909 Core Kit`, then `Kit-Core 909`, then `Drum Rack`. Set `instrument` per track to use your own presets or plug-ins.
 * One arrangement clip per (section, track), named `section · pattern`. Notes include baked-in swing.
 * Filter automation written as clip envelopes on an Auto Filter that the bridge inserts.
@@ -115,6 +131,7 @@ ableton_use/
   render/preview.py  numpy sketch synth with sidechain + filter automation
   live/client.py  bridge client + push_song()
   live/remote_script/AbletonUse/  Live remote script (TCP JSON bridge; handlers testable without Live)
+  samples.py      sample import: pitch detection, tempo-conforming loops, 24-bit WAV io
   project.py      project folder, history/undo, project.md memory
 SKILL.md          agent instructions: principles, hard rules, process, house craft
 install.md        setup prompt + steps for your coding agent

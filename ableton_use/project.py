@@ -125,6 +125,13 @@ class Project:
         with LiveBridge(host, port) as b:
             return push_song(self.load(), b, replace=replace, load_instruments=load_instruments, progress=progress)
 
+    def add_sample(self, src: str | Path, name: str, *, loop: bool = False, src_bpm: float | None = None,
+                   bars: int | None = None, align: str = "start", melodic: bool = False):
+        """Copy/conform a sample into <project>/samples/ at the song's tempo."""
+        from .samples import import_sample
+        return import_sample(self.root, src, name, loop=loop, src_bpm=src_bpm, bpm=self.load().bpm, bars=bars,
+                             align=align, melodic=melodic)
+
     # memory
     def remember(self, strategy: str = "", decisions: str = "", reasoning: str = "", outstanding: str = "") -> None:
         existing = self.memory_path.read_text() if self.memory_path.exists() else f"# {self.load().title} — project memory\n"

@@ -28,6 +28,7 @@ description: Produce house / EDM tracks by conversation and render them into Abl
 10. **Push only after eval passes, and only with the bridge connected** (`ableton-use status`). Re-pushes use `--replace`.
 11. **Strategy confirmation before execution.**
 12. **All outputs in the project folder.** Never write inside the ableton-use repo.
+13. **Measure sample pitch; never trust filenames.** Sample packs disagree on octave naming (a "C2" bass is often MIDI 36 = Ableton's C1) and are rarely dead in tune. Import melodic one-shots with `--melodic` and use the `sample_root` it prints.
 
 ## Setup
 
@@ -44,6 +45,7 @@ First-time install lives in `install.md`. On cold start just verify: `ableton-us
 ├── preview.wav    ← offline sketch render (numpy synth)
 ├── midi/          ← song.mid + per-track .mid (manual fallback)
 ├── views/         ← on-demand timeline PNGs
+├── samples/       ← imported one-shots and conformed loops (`sample`); raw downloads in samples/raw/
 └── history/       ← snapshot before every edit batch (`undo`)
 ```
 
@@ -55,6 +57,8 @@ ableton-use new <dir> --subgenre deep|classic|tech --template club|radio|dj_tool
 ableton-use score <dir>                       # print/refresh score.md
 ableton-use edit <dir> ops.json               # or '-' for stdin; see ops below
 ableton-use undo <dir>
+ableton-use sample <dir> <file> --name N --oneshot [--melodic]                       # Simpler one-shot; --melodic measures its pitch
+ableton-use sample <dir> <file> --name N --loop --src-bpm B [--bars N] [--align end] # audio loop, conformed to the song tempo
 ableton-use eval <dir>                        # lint + preview render + measurements -> eval.md (exit 1 on errors)
 ableton-use view <dir> --bars 65-80 [--tracks Bass Kick]
 ableton-use preview <dir> [--stems]
@@ -87,6 +91,23 @@ Python: `from ableton_use import Project, generate`; `Project(dir).edit(ops)`, `
 Full reference: docstring of `ableton_use/edits.py`. `generate` kinds: bass (offbeat|rolling|syncopated), chords (stab|held|single), pad, lead, hats (straight|shuffle|busy), perc, roll. Automation params: `filter` (0..1, maps to an Auto Filter the bridge inserts), `volume`, `pan`, or `"Device:Parameter"`.
 
 Step strings: one char per 16th, `|` separates bars. `x`=100 `X`=127 `o`=72 `g`=45 (ghost) `1-9` scaled, `.` rest. Note positions: `"bar.beat.sixteenth"` (1-based, Ableton style) or float beats.
+
+## Using Splice / samples
+
+Samples replace Live's stock instruments track by track. Two kinds:
+
+- **One-shots → Simpler.** A track with `sample` plays that file from a Simpler instead of `instrument`. Drum roles use One-Shot mode (every hit plays the whole sample; the score keeps the readable drum-map pitches). Melodic roles use Classic mode and need `sample_root`, the MIDI pitch the file actually sounds at (fractional = cents); the bridge sets Simpler's Transpose/Detune from it so notes in Live show their true pitch.
+- **Loops → audio tracks.** A track with `audio: true` holds audio patterns (`{"op": "pattern", "name": "top", "audio": "samples/top.wav", "bars": 8, "key": "F minor"}`). Parts, `start`/`end` and filter/volume automation work as for MIDI. Loops are **conformed on import**: tempo-matched to the song (pitch kept, needs ffmpeg) and cut to exact bars, then placed *unwarped* in Live — N bars of file is N bars of arrangement. `--align end` keeps the tail, so a riser's peak lands on the downbeat after it. Changing `bpm` later means re-importing the loops.
+
+Workflow:
+
+1. **Find** candidates. With the Splice MCP: `describe_a_sound` (`type` loop | oneshot, BPM filters). Prefer loops within ~6% of the song tempo and in the song key or its relative; any key for drums.
+2. **Download** to `<project>/samples/raw/`. Splice download URLs expire in about two minutes — fetch immediately. A first download costs a credit (get the user's OK); re-downloads are free. Record name, asset id and pack in `samples/manifest.json`.
+3. **Import** with `ableton-use sample`. It prints the measured root or bar count and a ready-made edit op.
+4. **Wire up** with `track` / `pattern` / `part` ops, then re-read `score.md`.
+5. **Eval.** The preview plays the real samples (repitched like Simpler), so loudness and balance numbers now reflect them. Lint `H14-samples` flags notes more than two octaves from a sample's root and loops cut mid-pass; `H4-key` flags loops in a foreign key.
+
+Presets are not samples: nothing here loads a third-party synth preset. Use a one-shot in Simpler, or name a Live instrument in `instrument`.
 
 ## The process
 
