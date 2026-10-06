@@ -571,6 +571,6 @@ def search(words: list[str] | None = None, folder: str | None = None, tag: str |
         target_path = str(find(like))
         target = idx.get(target_path)
         if target is None or "error" in target:
-            raise KeyError(f"{like!r} is not in the index")
+            raise KeyError(f"{like!r} is not in the index (yet) — run `ableton-use serum index`, or it did not render")
         return [(k, d) for k, d, _ in similar({k: d for k, d in hits.items() if k != target_path}, target, limit)]
     return list(hits.items())[:limit]

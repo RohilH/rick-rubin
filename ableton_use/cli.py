@@ -112,7 +112,8 @@ def main(argv: list[str] | None = None) -> int:
 
     s = sub.add_parser("samples", help="this project's samples (raw downloads and imports) with their measured character; search and sort them")
     s.add_argument("dir")
-    s.add_argument("words", nargs="*", help="words that must match the file name or character (snappy dark subby wide ...); -word excludes")
+    s.add_argument("words", nargs="*", help="words that must match the file name or character (snappy dark subby wide ...)")
+    s.add_argument("--not", dest="exclude", nargs="+", default=[], metavar="WORD", help="leave out anything matching these words")
     s.add_argument("--sort", help="attack decay bright dark sub bass wide loud length")
     s.add_argument("--like", help="rank by closeness in sound to this sample (project-relative path)")
 
@@ -146,9 +147,10 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("serum", help="read Serum 2 presets: `serum list` to find one, `serum show NAME` for its patch sheet")
     s.add_argument("action", choices=["list", "search", "index", "show", "params", "render", "view"])
     s.add_argument("words", nargs="*", help="show/params/render/view: the preset's name (or words from it, or a path); "
-                                            "search/list: words that must all match (-word excludes)")
+                                            "search/list: words that must all match")
     s.add_argument("--sort", help="search: attack decay bright dark sub bass wide loud length")
     s.add_argument("--like", help="search: rank by closeness in sound to this preset")
+    s.add_argument("--not", dest="exclude", nargs="+", default=[], metavar="WORD", help="search: leave out anything matching these words")
     s.add_argument("--limit", type=int, default=25)
     s.add_argument("--note", action="append", default=[], help="render: note(s) to play, e.g. --note C1 --note G1 (default C2); Ableton naming")
     s.add_argument("--secs", type=float, default=1.0, help="render: how long each note is held")
@@ -319,7 +321,7 @@ def main(argv: list[str] | None = None) -> int:
         from .samples import FEATURE_HEAD, analyse_project_samples, feature_row, search_rows, similar
         p = Project(a.dir)
         rows = analyse_project_samples(p.root)
-        hits = search_rows(rows, a.words, a.sort)
+        hits = search_rows(rows, list(a.words) + ["-" + w for w in a.exclude], a.sort)
         if a.like:
             if a.like not in rows:
                 ap.error(f"{a.like} is not one of this project's samples")
@@ -395,7 +397,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"indexed {len(idx)} presets -> {serum.index_path()}" + (f"; {len(bad)} could not be rendered: {', '.join(bad[:8])}" if bad else ""))
         elif a.action == "search":
             from .samples import FEATURE_HEAD, feature_row
-            words = list(a.words) + (a.search.split() if a.search else [])
+            words = list(a.words) + (a.search.split() if a.search else []) + ["-" + w for w in a.exclude]
             hits = serum.search(words, a.folder, a.tag, a.sort, a.like, a.limit)
             print(f"each preset played as a 1 s C2; 'pitch' is what came out (shows the patch's own octave)")
             print(FEATURE_HEAD)
