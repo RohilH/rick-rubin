@@ -124,6 +124,56 @@ class Project:
         os.utime(self.song_path)
         return song
 
+    def check(self, audio: bool = False) -> tuple[list[tuple[str, bool, str]], int]:
+        """Everything that can be wrong with a song project before listening to it, in order:
+        Python syntax, ruff (undefined names, likely bugs), mypy (wrong arguments to the API), building
+        song.py (structure, missing samples), and the music lint. Returns ([(stage, passed, output)], errors)."""
+        import ast
+        import shutil as _sh
+        import subprocess
+        import sys
+        stages: list[tuple[str, bool, str]] = []
+        errors = 0
+        src = self.source_path
+        if src.exists():
+            try:
+                ast.parse(src.read_text(), filename=str(src))
+                stages.append(("syntax", True, "ok"))
+            except SyntaxError as e:
+                stages.append(("syntax", False, f"{src.name}:{e.lineno}: {e.msg}\n    {(e.text or '').rstrip()}"))
+                return stages, 1
+            bindir = Path(sys.executable).parent
+            import os
+            env = dict(os.environ)
+            # let mypy see the library's own type hints even when it is installed in editable mode
+            env["MYPYPATH"] = os.pathsep.join(x for x in (str(Path(__file__).resolve().parent.parent), env.get("MYPYPATH", "")) if x)
+            for tool, args in (("ruff", ["check", "--quiet", src.name]),
+                               ("mypy", ["--no-error-summary", "--follow-imports=silent", src.name])):
+                exe = bindir / tool if (bindir / tool).exists() else _sh.which(tool)
+                if not exe:
+                    stages.append((tool, True, f"not installed — pip install \"ableton-use[check]\""))
+                    continue
+                r = subprocess.run([str(exe), *args], cwd=self.root, capture_output=True, text=True, env=env)
+                out = (r.stdout + r.stderr).strip()
+                stages.append((tool, r.returncode == 0, out or "ok"))
+                errors += r.returncode != 0
+        try:
+            song = self.build() if src.exists() else self.load()
+            stages.append(("build", True, f"{len(song.tracks)} tracks, {len(song.patterns)} patterns, {song.total_bars} bars"))
+        except Exception as e:  # noqa: BLE001
+            stages.append(("build", False, f"{type(e).__name__}: {e}"))
+            return stages, errors + 1
+        issues = analysis.lint(song)
+        n_err = sum(i.severity == "error" for i in issues)
+        n_warn = sum(i.severity == "warn" for i in issues)
+        stages.append(("music lint", n_err == 0, "\n".join(str(i) for i in issues) or "clean"))
+        errors += n_err
+        if audio:
+            r = self.evaluate()
+            stages.append(("audio checks", r.errors == 0, r.text.split("## Audio checks", 1)[-1].strip()))
+        _ = n_warn
+        return stages, errors
+
     def tempo(self) -> float:
         """The song's BPM, readable even while song.py still points at samples that are not imported yet."""
         return (self._run_source() if self.source_path.exists() else self.load()).bpm

@@ -519,14 +519,27 @@ class Song:
         return p
 
     # ---- writing a song in Python (see compose.py for the notations)
-    def add_track(self, name: str, role: str, **fields: Any) -> Track:
+    def add_track(self, name: str, role: str, *, sample: str | None = None, sample_root: float | None = None,
+                  audio: bool = False, serum: str | None = None, serum_params: dict | None = None,
+                  instrument: str | list[str] | None = None, instrument_params: dict | None = None,
+                  volume_db: float = 0.0, pan: float = 0.0, delay_ms: float = 0.0, swing: bool = False,
+                  groove: dict | None = None, sidechain: bool = False, effects: list[dict] | None = None,
+                  midi_effects: list[dict] | None = None, sends: dict[str, float] | None = None,
+                  color: int | None = None, mute: bool = False) -> Track:
         """A new track. role: kick clap snare hat openhat perc crash fx (drums) · bass chords pad lead keys vocal ...
-        fields: sample, sample_root, audio, serum, serum_params, instrument, instrument_params, volume_db, pan,
-        delay_ms, swing, groove, sidechain, effects, midi_effects, sends, color."""
+
+        What plays it — one of: sample= (a one-shot in Simpler; melodic ones need sample_root=), audio=True (audio
+        loops), serum= (a Serum 2 preset, rendered through the plug-in), instrument= (a Live instrument, preset or
+        plug-in by name). Feel: swing, groove, delay_ms. Mix: volume_db, pan, sends, effects, sidechain."""
         if any(t.name == name for t in self.tracks):
             raise ValueError(f"track {name!r} already exists")
-        inst = fields.pop("instrument", [])
-        t = Track(name, role, [inst] if isinstance(inst, str) else list(inst), **fields)
+        inst = [] if instrument is None else [instrument] if isinstance(instrument, str) else list(instrument)
+        t = Track(name=name, role=role, instrument=inst, volume_db=float(volume_db), pan=float(pan), sidechain=sidechain,
+                  swing=swing, color=color, mute=mute, sample=sample, sample_root=sample_root, audio=audio,
+                  sends={str(k).upper(): float(v) for k, v in (sends or {}).items()},
+                  midi_effects=list(midi_effects or []), effects=list(effects or []), groove=dict(groove or {}),
+                  delay_ms=float(delay_ms), serum=serum, serum_params=dict(serum_params or {}),
+                  instrument_params=dict(instrument_params or {}))
         self.tracks.append(t)
         return t
 

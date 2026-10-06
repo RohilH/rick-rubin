@@ -697,3 +697,35 @@ def test_track_delay_shifts_the_whole_track(sampled):
     assert abs(ms(min(c.start_time for c in live["Top"].arrangement_clips) - 48) + 9) < 1e-3
     song.track("Clap").delay_ms = 250
     assert any("more than 100 ms" in e for e in song.validate())
+
+
+# ---------------------------------------------------------------- check: lint + types + build + music lint
+def test_check_catches_python_and_music_mistakes(tmp_path, capsys):
+    import shutil as _sh
+    root = tmp_path / "chk"
+    assert main(["init", str(root), "--title", "Chk", "--bpm", "126", "--key", "A minor"]) == 0
+    assert (root / "pyproject.toml").exists()
+    p = Project(root)
+    good = (root / "song.py").read_text() + '''
+kick = song.add_track("Kick", "kick", volume_db=-6)
+four = song.pattern("four", kick, "x...x...x...x...")
+song.add_section("intro", 16, kind="intro", energy=3, parts={kick: four})
+song.add_section("drop", 16, kind="drop", energy=9, parts={kick: four})
+song.add_section("outro", 16, kind="outro", energy=3, parts={kick: four})
+'''
+    (root / "song.py").write_text(good)
+    stages, errors = p.check()
+    assert errors == 0 and [n for n, ok, _ in stages if not ok] == [] and [n for n, _, _ in stages][0] == "syntax"
+    have_tools = all((Path(sys.executable).parent / t).exists() or _sh.which(t) for t in ("ruff", "mypy"))
+    cases = [("song.add_section('x', 16, parts={kick: fuor})", "ruff" if have_tools else "build", "fuor"),
+             ("song.add_track('Bass', 'bass', volume=-6)", "mypy" if have_tools else "build", "volume"),
+             ("song.add_section('odd', 6, parts={kick: four})", "music lint", "not a multiple of 4"),
+             ("song.add_section('y', 8, parts={'Nobody': four})", "build", "unknown track"),
+             ("song.add_section('z', 8, parts={kick: four}", "syntax", "song.py:")]
+    for line, stage, needle in cases:
+        (root / "song.py").write_text(good + line + chr(10))
+        stages, errors = p.check()
+        failed = {n: out for n, ok, out in stages if not ok}
+        assert errors >= 1 and stage in failed and needle in failed[stage], (line, stages)
+    capsys.readouterr()
+    assert main(["check", str(root)]) == 1 and "FAIL  syntax" in capsys.readouterr().out

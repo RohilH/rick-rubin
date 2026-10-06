@@ -24,6 +24,10 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--bpm", type=float, required=True)
     s.add_argument("--key", required=True, help='e.g. "F minor", "D dorian"')
 
+    s = sub.add_parser("check", help="lint and type-check song.py, build it, and run the music lint — everything that can be wrong before listening")
+    s.add_argument("dir")
+    s.add_argument("--audio", action="store_true", help="also render the preview and run the audio checks")
+
     s = sub.add_parser("build", help="run song.py and refresh song.json + score.md (other commands do this automatically)")
     s.add_argument("dir")
 
@@ -161,6 +165,14 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "init":
         p = Project.init(a.dir, a.title, a.bpm, a.key)
         print(f"created {p.source_path}\nWrite the song there (SKILL.md, 'Writing a song'), then: ableton-use score {a.dir}")
+    elif a.cmd == "check":
+        stages, errors = Project(a.dir).check(audio=a.audio)
+        for name, ok, out in stages:
+            print(f"{'ok  ' if ok else 'FAIL'}  {name}")
+            if out and out != "ok":
+                print("\n".join("      " + ln for ln in out.splitlines()))
+        print(f"\n{'check failed' if errors else 'check passed'} — {errors} error(s)")
+        return 1 if errors else 0
     elif a.cmd == "build":
         p = Project(a.dir)
         song = p.build()
