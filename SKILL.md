@@ -142,6 +142,16 @@ Great tracks come from comparing options, not from accepting the first one. You 
 
 Stop exploring a question when one option is clearly right for this track and you can say why — not when the first one passes lint.
 
+## Pictures of the things producers look at
+
+Tables are exact and stay the primary view; these pictures are for when a shape says more than numbers. Each command prints the PNG's path — Read it.
+
+- `ableton-use audition <dir> <files...> --png <name>` — **sample comparer**: every candidate's waveform on one time and level scale (length, punch, decay at a glance), their spectra overlaid, key numbers beside each.
+- `ableton-use spectrum <dir> [files...] [--tracks Kick Bass ...] [--bars A-B] [--mix]` — **spectrum analyzer**: overlaid spectra of files, of soloed tracks (at their real relative level), and/or the mix. Where two curves sit on top of each other they compete; decide EQ moves from it, then make them with Channel EQ / Auto Filter in `effects`.
+- `ableton-use width <dir> [file] [--bars A-B] --png` — **stereo imager**: vectorscope (a vertical line is mono, a round cloud is wide), correlation over time, width by band with wide-low-end and out-of-phase bands in red.
+- `ableton-use serum view "<preset>" --note F1 [--set macro_1=80] --out views/x.png` — **Serum patch panel**: the wavetable frame each oscillator plays, the envelopes, filters/voices/FX chain, macro values and what each moves, and a played note's level, waveform and spectrum.
+- `ableton-use view` — the arrangement: notes, audio clips, automation, the notes a vocal sings in a lane under its waveform, waveform and spectrogram of the mix.
+
 ## Zooming in
 
 `view` draws a grid that follows the zoom: bar lines always, quarter-note lines at 16 bars or fewer, lighter eighth-note lines (and `.2 .3 .4` beat labels) at 8 or fewer, faint 16th lines at 4 or fewer. To judge timing — swing, pushed or late hits, a vocal against the grid — zoom to 4 bars or fewer.

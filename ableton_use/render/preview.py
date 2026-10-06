@@ -228,9 +228,11 @@ class _SampleBank:
 
 
 def render_preview(song: Song, out_path: str | Path, sr: int = SR, stems_dir: str | Path | None = None,
-                   seed: int = 0, tracks: list[str] | None = None) -> PreviewResult:
+                   seed: int = 0, tracks: list[str] | None = None, master_peak: float | None = None) -> PreviewResult:
     """`tracks` renders only those tracks (a solo). They are still ducked by the
-    kick even when the kick itself is not among them, as they would be in Live."""
+    kick even when the kick itself is not among them, as they would be in Live.
+    `master_peak` (linear) uses another render's pre-master peak for the output gain, so a solo keeps
+    its level relative to that mix instead of being normalised on its own."""
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     clips, _ = song.flatten()
@@ -319,7 +321,7 @@ def render_preview(song: Song, out_path: str | Path, sr: int = SR, stems_dir: st
     peak = float(max(np.abs(L).max(), np.abs(R).max(), 1e-9))
     peak_db = 20 * np.log10(peak)
     # gentle master: normalise, soft-clip, -1 dBFS ceiling
-    g = 1.25 / peak
+    g = 1.25 / (master_peak or peak)
     L, R = np.tanh(L * g) * 0.89, np.tanh(R * g) * 0.89
     stereo = np.stack([L, R], axis=1)
     wavfile.write(out_path, sr, (np.clip(stereo, -1, 1) * 32767).astype(np.int16))

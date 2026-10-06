@@ -31,12 +31,35 @@ def timeline_view(song: Song, out_path: str | Path, bars: tuple[int, int] | None
     trks = [t for t in song.tracks if not tracks or t.name in tracks]
     trks = [t for t in trks if any(c.track == t.name and c.start < t1 and c.start + c.length > t0 for c in clips)]
 
+    from .pitch import load_notes
     n_audio = 2 if wav else 0
-    heights = [0.35] + [0.55 if t.is_drum else 1.0 for t in trks] + [1.4] * n_audio
+    spb = 60.0 / song.bpm
+    # an audio track whose loops have been through `ableton-use notes` gets its own lane of sung notes under the waveform
+    sung_lanes: dict[str, list[tuple[float, float, float, str]]] = {}        # track -> (start beat, length, pitch, name)
+    for t in trks:
+        if not t.audio:
+            continue
+        lane = []
+        for c in clips:
+            if c.track != t.name or not c.audio:
+                continue
+            notes = load_notes(song.resolve(c.audio)) or []
+            for s0, ln, off in c.segments:
+                for n in notes:
+                    nb = n.start_s / spb
+                    if off <= nb < off + ln and t0 <= c.start + s0 + nb - off < t1:
+                        lane.append((c.start + s0 + nb - off, min(n.beats, off + ln - nb), n.midi, n.name))
+        if lane:
+            sung_lanes[t.name] = lane
+    rows: list[tuple[str, object]] = []
+    for t in trks:
+        rows.append(("track", t))
+        if t.name in sung_lanes:
+            rows.append(("sung", t))
+    heights = [0.35] + [(0.55 if t.is_drum else 1.0) if kind == "track" else 1.1 for kind, t in rows] + [1.4] * n_audio
     fig, axes = plt.subplots(len(heights), 1, figsize=(14, 0.8 + 0.75 * sum(heights)), sharex=True,
                              gridspec_kw={"height_ratios": heights, "hspace": 0.08, "top": 0.965, "bottom": 0.05})
     axes = np.atleast_1d(axes)
-    spb = 60.0 / song.bpm
 
     # section ruler
     ax = axes[0]
@@ -49,16 +72,33 @@ def timeline_view(song: Song, out_path: str | Path, bars: tuple[int, int] | None
     ax.set_yticks([])
     ax.set_ylim(0, 1)
 
-    for ax, t in zip(axes[1:], trks):
+    for ax, (kind, t) in zip(axes[1:], rows):
+        if kind == "sung":                                   # the notes the sample sings, as a piano roll of its own
+            lane = sung_lanes[t.name]
+            # range from the notes that carry the melody; stray blips are drawn at the edge rather than stretching the lane
+            w = np.array([x[1] for x in lane])
+            order = np.argsort([x[2] for x in lane])
+            cum = np.cumsum(w[order]) / w.sum()
+            pitches = np.array([x[2] for x in lane])[order]
+            lo_p = float(np.floor(pitches[np.searchsorted(cum, 0.04)])) - 1.5
+            hi_p = float(np.ceil(pitches[min(len(pitches) - 1, np.searchsorted(cum, 0.96))])) + 2.5
+            for st, ln, midi, nm in lane:
+                y = min(max(midi, lo_p + 0.5), hi_p - 1.5)
+                ax.add_patch(plt.Rectangle((st, y - 0.4), ln, 0.8, color="C1" if y == midi else "0.6"))
+                ax.text(st, y + 0.55, nm, fontsize=6.5, color="C1" if y == midi else "0.5", va="bottom")
+            ax.set_ylim(lo_p, hi_p)
+            ax.set_yticks([])
+            ax.grid(False)
+            ax.set_ylabel(f"{t.name}\nnotes", rotation=0, ha="right", va="center", fontsize=8)
+            ax.tick_params(labelsize=6)
+            continue
         mine = [c for c in clips if c.track == t.name]
         ps = []
         for c in mine:
             if c.audio:
                 # audio clip: the file's own waveform, one box per pass of the loop
                 from .samples import read_audio
-                from .pitch import load_notes
                 sr_a, xa = read_audio(song.resolve(c.audio))
-                sung = load_notes(song.resolve(c.audio))
                 xa = np.abs(xa).max(axis=1)
                 for s0, ln, off in c.segments:
                     a = c.start + s0
@@ -70,14 +110,6 @@ def timeline_view(song: Song, out_path: str | Path, bars: tuple[int, int] | None
                     xs = a + np.arange(len(env)) * k / sr_a / spb
                     ax.fill_between(xs, 0.5 - env / 2, 0.5 + env / 2, color="C0", lw=0)
                     ax.add_patch(plt.Rectangle((a, 0.02), ln, 0.96, fill=False, ec="C0", lw=0.8))
-                    if sung:                                   # pitch blobs: height = pitch within the sample's own range
-                        lo_p, hi_p = min(n.midi for n in sung) - 1, max(n.midi for n in sung) + 1
-                        for n in sung:
-                            nb = n.start_s / spb
-                            if off <= nb < off + ln:
-                                y = 0.08 + 0.84 * (n.midi - lo_p) / (hi_p - lo_p)
-                                ax.add_patch(plt.Rectangle((a + nb - off, y - 0.035), min(n.beats, off + ln - nb), 0.07, color="C1", alpha=0.9))
-                                ax.text(a + nb - off, y + 0.05, n.name, fontsize=5.5, color="C1", va="bottom")
                 for prm, pts in c.envelopes.items():
                     ax.plot([c.start + q[0] for q in pts], [q[1] for q in pts], color="r", lw=1, alpha=0.7)
                 ax.set_ylim(0, 1)

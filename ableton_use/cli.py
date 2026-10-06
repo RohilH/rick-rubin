@@ -89,6 +89,14 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("dir")
     s.add_argument("wav", nargs="?", help="file to analyse (default: live.wav if captured, else preview.wav); a sample path gets a whole-file report")
     s.add_argument("--bars", type=_bars, help="zoom in on a bar range of the mix")
+    s.add_argument("--png", action="store_true", help="also draw the imager picture (vectorscope, correlation over time, width by band)")
+
+    s = sub.add_parser("spectrum", help="spectrum analyzer picture: overlay the spectra of files, or of soloed tracks of the song")
+    s.add_argument("dir")
+    s.add_argument("files", nargs="*", help="audio files to overlay (project-relative or absolute)")
+    s.add_argument("--tracks", nargs="*", help="instead of files: solo each of these tracks in the offline render and overlay them")
+    s.add_argument("--bars", type=_bars, help="with --tracks or the mix: only this bar range")
+    s.add_argument("--mix", action="store_true", help="include the full mix (live.wav if captured, else the preview)")
 
     s = sub.add_parser("transcribe", help="syllables of a vocal sample with bar.beat.sixteenth positions and ms offsets (cached; shown in score.md)")
     s.add_argument("dir")
@@ -101,6 +109,7 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("audition", help="compare candidate samples side by side by measurement (length, punch, spectrum, pitch+octave, width)")
     s.add_argument("dir")
     s.add_argument("files", nargs="+", help="sample files (project-relative or absolute); pass every candidate for one role together")
+    s.add_argument("--png", metavar="NAME", help="also draw the comparison (waveforms on one scale + overlaid spectra) to views/audition_NAME.png")
 
     s = sub.add_parser("browse", help="list what Live's browser offers: instruments, presets, effects, plug-ins (needs the bridge)")
     s.add_argument("path", nargs="?", default="", help='e.g. "sounds", "sounds/Bass", "instruments/Drift", "drums", "audio_effects", "plugins", "user_library"')
@@ -125,12 +134,12 @@ def main(argv: list[str] | None = None) -> int:
                    help="place piece N yourself, e.g. --move 3=2.3.1 (bar.beat.sixteenth); repeatable")
 
     s = sub.add_parser("serum", help="read Serum 2 presets: `serum list` to find one, `serum show NAME` for its patch sheet")
-    s.add_argument("action", choices=["list", "show", "params", "render"])
+    s.add_argument("action", choices=["list", "show", "params", "render", "view"])
     s.add_argument("name", nargs="?", help="show/params/render: preset name, words from it, or a .SerumPreset path")
     s.add_argument("--note", action="append", default=[], help="render: note(s) to play, e.g. --note C1 --note G1 (default C2); Ableton naming")
     s.add_argument("--secs", type=float, default=1.0, help="render: how long each note is held")
     s.add_argument("--set", action="append", default=[], metavar="PARAM=VALUE", help="render/params: set a Serum parameter first, e.g. --set macro_1=80")
-    s.add_argument("--out", help="render: where to write the wav (e.g. <project>/samples/raw/reese_C1.wav)")
+    s.add_argument("--out", help="render: the wav to write (e.g. <project>/samples/raw/reese_C1.wav); view: the png to write")
     s.add_argument("--search", help="list: words that must appear in the name, description, author or folder")
     s.add_argument("--tag", help="list: Wavetable | Poly | Mono | Multisample | Sample | Granular | Spectral | Arp | Clip")
     s.add_argument("--folder", help="list: e.g. Pads, Bass, Leads")
@@ -236,6 +245,42 @@ def main(argv: list[str] | None = None) -> int:
         if full_mix and not a.bars:
             (p.root / "width.md").write_text(text)
         print(text)
+        if a.png:
+            from .pictures import imager_png
+            t0 = t1 = None
+            if full_mix and a.bars:
+                spbar = 240.0 / p.load().bpm
+                t0, t1 = (a.bars[0] - 1) * spbar, a.bars[1] * spbar
+            tag = f"_bars_{a.bars[0]:03d}-{a.bars[1]:03d}" if (full_mix and a.bars) else ""
+            print("picture:", imager_png(wav, p.root / "views" / f"imager_{wav.stem}{tag}.png", t0=t0 or 0.0, t1=t1))
+    elif a.cmd == "spectrum":
+        from .pictures import spectrum_png
+        p = Project(a.dir)
+        song = p.load()
+        spbar = 240.0 / song.bpm
+        span = ((a.bars[0] - 1) * spbar, a.bars[1] * spbar) if a.bars else None
+        sounds, spans = [], {}
+        for f in a.files:
+            path = Path(f) if Path(f).exists() else p.root / f
+            sounds.append((path.stem, path))
+        from .render.preview import render_preview
+        mix_peak = None
+        if a.tracks:                                  # solos keep their level relative to the full offline mix
+            mix_peak = 10 ** (render_preview(song, p.preview_path).peak_db / 20)
+        for t in a.tracks or []:
+            wav = p.zoom_path("preview", None, [t])
+            render_preview(song, wav, tracks=[t], master_peak=mix_peak)
+            sounds.append((t, wav))
+            if span:
+                spans[t] = span
+        if a.mix or not sounds:
+            mix = p.live_path if p.live_path.exists() else p.preview_path
+            sounds.append((f"mix ({mix.stem})", mix))
+            if span:
+                spans[f"mix ({mix.stem})"] = span
+        name = "spectrum_" + "+".join(lbl.split(" ")[0] for lbl, _ in sounds)[:80] + (f"_bars_{a.bars[0]:03d}-{a.bars[1]:03d}" if a.bars else "")
+        title = "spectrum — " + ", ".join(lbl for lbl, _ in sounds) + (f" — bars {a.bars[0]}-{a.bars[1]}" if a.bars else "")
+        print(spectrum_png(sounds, p.root / "views" / f"{name}.png", title, spans))
     elif a.cmd == "transcribe":
         from .transcribe import table, transcribe
         p = Project(a.dir)
@@ -252,6 +297,9 @@ def main(argv: list[str] | None = None) -> int:
         if missing:
             ap.error("not found: " + ", ".join(missing))
         print(audition_table(files))
+        if a.png:
+            from .pictures import audition_png
+            print("picture:", audition_png(files, p.root / "views" / f"audition_{a.png}.png", f"sample comparison — {a.png}"))
     elif a.cmd == "browse":
         from .live import LiveBridge
         with LiveBridge(port=a.port) as b:
@@ -301,6 +349,12 @@ def main(argv: list[str] | None = None) -> int:
             if not a.name:
                 ap.error("serum show needs a preset name")
             print(serum.sheet(serum.find(a.name, a.root)))
+        elif a.action == "view":
+            from .pictures import serum_png
+            if not a.name or not a.out:
+                ap.error("serum view needs a preset name and --out FILE.png")
+            vals = {k: (float(v) if v.replace(".", "", 1).replace("-", "", 1).isdigit() else v) for k, _, v in (kv.partition("=") for kv in a.set)}
+            print(serum_png(a.name, a.out, (a.note or ["C2"])[0], vals or None))
         elif a.action in ("params", "render"):
             if not a.name:
                 ap.error(f"serum {a.action} needs a preset name")
