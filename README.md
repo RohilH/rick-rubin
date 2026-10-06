@@ -109,12 +109,12 @@ Splice MCP connected can search, download and import in one go — see "Using Sp
 ```
 ableton-use transcribe my-track samples/vocal.wav    # which word falls on which bar.beat.16th (local Whisper)
 ableton-use width my-track [file]                    # stereo image as numbers: correlation, side %, mono loss, per band
+ableton-use serum list --folder Pad                  # search installed Serum 2 presets
+ableton-use serum show "<preset>"                    # a preset as a text patch sheet
 ```
 
-ableton-use serum list --folder Pad / serum show "<preset>"   reads Serum 2 presets as a text patch sheet
-
 These exist so an agent can read what a producer would hear or see on a meter or a plug-in window. `transcribe` needs
-`pip install "ableton-use[transcribe]"`; its result is cached next to the sample and printed in `score.md`.
+`pip install "ableton-use[transcribe]"` and `serum` needs `pip install "ableton-use[serum]"`; its result is cached next to the sample and printed in `score.md`.
 
 ## What gets built in Live
 

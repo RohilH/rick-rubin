@@ -361,7 +361,7 @@ class Handlers(object):
                 return {"device": name, "method": "insert_device", "index": len(t.devices) - 1}
             except Exception:  # noqa: BLE001
                 pass
-        item = self._find_browser_item(name, ["audio_effects"])
+        item = self._find_browser_item(name, ["audio_effects", "plugins"])
         if item is None:
             raise ValueError("device %r not found" % name)
         self.song.view.selected_track = t

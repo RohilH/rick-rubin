@@ -223,7 +223,7 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
 
     for m in markers:
         for _ in range(5):
-            bridge.call("transport", action="stop", beat=m.start)
+            bridge.call("transport", action="seek", beat=m.start)
             if bridge.call("add_locator", name=m.name, beat=m.start).get("created"):
                 break
         else:
@@ -300,6 +300,7 @@ def capture_live(song: Song, bridge: LiveBridge, out_path: str | Path, bars: tup
         raise BridgeError(f"cannot solo {missing}: not in the Live set (push first)")
     if lom("song.is_playing"):
         bridge.call("transport", action="stop")
+        time.sleep(0.2)
     if CAPTURE_TRACK in names:
         bridge.call("delete_tracks", names=[CAPTURE_TRACK])
         names = [t["name"] for t in bridge.call("get_state")["tracks"]]
@@ -322,12 +323,22 @@ def capture_live(song: Song, bridge: LiveBridge, out_path: str | Path, bars: tup
         lom(tp + ".arm", op="set", value=True)
         setv("song.metronome", False)
         setv("song.loop", False)
-        bridge.call("transport", action="stop", beat=start)
-        time.sleep(0.2)
-        lom("song.record_mode", op="set", value=True)
-        time.sleep(0.1)
-        if not lom("song.is_playing"):
-            bridge.call("transport", action="play")
+        # Move the playhead while stopped (that also moves Live's start marker); "seek" only sets the
+        # position — a second stop would send Live back to 1.1.1.
+        for _ in range(10):
+            bridge.call("transport", action="seek", beat=start)
+            time.sleep(0.15)
+            if not lom("song.is_playing") and abs(lom("song.current_song_time") - start) < 1e-3:
+                break
+        else:
+            raise BridgeError(f"could not place Live's playhead at beat {start:g} (is someone using the transport?)")
+        lom("song.record_mode", op="set", value=True)       # arrangement record: Live starts playing from the playhead
+        for _ in range(20):
+            if lom("song.is_playing"):
+                break
+            time.sleep(0.1)
+        else:
+            lom("song.continue_playing", op="call")
         secs = (end - start + tail_beats) * 60.0 / song.bpm
         say(f"recording bars {b0}-{b1} from Live ({secs:.0f} s, real time)")
         t_end = time.time() + secs + 20
