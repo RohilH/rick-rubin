@@ -169,6 +169,17 @@ def pack(song: Song, include_patterns: bool = True, bars: tuple[int, int] | None
             inst = f"Simpler '{t.sample}'" + (f" root {pname(round(t.sample_root))} ({t.sample_root:.2f})" if t.sample_root is not None else " one-shot")
         else:
             inst = f"inst '{t.instrument[0] if t.instrument else '?'}'"
+        if t.groove:
+            g = t.groove
+            bits = [g["template"]] if g.get("template") else []
+            bits += [f"swing {g['swing']:g}%"] if "swing" in g else []
+            bits += ["timing ms " + " ".join(f"{v:+g}" if v else "·" for v in g["timing"])] if "timing" in g else []
+            bits += ["accent " + " ".join(f"{v:+g}" if v else "·" for v in g["accent"])] if "accent" in g else []
+            bits += [f"gate {g['gate']:g}"] if "gate" in g else []
+            bits += [f"humanize ±{g['humanize'].get('ms', 0):g} ms ±{g['humanize'].get('vel', 0):g} vel"] if g.get("humanize") else []
+            flags.append("groove " + ", ".join(bits))
+        if t.instrument_params:
+            flags.append("inst " + ", ".join(f"{k} {v}" for k, v in t.instrument_params.items()))
         for e in t.effects:
             prm = ", ".join(f"{k} {v}" for k, v in (e.get("params") or {}).items())
             flags.append("fx " + e["device"] + (f" keyed from {e['sidechain']}" if e.get("sidechain") else "") + (f": {prm}" if prm else ""))

@@ -461,6 +461,8 @@ class Handlers(object):
             method = "session+duplicate"
             slot = self._free_slot(t)
             slot.create_audio_clip(str(path))
+            # NB: Live 12.4 does not carry an audio clip's envelopes into the arrangement; the
+            # client bakes loop automation into the audio instead and sends no envelopes here
             self._dress(slot.clip, name, color_index, warping)
             env_report = self._apply_envelopes(t, slot.clip, envelopes)
             t.duplicate_clip_to_arrangement(slot.clip, start)

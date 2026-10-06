@@ -33,6 +33,33 @@ DRUM_MAP = {
 
 _VEL_CHARS = {"x": 100, "X": 127, "o": 72, "g": 45}
 
+# Named feels. "timing" is ms per 16th of the bar (+ = late), "accent" is velocity added per 16th.
+# Worked examples of common house feels, not rules — any track can carry its own numbers.
+GROOVES: dict[str, dict] = {
+    # backbeat a touch behind the grid: the lazy clap that makes four-on-the-floor lean back
+    "laid_back": {"timing": [0, 0, 0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0]},
+    # off-beat 8ths pushed early: urgent, driving open hats
+    "pushed_offbeat": {"timing": [0, 0, -8, 0, 0, 0, -8, 0, 0, 0, -8, 0, 0, 0, -8, 0]},
+    # MPC-style 16th shuffle with the off-16ths ducked: classic swung closed hats
+    "shuffle_16": {"swing": 58, "accent": [8, -22, 0, -14, 6, -22, 0, -14, 8, -22, 0, -14, 6, -22, 0, -14]},
+    # heavier garage-leaning shuffle
+    "garage": {"swing": 62, "accent": [10, -28, -4, -10, 4, -28, -4, -10, 10, -28, -4, -10, 4, -28, -4, -10],
+               "timing": [0, 0, 0, 6, 0, 0, 0, 6, 0, 0, 0, 6, 0, 0, 0, 6]},
+    # downbeats leaned on, everything else relaxed: basslines and stabs that breathe with the kick
+    "downbeat_accent": {"accent": [10, -6, 0, -6, 4, -6, 0, -6, 8, -6, 0, -6, 4, -6, 0, -6]},
+    # a drummer's looseness and nothing else
+    "human": {"humanize": {"ms": 5, "vel": 8}},
+}
+
+
+def resolve_groove(g: dict) -> dict:
+    """A track's groove with its template (if any) filled in; explicit keys win."""
+    if not g:
+        return {}
+    out = dict(GROOVES[g["template"]]) if g.get("template") else {}
+    out.update({k: v for k, v in g.items() if k != "template"})
+    return out
+
 
 # ============================================================================ notes & patterns
 @dataclass
@@ -175,6 +202,12 @@ class Track:
     # Live audio effects after the instrument, in order. Each: {"device": "Compressor", "params": {name: displayed
     # value}, "sidechain": "<track name>", "sidechain_tap": "Post FX"}. Parameter names and units are Live's own.
     effects: list[dict] = field(default_factory=list)
+    # Feel, baked into the notes by flatten(). Keys (all optional): "swing" % (overrides Song.swing for this track),
+    # "timing" 16 offsets in ms, one per 16th of the bar (+ late / - early), "accent" 16 velocity offsets,
+    # "gate" note-length multiplier, "humanize" {"ms": n, "vel": n, "seed": n}, "template" a name from GROOVES.
+    groove: dict = field(default_factory=dict)
+    # Parameters of the track's instrument by displayed value, e.g. Simpler {"Ve Attack": 4, "Ve Release": 60, "Vol < Vel": 70}
+    instrument_params: dict = field(default_factory=dict)
 
     @property
     def is_drum(self) -> bool:
@@ -188,7 +221,7 @@ class Track:
     def to_json(self) -> dict:
         d = asdict(self)
         d.pop("name")
-        return {k: v for k, v in d.items() if v not in (None, False, [], 0.0) or k == "role"}
+        return {k: v for k, v in d.items() if v not in (None, False, [], {}, 0.0) or k == "role"}
 
     @classmethod
     def from_json(cls, name: str, d: dict) -> "Track":
@@ -198,7 +231,8 @@ class Track:
                    sidechain=bool(d.get("sidechain", False)), swing=bool(d.get("swing", False)),
                    color=d.get("color"), mute=bool(d.get("mute", False)), sample=d.get("sample"),
                    sample_root=None if d.get("sample_root") is None else float(d["sample_root"]),
-                   audio=bool(d.get("audio", False)), effects=[dict(e) for e in d.get("effects", [])])
+                   audio=bool(d.get("audio", False)), effects=[dict(e) for e in d.get("effects", [])],
+                   groove=dict(d.get("groove") or {}), instrument_params=dict(d.get("instrument_params") or {}))
 
 
 @dataclass
@@ -425,6 +459,15 @@ class Song:
                 if trk.audio and not pat.is_audio:
                     errs.append(f"section {s.name}: MIDI pattern {pat.name!r} on audio track {tname!r}")
         for t in self.tracks:
+            g = t.groove
+            if g.get("template") and g["template"] not in GROOVES:
+                errs.append(f"track {t.name}: unknown groove template {g['template']!r}; have {sorted(GROOVES)}")
+            for key in ("timing", "accent"):
+                if key in g and (not isinstance(g[key], list) or len(g[key]) != STEPS_PER_BAR):
+                    errs.append(f"track {t.name}: groove {key} needs {STEPS_PER_BAR} values, one per 16th of the bar")
+            bad = set(g) - {"template", "swing", "timing", "accent", "gate", "humanize"}
+            if bad:
+                errs.append(f"track {t.name}: unknown groove keys {sorted(bad)}")
             for e in t.effects:
                 if not isinstance(e, dict) or not e.get("device"):
                     errs.append(f"track {t.name}: each effect needs a 'device' name (got {e!r})")
@@ -449,14 +492,35 @@ class Song:
         return errs
 
     # ---- expansion
-    def _swing_offset(self, t: float) -> float:
-        if self.swing <= 50:
+    def _swing_offset(self, t: float, swing: float | None = None) -> float:
+        swing = self.swing if swing is None else swing
+        if swing <= 50:
             return 0.0
         # delay the 2nd 16th of every 8th-note pair
         pos_in_8th = t % 0.5
         if abs(pos_in_8th - 0.25) < 1e-6:
-            return self.swing / 100.0 * 0.5 - 0.25
+            return swing / 100.0 * 0.5 - 0.25
         return 0.0
+
+    def _groove_note(self, trk: Track, g: dict, pos_in_bar: float, abs_bar: int, pitch: int, dur: float, vel: int):
+        """(time offset in beats, duration, velocity) for a note at `pos_in_bar` on a grooved track."""
+        off = 0.0
+        if trk.swing or "swing" in g:
+            off += self._swing_offset(pos_in_bar, g.get("swing"))
+        step_f = pos_in_bar / STEP
+        step = int(round(step_f))
+        if abs(step_f - step) < 1e-3 and 0 <= step < STEPS_PER_BAR:      # on the 16th grid
+            if "timing" in g:
+                off += g["timing"][step] * self.bpm / 60000.0
+            if "accent" in g:
+                vel += g["accent"][step]
+        h = g.get("humanize")
+        if h:
+            import random
+            rng = random.Random(f"{h.get('seed', 0)}|{trk.name}|{abs_bar}|{round(pos_in_bar, 4)}|{pitch}")
+            off += rng.uniform(-1, 1) * float(h.get("ms", 0)) * self.bpm / 60000.0
+            vel += round(rng.uniform(-1, 1) * float(h.get("vel", 0)))
+        return off, dur * float(g.get("gate", 1.0)), int(max(1, min(127, vel)))
 
     def flatten(self) -> tuple[list[ArrangementClip], list[Marker]]:
         """Expand sections into one arrangement clip per (section, track)."""
@@ -491,14 +555,15 @@ class Song:
                     continue
                 first, last = min(bar_src), max(bar_src) + 1
                 notes: list[Note] = []
+                groove = resolve_groove(trk.groove)
                 for b, (pat, pbar, tr) in sorted(bar_src.items()):
                     lo, hi = pbar * BEATS_PER_BAR, (pbar + 1) * BEATS_PER_BAR
                     for n in pat.notes:
                         if lo <= n.start < hi:
                             t = (b - first) * BEATS_PER_BAR + (n.start - lo)
-                            if trk.swing:
-                                t += self._swing_offset(n.start - lo)
-                            notes.append(Note(n.pitch + tr, t, n.dur, n.vel))
+                            off, dur, vel = self._groove_note(trk, groove, n.start - lo, sbar + b, n.pitch, n.dur, n.vel)
+                            # a hit pushed ahead of the clip's first beat stays on it (the clip cannot start earlier)
+                            notes.append(Note(n.pitch + tr, max(0.0, t + off), dur, vel))
                 length = (last - first) * BEATS_PER_BAR
                 # clip notes to clip end so nothing rings past the clip
                 notes = [Note(n.pitch, n.start, min(n.dur, length - n.start), n.vel) for n in notes if n.start < length]

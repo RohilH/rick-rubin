@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from fake_live import FakeLiveServer  # noqa: E402
 
-from ableton_use import Project, generate  # noqa: E402
+from ableton_use import Project, Song, generate  # noqa: E402
 from ableton_use import edits  # noqa: E402
 from ableton_use.analysis import lint  # noqa: E402
 from ableton_use.cli import main  # noqa: E402
@@ -209,13 +209,19 @@ def test_push_samples_to_fake_live(sampled):
     # groove: bars 13-20 (full loop) + bars 21-24 (first half, trimmed); drop: 2 full passes
     assert [(c.start_time, round(c.length, 3)) for c in clips] == [(48, 32), (80, 16), (160, 32), (192, 32)]
     assert all(c.warping is False for c in clips)
-    assert [Path(c.file_path).name for c in clips] == ["top.wav", "top.0+16.wav", "top.wav", "top.wav"]
-    assert clips[0].name.startswith("groove")
-    # filter automation on the audio clips of the drop, continuous across the two segments
-    flt = next(d for d in top.devices if d.name == "Auto Filter")
-    e1 = [v for _, _, v in clips[2].envs[id(flt.parameters[0])].steps]
-    e2 = [v for _, _, v in clips[3].envs[id(flt.parameters[0])].steps]
-    assert e1[0] < e1[-1] < e2[-1] and abs(e1[-1] - e2[0]) / e2[0] < 0.1
+    names = [Path(c.file_path).name for c in clips]
+    assert names[:2] == ["top.wav", "top.0+16.wav"]
+    # the drop's filter sweep is rendered into the audio (Live drops envelopes on arrangement audio clips):
+    # one cut per pass, no Auto Filter, and the first pass is duller than the second
+    assert names[2].startswith("top.0+32.") and names[3].startswith("top.0+32.") and names[2] != names[3]
+    assert not any(d.name == "Auto Filter" for d in top.devices) and not any(c.envs for c in clips)
+    _, dull = read_audio(clips[2].file_path)
+    _, bright = read_audio(clips[3].file_path)
+    _, orig = read_audio(clips[0].file_path)
+    def hf(v):                                                    # share of energy above 4 kHz
+        S = np.abs(np.fft.rfft(v[:, 0])) ** 2
+        return float(S[int(4000 * len(v) / SR):].sum() / S.sum())
+    assert len(dull) == len(orig) and hf(dull) < 0.5 * hf(bright) and hf(bright) < hf(orig)
 
     kick = live["Kick"].devices[0]
     assert kick.name == "Simpler" and kick.sample_path.endswith("samples/kick.wav") and kick.playback_mode == 1
@@ -376,3 +382,56 @@ def test_serum_preset_sheet_and_catalog(tmp_path):
     assert "- source #3 → Oscillator0.Fine -12" in text and text.count("source #") == 1
     assert "- MonoToggle 1" in text
     assert main(["serum", "list", "--root", str(tmp_path), "--folder", "Bass"]) == 0
+
+
+# ---------------------------------------------------------------- groove
+def test_groove_moves_and_accents_notes():
+    from ableton_use.model import GROOVES, resolve_groove
+    s = generate("classic", template="radio", seed=1, bpm=120.0)
+    hats, clap, kick = s.track("Hats"), s.track("Clap"), s.track("Kick")
+    base = {c.track: c for c in s.flatten()[0] if c.section == "groove"}
+    ms = lambda beats: beats * 60000.0 / s.bpm  # noqa: E731
+
+    clap.groove = {"template": "laid_back"}
+    kick.groove = {"timing": [-10] + [0] * 15, "accent": [0] * 4 + [-30] + [0] * 11}
+    hats.groove = {"swing": 60, "accent": [5, -20, 0, -10] * 4, "gate": 0.5, "humanize": {"ms": 3, "vel": 4, "seed": 2}}
+    assert not s.validate()
+    new = {c.track: c for c in s.flatten()[0] if c.section == "groove"}
+    # claps (beats 2 and 4) sit 12 ms late, everything else on that track untouched
+    d = [ms(n.start - o.start) for n, o in zip(new["Clap"].notes, base["Clap"].notes) if o.start % 4 in (1.0, 3.0)]
+    assert d and all(abs(x - 12) < 1e-6 for x in d)
+    # the kick's downbeat is pushed 10 ms early — except the clip's very first hit, which cannot move before the clip
+    k0, k1 = sorted(new["Kick"].notes, key=lambda n: n.start)[0], [n for n in new["Kick"].notes if abs(n.start - (4 - 10 * s.bpm / 60000)) < 1e-6]
+    assert k0.start == 0.0 and len(k1) == 1
+    assert {n.vel for n in new["Kick"].notes if abs(n.start % 4 - 1.0) < 1e-6} == {70}
+    # hats: own swing (60% instead of the song's), shorter notes, velocities shaped, small random drift that is repeatable
+    off16 = [n for n in new["Hats"].notes if 0.2 < n.start % 0.5 < 0.4]
+    assert off16 and all(abs(ms(n.start % 0.5 - 0.30)) <= 3.001 for n in off16)
+    assert all(abs(n.dur - 0.125) < 1e-9 for n in new["Hats"].notes)
+    again = {c.track: c for c in s.flatten()[0] if c.section == "groove"}
+    assert [(n.start, n.vel) for n in again["Hats"].notes] == [(n.start, n.vel) for n in new["Hats"].notes]
+    assert len({round(ms(n.start % 0.5 - 0.30), 3) for n in off16}) > 3
+    # round trip, score, validation
+    s2 = Song.from_json(s.to_json())
+    assert s2.track("Hats").groove == hats.groove and "groove" not in s2.to_json()["tracks"]["Bass"]
+    text = pack(s)
+    assert "groove laid_back" in text and "groove swing 60%, accent +5 -20 · -10" in text and "humanize ±3 ms ±4 vel" in text
+    assert resolve_groove({"template": "shuffle_16", "swing": 55})["swing"] == 55 and "accent" in resolve_groove({"template": "shuffle_16"})
+    clap.groove = {"template": "nope"}
+    kick.groove = {"timing": [1, 2, 3]}
+    errs = s.validate()
+    assert any("unknown groove template" in e for e in errs) and any("needs 16 values" in e for e in errs)
+    assert all(len(g.get(k, [0] * 16)) == 16 for g in GROOVES.values() for k in ("timing", "accent"))
+
+
+def test_instrument_params_reach_simpler(sampled):
+    p, _ = sampled
+    p.edit([{"op": "track", "name": "Bass", "set": {"instrument_params": {"Volume": -3, "Nope": 1}}}])
+    song = p.load()
+    srv = FakeLiveServer()
+    with LiveBridge(port=srv.port) as b:
+        rep = push_song(song, b)
+    simpler = {t.name: t for t in srv.song.tracks}["Bass"].devices[0]
+    assert {q.name: q.str_for_value(q.value) for q in simpler.parameters}["Volume"] == "-3.0 dB"
+    assert len({t.name: t for t in srv.song.tracks}["Bass"].devices) == 2          # Simpler + sidechain compressor, no second Simpler
+    assert rep.tracks["Bass"]["instrument_params"] == "Volume -3.0 dB" and any("no parameter 'Nope'" in w for w in rep.warnings)

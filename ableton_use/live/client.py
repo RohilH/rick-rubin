@@ -96,6 +96,8 @@ class PushReport:
         L = [f"Pushed to Live {self.live_version or '?'}: {len(self.tracks)} tracks, {self.clips} clips, {self.notes} notes"]
         for name, info in self.tracks.items():
             L.append(f"  - {name}: instrument={info.get('instrument')!s}" + (f", sidechain={info['sidechain']}" if info.get("sidechain") else ""))
+            if info.get("instrument_params"):
+                L.append(f"      instrument: {info['instrument_params']}")
             L += [f"      fx: {e}" for e in info.get("effects", [])]
         L += [f"  ! {w}" for w in self.warnings]
         return "\n".join(L)
@@ -164,6 +166,14 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
             info["instrument"] = r.get("loaded")
             if not r.get("loaded"):
                 rep.warnings.append(f"{t.name}: none of {t.instrument} found in the Live browser — load an instrument manually")
+        if t.instrument_params and not t.audio:
+            dev = "Simpler" if t.sample else (info.get("instrument") or "")
+            try:
+                r = bridge.call("device", track=i, device=dev, params=t.instrument_params)
+                info["instrument_params"] = ", ".join(f"{k} {v}" for k, v in r.get("set", {}).items())
+                rep.warnings += [f"{t.name}: {dev}: {m}" for m in r.get("errors", [])]
+            except BridgeError as err:
+                rep.warnings.append(f"{t.name}: instrument parameters not set ({err})")
         bridge.call("set_track", index=i, volume_db=t.volume_db, pan=t.pan, mute=t.mute)
         rep.tracks[t.name] = info
     # tracks are appended at the end, so the indices returned above stay valid
@@ -172,12 +182,15 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
     for c in clips:
         trk = song.track(c.track)
         if c.audio:
+            # Live drops envelopes when an audio clip is copied to the arrangement, so filter and volume moves
+            # on loops are rendered into the audio itself (the same curves the preview uses)
+            baked = {k: v for k, v in c.envelopes.items() if k in ("filter", "cutoff", "volume")}
+            for k in set(c.envelopes) - set(baked):
+                rep.warnings.append(f"clip {c.name}: automation of {k!r} is not supported on audio tracks")
             for s0, ln, off in c.segments:
-                # a segment that is not the whole file gets its own pre-cut file, so clips stay unwarped and exact
-                path = str(_segment_file(song, c.audio, off, ln))
-                env = {k: _slice_env(pts, s0, s0 + ln) for k, pts in c.envelopes.items()}
-                cmds.append(("create_audio_clip", {"track": index[c.track], "path": path, "start": c.start + s0,
-                                                   "name": c.name, "envelopes": env}))
+                env = {k: _slice_env(pts, s0, s0 + ln) for k, pts in baked.items()}
+                path = str(_segment_file(song, c.audio, off, ln, env))
+                cmds.append(("create_audio_clip", {"track": index[c.track], "path": path, "start": c.start + s0, "name": c.name}))
             continue
         # Simpler one-shot drums: Simpler plays its sample at C3, so send every hit there
         notes = [[60 if (trk.sample and trk.is_drum) else n.pitch, round(n.start, 5), round(n.dur, 5), n.vel] for n in c.notes]
@@ -249,21 +262,34 @@ def _slice_env(pts, a: float, b: float) -> list[list[float]]:
     return out
 
 
-def _segment_file(song: Song, rel: str, off: float, ln: float) -> Path:
+def _segment_file(song: Song, rel: str, off: float, ln: float, env: dict | None = None) -> Path:
     """The file to place for `ln` beats of `rel` starting `off` beats in: the file
-    itself when that is all of it, otherwise a cut written next to it (samples/cuts/)."""
+    itself when that is all of it and nothing is automated, otherwise a cut written
+    next to it (samples/cuts/) with any filter/volume envelope rendered in."""
+    import hashlib
+    from ..render.preview import _apply_lowpass
     from ..samples import read_audio, write_wav24
     src = song.resolve(rel)
     sr, x = read_audio(src)
     spb = 60.0 / song.bpm
     a, n = int(round(off * spb * sr)), int(round(ln * spb * sr))
-    if a == 0 and abs(len(x) - n) <= 2:
+    env = {k: v for k, v in (env or {}).items() if v}
+    if a == 0 and abs(len(x) - n) <= 2 and not env:
         return src
-    out = src.parent / "cuts" / f"{src.stem}.{off:g}+{ln:g}.wav"
+    tag = ("." + hashlib.sha1(json.dumps(env, sort_keys=True).encode()).hexdigest()[:8]) if env else ""
+    out = src.parent / "cuts" / f"{src.stem}.{off:g}+{ln:g}{tag}.wav"
     if not out.exists() or out.stat().st_mtime < src.stat().st_mtime:
         seg = x[a:a + n].copy()
         if len(seg) < n:
             seg = np.concatenate([seg, np.zeros((n - len(seg), x.shape[1]), np.float32)])
+        t = np.arange(len(seg)) / sr / spb                       # beats from the segment start
+        for prm, pts in env.items():
+            ctrl = np.interp(t, [q[0] for q in pts], [q[1] for q in pts])
+            if prm == "volume":
+                seg = seg * ctrl[:, None].astype(np.float32)
+            else:
+                cutoff = 60.0 * (18000.0 / 60.0) ** ctrl
+                seg = np.stack([_apply_lowpass(seg[:, ch], cutoff, sr) for ch in range(seg.shape[1])], axis=1).astype(np.float32)
         f = min(len(seg) // 2, max(1, int(0.002 * sr)))
         ramp = np.linspace(0, 1, f, dtype=np.float32)[:, None]
         seg[:f] *= ramp

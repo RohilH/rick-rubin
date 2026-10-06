@@ -279,6 +279,11 @@ def render_preview(song: Song, out_path: str | Path, sr: int = SR, stems_dir: st
                     w = voices.drum(_drum_kind(trk.role, n.pitch))
                 else:
                     w = voices.tone(trk.role, n.pitch, n.dur * spb)
+                atk = float(trk.instrument_params.get("Ve Attack", 0) or 0) if trk.sample else 0.0
+                if atk > 0.5:                                  # Simpler's amp attack in ms: fade the hit in
+                    k = min(len(w), int(atk / 1000.0 * sr))
+                    w = w.copy()
+                    w[:k] *= np.linspace(0, 1, k, dtype=np.float32)
                 j = min(total, i + len(w))
                 buf[i:j] += w[: j - i] * (n.vel / 127.0)
             for param, pts in c.envelopes.items():
