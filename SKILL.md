@@ -1,0 +1,115 @@
+---
+name: ableton-use
+description: Produce house / EDM tracks by conversation and render them into Ableton Live. Generate, read, edit, self-evaluate and push full arrangements (drums, bass, chords, pads, hooks, builds, drops, automation, sidechain). Ask, confirm the plan, execute, self-eval, persist. Production-correctness rules are hard; everything else is artistic freedom.
+---
+
+# ableton-use
+
+## Principle
+
+1. **You never listen. You read.** The track lives in `song.json`; `score.md` is its packed reading view (arrangement map, energy curve, every pattern as step strings / note events — ~6 KB for a 5-minute track). `eval.md` adds *measured* loudness, crest factor and spectral balance per section from an offline preview render. `view` draws piano roll + waveform + spectrogram for a bar range — **on demand, at decision points only**, never as a scan.
+2. **Rhythm and arrangement are primary; sound design follows.** House lives or dies on the groove and on 8/16/32-bar phrasing. Get those right in the score, then let Live's instruments do the timbre.
+3. **Ask → confirm → execute → self-eval → push → persist.** Never build until the user has approved a plain-English plan.
+4. **song.json is the source of truth; Ableton is a render target.** Edits go into the song, then get re-pushed (`--replace`). Never "fix" things inside Live and expect them to come back.
+5. **Artistic freedom is the default.** Every value in `ableton_use/house.py` (patterns, templates, voicings, volumes) is a worked example of idiomatic house, not a mandate. Deviate whenever the brief calls for it — invent sections, parts, grooves.
+6. **Verify before you present.** If `eval` fails, you are not done.
+
+## Hard rules (production correctness — non-negotiable)
+
+1. **Phrasing:** section lengths are multiples of 8 bars (a 4-bar pickup at most). Something changes every 8 bars, something big every 16.
+2. **DJ-friendly edges:** intro and outro ≥ 16 bars, drums-led; no bass/chords/hook in the first or last 8 bars (unless the user explicitly asks for a radio edit).
+3. **One tempo, 118–130 BPM.** No tempo changes inside a track.
+4. **In key.** Melodic notes stay in `song.key`; a chromatic note must be deliberate and mentioned in your reasoning.
+5. **Low end:** bass is monophonic, roughly C0–G2 (MIDI 24–55), sidechained to the kick, and mostly avoids kick hits. Nothing but kick and bass below C2 (MIDI 48).
+6. **Drops earn their impact:** every drop follows a build or breakdown and starts with the kick on bar 1. A beat of silence (`kick_gap`, the roll's silent last beat) before the drop is the classic move.
+7. **Pitch convention is Ableton's:** C3 = MIDI 60, C1 = 36 (kick), Drum Rack pads start at C1.
+8. **Edit through ops or the Python API, then re-read `score.md`.** Never hand-edit flattened MIDI.
+9. **Self-eval before showing or pushing:** `ableton-use eval <dir>` must have 0 errors. Cap at 3 eval passes — then report what's left instead of looping.
+10. **Push only after eval passes, and only with the bridge connected** (`ableton-use status`). Re-pushes use `--replace`.
+11. **Strategy confirmation before execution.**
+12. **All outputs in the project folder.** Never write inside the ableton-use repo.
+
+## Directory layout
+
+```
+<project>/
+├── song.json      ← source of truth (tracks, patterns, sections)
+├── score.md       ← packed score — your primary reading view
+├── eval.md        ← latest self-eval
+├── project.md     ← memory; append one section per session
+├── preview.wav    ← offline sketch render (numpy synth)
+├── midi/          ← song.mid + per-track .mid (manual fallback)
+├── views/         ← on-demand timeline PNGs
+└── history/       ← snapshot before every edit batch (`undo`)
+```
+
+## Commands
+
+```
+ableton-use templates                         # subgenres + arrangement templates
+ableton-use new <dir> --subgenre deep|classic|tech --template club|radio|dj_tool [--key "A minor"] [--bpm 122] [--seed N] [--progression "1 6 4 5"]
+ableton-use score <dir>                       # print/refresh score.md
+ableton-use edit <dir> ops.json               # or '-' for stdin; see ops below
+ableton-use undo <dir>
+ableton-use eval <dir>                        # lint + preview render + measurements -> eval.md (exit 1 on errors)
+ableton-use view <dir> --bars 65-80 [--tracks Bass Kick]
+ableton-use preview <dir> [--stems]
+ableton-use midi <dir>
+ableton-use install-bridge                    # once; then pick "AbletonUse" control surface in Live
+ableton-use status                            # ping Live
+ableton-use push <dir> [--replace]            # build the arrangement in Live
+ableton-use remember <dir> --strategy ... --decisions ... --reasoning ... --outstanding ...
+```
+
+Python: `from ableton_use import Project, generate`; `Project(dir).edit(ops)`, `.evaluate()`, `.view((65, 80))`, `.push(replace=True)`.
+
+## Edit ops (JSON)
+
+```json
+{"ops": [
+  {"op": "set", "field": "bpm", "value": 123},
+  {"op": "generate", "what": "bass", "name": "bass_roll", "options": {"style": "rolling", "progression": [1, 6, 4, 5]}},
+  {"op": "pattern", "name": "perc2", "track": "Perc", "pitch": "D2", "steps": "..x...x...x..x.x"},
+  {"op": "pattern", "name": "hook", "track": "Lead", "bars": 2, "notes": [["A3", "1.1.3", 0.5, 100], ["C4", "1.2.3", 0.25, 90]]},
+  {"op": "part", "section": "drop2", "track": "Bass", "pattern": "bass_roll"},
+  {"op": "part", "section": "drop", "track": "Lead", "pattern": "lead", "start": 8, "transpose": 12},
+  {"op": "part", "section": "bridge", "track": "Chords", "pattern": null},
+  {"op": "fill", "section": "drop", "track": "Clap", "pattern": "clap_fill", "every": 8},
+  {"op": "automation", "section": "build", "track": "Pad", "param": "filter", "points": [0.4, 1.0]},
+  {"op": "insert_section", "index": 4, "section": {"name": "break2", "kind": "breakdown", "bars": 8, "energy": 4, "parts": {"Pad": "pad"}}},
+  {"op": "track", "name": "Vox", "set": {"role": "vocal", "instrument": ["Simpler"], "volume_db": -10}}
+]}
+```
+Full reference: docstring of `ableton_use/edits.py`. `generate` kinds: bass (offbeat|rolling|syncopated), chords (stab|held|single), pad, lead, hats (straight|shuffle|busy), perc, roll. Automation params: `filter` (0..1, maps to an Auto Filter the bridge inserts), `volume`, `pan`, or `"Device:Parameter"`.
+
+Step strings: one char per 16th, `|` separates bars. `x`=100 `X`=127 `o`=72 `g`=45 (ghost) `1-9` scaled, `.` rest. Note positions: `"bar.beat.sixteenth"` (1-based, Ableton style) or float beats.
+
+## The process
+
+1. **Inventory.** If a project exists: read `project.md` (summarise the last session in one sentence) and `score.md`. If not, ask what they want, then `new` with the closest subgenre/template as a sketch.
+2. **Converse.** Ask questions shaped by the brief: reference tracks/artists, subgenre, BPM, key/mood, club vs radio length, vocal?, which instruments/plugins they own, what the drop should feel like. No fixed checklist.
+3. **Propose strategy** (4–8 sentences): tempo/key, arrangement with bar counts, groove, bass approach, harmony, hook, palette, what makes the drop land. **Wait for confirmation.**
+4. **Execute.** Generate a starting point, then edit. Re-read `score.md` after every edit batch.
+5. **Self-eval.** `eval`. Read every line. Lint errors are correctness bugs — fix them. Audio checks catch contrast (breakdown ≥3 LU under the drop), a flat energy curve, a swamped or missing low end, dull tops. `view` the transitions that matter (end of build → drop, breakdown entry) and check: the gap before the drop, the roll, sidechain pump visible on the waveform, the filter sweep. Fix → re-eval, max 3 passes.
+6. **Present.** Summarise the arrangement and what you changed and why. Offer the preview.wav as a sketch (not the final sound).
+7. **Push.** `status`, then `push` (`--replace` on re-push). Read the push report: missing instruments and unrouted sidechains are listed as warnings — tell the user exactly what to fix by hand.
+8. **Persist.** `remember` with strategy, decisions, reasoning log, outstanding items.
+
+## House craft (worked examples — not mandates)
+
+- **Tempo/feel:** deep 118–122 with heavy swing (56–58%); classic/garage-tinged 122–125 (53–55%); tech 124–128, nearly straight (50–53%).
+- **Drums:** kick every beat; clap/snare on 2 and 4; open hat on every off-beat 8th; closed hats as swung 16ths with accent/ghost velocities; a syncopated rim/perc for movement. Fills on the last bar of 8-bar phrases. Drop the kick on beat 4 before a new phrase (`kick_gap`).
+- **Bass:** off-beat 8ths (classic), rolling 16ths that skip the downbeat (tech), syncopated dub lines with octave pops and approach notes (deep). Roots sit around 40–80 Hz. Sidechain to the kick.
+- **Harmony:** minor or dorian. Deep: held min7/min9 voicings, 2 bars per chord. Classic: piano/organ stabs on off-beats, 1 bar per chord. Tech: one chord stab, harmony mostly implied by the bass. Voice-lead and keep chords between ~F2 and G4.
+- **Arrangement:** intro 16–32 (drums) → groove (clap, open hat, filtered bass) → main (chords in) → breakdown (drums & bass out; pad + hook) → build (4-bar roll accelerating to 16ths, riser, filters opening, silent last beat) → drop 32 (everything) → bridge 8 (breath) → drop 2 (one new layer or the hook up an octave) → outro 16–32 (strip back to drums).
+- **Energy:** something enters or leaves every 8 bars; the breakdown must feel like a valley (≥3 LU quieter in eval) or the drop won't land.
+
+## Anti-patterns
+
+- Listening "by proxy" through constant `view` calls. Read the score; view only at decision points.
+- Editing in Live and hoping it syncs back.
+- Building before the plan is confirmed.
+- Drops without a preceding tension section; static 32-bar loops with no fills or entries.
+- Chords or pads below C2 fighting the bass; polyphonic bass.
+- Looping eval forever — 3 passes, then report.
+- Treating preview.wav loudness as a master. It's a sketch; compare sections with each other only.
