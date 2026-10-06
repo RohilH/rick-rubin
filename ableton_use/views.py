@@ -134,15 +134,37 @@ def timeline_view(song: Song, out_path: str | Path, bars: tuple[int, int] | None
             axs.set_ylim(30, 16000)
             axs.set_ylabel("Hz", rotation=0, ha="right", va="center", fontsize=9)
 
+    # Grid: bar lines always; quarter-note lines at 16 bars or fewer; lighter eighth-note lines at 8 or fewer;
+    # faint 16th lines at 4 or fewer.
+    # Drawn over the content (thin, translucent) so they also show on the waveform and spectrogram.
+    nbars = b1 - b0 + 1
     for ax in axes:
         for bar in range(b0, b1 + 2):
             x = (bar - 1) * BEATS_PER_BAR
-            ax.axvline(x, color="0.6" if (bar - 1) % 8 else "0.2", lw=0.4 if (bar - 1) % 8 else 0.9, zorder=0)
+            strong = (bar - 1) % 8 == 0
+            ax.axvline(x, color="0.15" if strong or nbars <= 16 else "0.6", lw=0.9 if strong else (0.7 if nbars <= 16 else 0.4),
+                       zorder=4 if nbars <= 16 else 0, alpha=0.8 if nbars <= 16 else 1.0)
+            if bar > b1:
+                continue
+            if nbars <= 16:
+                for beat in range(1, BEATS_PER_BAR):
+                    ax.axvline(x + beat, color="0.35", lw=0.45, ls=(0, (4, 3)), zorder=4, alpha=0.55)
+            if nbars <= 8:                                   # eighth notes: lighter than the quarters
+                for beat in range(BEATS_PER_BAR):
+                    ax.axvline(x + beat + 0.5, color="0.45", lw=0.35, ls=(0, (2, 3)), zorder=4, alpha=0.45)
+            if nbars <= 4:                                   # sixteenths: lightest
+                for beat in range(BEATS_PER_BAR):
+                    for off in (0.25, 0.75):
+                        ax.axvline(x + beat + off, color="0.55", lw=0.25, ls=(0, (1, 4)), zorder=4, alpha=0.4)
     axes[-1].set_xlim(t0, t1)
-    ticks = list(range(b0, b1 + 1, max(1, (b1 - b0 + 1) // 16)))
+    ticks = list(range(b0, b1 + 1, max(1, nbars // 16)))
     axes[-1].set_xticks([(b - 1) * BEATS_PER_BAR for b in ticks])
     axes[-1].set_xticklabels([str(b) for b in ticks])
-    axes[-1].set_xlabel("bar")
+    if nbars <= 8:                                         # name the beats inside each bar: 41 .2 .3 .4 42 ...
+        minor = [(b - 1) * BEATS_PER_BAR + k for b in range(b0, b1 + 1) for k in range(1, BEATS_PER_BAR)]
+        axes[-1].set_xticks(minor, minor=True)
+        axes[-1].set_xticklabels([f".{k + 1}" for _ in range(b0, b1 + 1) for k in range(1, BEATS_PER_BAR)], minor=True, fontsize=6, color="0.4")
+    axes[-1].set_xlabel("bar" + (" .beat" if nbars <= 8 else ""))
     fig.suptitle(f"{song.title} — bars {b0}-{b1}", fontsize=11, y=0.995)
     fig.savefig(out_path, dpi=90, bbox_inches="tight")
     plt.close(fig)

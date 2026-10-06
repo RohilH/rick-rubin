@@ -143,6 +143,8 @@ Stop exploring a question when one option is clearly right for this track and yo
 
 ## Zooming in
 
+`view` draws a grid that follows the zoom: bar lines always, quarter-note lines at 16 bars or fewer, lighter eighth-note lines (and `.2 .3 .4` beat labels) at 8 or fewer, faint 16th lines at 4 or fewer. To judge timing — swing, pushed or late hits, a vocal against the grid — zoom to 4 bars or fewer.
+
 `score`, `eval`, `view`, `width` and `capture` all take `--bars A-B`; all but `width` take `--tracks ...` too. Use the zoom whenever a question is local — "is the bass ducking under the kick in the drop?" is `eval --bars 41-48 --tracks Kick Bass` plus `view` on the same slice, not a re-read of the whole song. Bar numbers are always the song's. A solo render is normalised on its own, so compare shapes and ratios inside it, not its level against the full mix.
 
 ## Hearing what Live plays: `capture`
