@@ -357,15 +357,14 @@ def search_rows(rows: dict[str, dict], words: list[str] | None = None, sort: str
     (tags, description...). A word starting with '-' excludes. sort: attack decay bright dark sub bass wide loud length."""
     out = []
     for name, d in rows.items():
-        hay = " ".join([name.lower(), " ".join(d.get("character", [])), (extra or {}).get(name, "").lower()])
-        toks = hay.replace("/", " ").replace("_", " ").split()
+        words_of = set(d.get("character", []))                                  # character words match whole ("bass" is not "bassy")
+        text = " ".join([name.lower(), (extra or {}).get(name, "").lower()])     # names, folders, tags, descriptions match anywhere
         ok = True
         for w in words or []:
             w = w.lower()
-            if w.startswith("-") and len(w) > 1:
-                ok = ok and not (w[1:] in toks or w[1:] in hay.split())
-            else:
-                ok = ok and (w in toks or w in hay)
+            neg = w.startswith("-") and len(w) > 1
+            hit = (w[1:] if neg else w) in words_of or (w[1:] if neg else w) in text
+            ok = ok and (not hit if neg else hit)
         if ok:
             out.append((name, d))
     if sort:
