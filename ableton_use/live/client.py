@@ -16,6 +16,8 @@ import numpy as np
 from ..model import Song
 
 DEFAULT_PORT = 9889
+# what `sidechain: true` on a track means: a pumping house compressor keyed from the kick
+DEFAULT_SIDECHAIN = {"device": "Compressor", "params": {"Threshold": -28, "Ratio": 4, "Attack": 0.5, "Release": 120}}
 # where instrument names are looked up, in order: Live's own, then the user's saved presets, then VST/AU plug-ins
 INSTRUMENT_CATEGORIES = ["drums", "instruments", "sounds", "user_library", "plugins"]
 REMOTE_SCRIPT_DIR = Path(__file__).parent / "remote_script" / "AbletonUse"
@@ -94,6 +96,7 @@ class PushReport:
         L = [f"Pushed to Live {self.live_version or '?'}: {len(self.tracks)} tracks, {self.clips} clips, {self.notes} notes"]
         for name, info in self.tracks.items():
             L.append(f"  - {name}: instrument={info.get('instrument')!s}" + (f", sidechain={info['sidechain']}" if info.get("sidechain") else ""))
+            L += [f"      fx: {e}" for e in info.get("effects", [])]
         L += [f"  ! {w}" for w in self.warnings]
         return "\n".join(L)
 
@@ -194,18 +197,29 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
             for prm, v in (res["result"].get("envelopes") or {}).items():
                 if str(v).startswith("error"):
                     rep.warnings.append(f"clip {args['name']}: automation {prm} {v}")
-    # sidechain after the clips so the compressor sits after any Auto Filter the envelopes added
-    if sidechain and any(t.role == "kick" for t in song.tracks):
-        kick = next(t.name for t in song.tracks if t.role == "kick")
-        for t in song.tracks:
-            if t.sidechain:
-                try:
-                    r = bridge.call("sidechain", track=index[t.name], source_track_name=kick)
-                    rep.tracks[t.name]["sidechain"] = "keyed from " + kick if r.get("routed") else "compressor added, route its sidechain to Kick manually"
-                    if not r.get("routed"):
-                        rep.warnings.append(f"{t.name}: could not route compressor sidechain to {kick}")
-                except BridgeError as e:
-                    rep.warnings.append(f"{t.name}: sidechain failed ({e})")
+    # effects after the clips, so they sit behind any Auto Filter the envelopes added
+    kick = next((t.name for t in song.tracks if t.role == "kick"), None)
+    for t in song.tracks:
+        chain = [dict(e) for e in t.effects]
+        if sidechain and t.sidechain and kick and not any(e.get("sidechain") for e in chain):
+            chain.append(dict(DEFAULT_SIDECHAIN, sidechain=kick))        # `sidechain: true` shorthand
+        seen: dict[str, int] = {}
+        for e in chain:
+            dev = e["device"]
+            nth = seen.get(dev, 0)
+            seen[dev] = nth + 1
+            try:
+                r = bridge.call("device", track=index[t.name], device=dev, params=e.get("params") or {},
+                                sidechain=e.get("sidechain"), sidechain_tap=e.get("sidechain_tap"), nth=nth)
+            except BridgeError as err:
+                rep.warnings.append(f"{t.name}: {dev} failed ({err})")
+                continue
+            shown = ", ".join(f"{k} {v}" for k, v in r.get("set", {}).items())
+            rep.tracks[t.name].setdefault("effects", []).append(
+                dev + (f" <- {r['sidechain']}" if r.get("sidechain") else "") + (f" ({shown})" if shown else ""))
+            if e.get("sidechain"):
+                rep.tracks[t.name]["sidechain"] = "keyed from " + e["sidechain"] if r.get("sidechain") else "not routed"
+            rep.warnings += [f"{t.name}: {dev}: {m}" for m in r.get("errors", [])]
 
     for m in markers:
         for _ in range(5):
@@ -257,6 +271,110 @@ def _segment_file(song: Song, rel: str, off: float, ln: float) -> Path:
         out.parent.mkdir(parents=True, exist_ok=True)
         write_wav24(out, sr, seg)
     return out
+
+
+# ============================================================================ capture
+CAPTURE_TRACK = "ableton-use capture"
+
+
+def capture_live(song: Song, bridge: LiveBridge, out_path: str | Path, bars: tuple[int, int] | None = None,
+                 tracks: list[str] | None = None, tail_beats: float = 2.0, progress=None) -> dict:
+    """Record what Live itself plays — the pushed arrangement through Live's
+    instruments, effects, sidechains and master — into a WAV, in real time.
+
+    An audio track set to "Resampling" is armed, the arrangement is recorded from
+    the first bar of `bars` (1-based, inclusive; default: the whole song) and the
+    take is copied to `out_path`, trimmed so its first sample is that bar's
+    downbeat. `tracks` solos those tracks for the take. Everything touched (solo,
+    metronome, loop, the capture track) is put back afterwards."""
+    import time
+    from ..model import BEATS_PER_BAR
+    from ..samples import read_audio, write_wav24
+    say = progress or (lambda *_: None)
+    lom = lambda path, **kw: bridge.call("lom", path=path, **kw)  # noqa: E731
+    b0, b1 = bars or (1, song.total_bars)
+    start, end = (b0 - 1) * BEATS_PER_BAR, b1 * BEATS_PER_BAR
+    names = [t["name"] for t in bridge.call("get_state")["tracks"]]
+    missing = [t for t in (tracks or []) if t not in names]
+    if missing:
+        raise BridgeError(f"cannot solo {missing}: not in the Live set (push first)")
+    if lom("song.is_playing"):
+        bridge.call("transport", action="stop")
+    if CAPTURE_TRACK in names:
+        bridge.call("delete_tracks", names=[CAPTURE_TRACK])
+        names = [t["name"] for t in bridge.call("get_state")["tracks"]]
+    restore: list[tuple[str, Any]] = []
+
+    def setv(path, value):
+        old = lom(path)
+        if old != value:
+            lom(path, op="set", value=value)
+            restore.append((path, old))
+
+    ci = bridge.call("create_audio_track", name=CAPTURE_TRACK)
+    tp = f"song.tracks[{ci}]"
+    try:
+        lom(tp + ".input_routing_type", op="set", value="Resampling", choose=tp + ".available_input_routing_types")
+        for i, n in enumerate(names):
+            if lom(f"song.tracks[{i}].arm"):
+                setv(f"song.tracks[{i}].arm", False)
+            setv(f"song.tracks[{i}].solo", bool(tracks) and n in tracks)
+        lom(tp + ".arm", op="set", value=True)
+        setv("song.metronome", False)
+        setv("song.loop", False)
+        bridge.call("transport", action="stop", beat=start)
+        time.sleep(0.2)
+        lom("song.record_mode", op="set", value=True)
+        time.sleep(0.1)
+        if not lom("song.is_playing"):
+            bridge.call("transport", action="play")
+        secs = (end - start + tail_beats) * 60.0 / song.bpm
+        say(f"recording bars {b0}-{b1} from Live ({secs:.0f} s, real time)")
+        t_end = time.time() + secs + 20
+        while lom("song.current_song_time") < end + tail_beats:
+            if time.time() > t_end or not lom("song.is_playing"):
+                raise BridgeError("Live stopped or stalled during the capture")
+            time.sleep(0.25)
+        bridge.call("transport", action="stop")
+        lom("song.record_mode", op="set", value=False)
+        time.sleep(0.5)
+        clips = bridge.call("get_state")["tracks"][ci]["arrangement_clips"]
+        if not clips:
+            raise BridgeError("Live recorded nothing — is the capture track armed and set to Resampling?")
+        k = max(range(len(clips)), key=lambda j: clips[j]["length"])
+        src = lom(f"{tp}.arrangement_clips[{k}].file_path")
+        clip_start = clips[k]["start"]
+    finally:
+        try:
+            if lom("song.is_playing"):
+                bridge.call("transport", action="stop")
+            lom("song.record_mode", op="set", value=False)
+        except BridgeError:
+            pass
+        for path, old in reversed(restore):
+            try:
+                lom(path, op="set", value=old)
+            except BridgeError:
+                pass
+        try:
+            bridge.call("delete_tracks", names=[CAPTURE_TRACK])
+            bridge.call("transport", action="stop", beat=start)
+        except BridgeError:
+            pass
+    for _ in range(20):                      # Live finishes writing the file just after stopping
+        if Path(src).exists() and Path(src).stat().st_size > 1000:
+            break
+        time.sleep(0.25)
+    sr, x = read_audio(src)
+    spb = 60.0 / song.bpm
+    shift = int(round((start - clip_start) * spb * sr))     # samples to drop (+) or pad (-) so the file starts on the downbeat
+    x = x[shift:] if shift >= 0 else np.concatenate([np.zeros((-shift, x.shape[1]), np.float32), x])
+    x = x[: int(round((end - start + tail_beats) * spb * sr))]
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    write_wav24(out_path, sr, x)
+    return {"path": out_path, "source": src, "bars": (b0, b1), "tracks": tracks, "seconds": len(x) / sr,
+            "peak_db": float(20 * np.log10(np.abs(x).max() + 1e-12))}
 
 
 # ============================================================================ install

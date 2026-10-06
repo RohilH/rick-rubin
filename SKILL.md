@@ -54,7 +54,7 @@ First-time install lives in `install.md`. On cold start just verify: `ableton-us
 ```
 ableton-use templates                         # subgenres + arrangement templates
 ableton-use new <dir> --subgenre deep|classic|tech --template club|radio|dj_tool [--key "A minor"] [--bpm 122] [--seed N] [--progression "1 6 4 5"]
-ableton-use score <dir>                       # print/refresh score.md
+ableton-use score <dir> [--bars 33-48] [--tracks Bass Kick]   # print/refresh score.md; with a zoom, print just that slice
 ableton-use edit <dir> ops.json               # or '-' for stdin; see ops below
 ableton-use undo <dir>
 ableton-use transcribe <dir> samples/vocal.wav [--model small.en]   # words -> bar.beat.16th, cached, shown in score.md
@@ -62,6 +62,9 @@ ableton-use width <dir> [file]                # stereo image: correlation, side 
 ableton-use sample <dir> <file> --name N --oneshot [--melodic]                       # Simpler one-shot; --melodic measures its pitch
 ableton-use sample <dir> <file> --name N --loop --src-bpm B [--bars N] [--align end] [--end-at S] # audio loop, conformed to the song tempo
 ableton-use eval <dir>                        # lint + preview render + measurements -> eval.md (exit 1 on errors)
+ableton-use eval <dir> --bars 33-48 --tracks Bass Kick   # zoom: measure a bar range and/or a solo of some tracks
+ableton-use capture <dir> [--bars 33-48] [--tracks Bass Kick]   # record Live's real output (real time), measure it, draw it
+ableton-use eval <dir> --live [--bars ...]    # measurements of the last full capture (live.wav)
 ableton-use view <dir> --bars 65-80 [--tracks Bass Kick]
 ableton-use preview <dir> [--stems]
 ableton-use midi <dir>
@@ -93,6 +96,27 @@ Python: `from ableton_use import Project, generate`; `Project(dir).edit(ops)`, `
 Full reference: docstring of `ableton_use/edits.py`. `generate` kinds: bass (offbeat|rolling|syncopated), chords (stab|held|single), pad, lead, hats (straight|shuffle|busy), perc, roll. Automation params: `filter` (0..1, maps to an Auto Filter the bridge inserts), `volume`, `pan`, or `"Device:Parameter"`.
 
 Step strings: one char per 16th, `|` separates bars. `x`=100 `X`=127 `o`=72 `g`=45 (ghost) `1-9` scaled, `.` rest. Note positions: `"bar.beat.sixteenth"` (1-based, Ableton style) or float beats.
+
+## Zooming in
+
+`score`, `eval`, `view`, `width` and `capture` all take `--bars A-B`; all but `width` take `--tracks ...` too. Use the zoom whenever a question is local — "is the bass ducking under the kick in the drop?" is `eval --bars 41-48 --tracks Kick Bass` plus `view` on the same slice, not a re-read of the whole song. Bar numbers are always the song's. A solo render is normalised on its own, so compare shapes and ratios inside it, not its level against the full mix.
+
+## Hearing what Live plays: `capture`
+
+`preview.wav` is this library's own sketch render. `capture` is the real thing: it adds a temporary audio track set to **Resampling**, records the arrangement from Live's master in real time (the whole song, or just `--bars`; `--tracks` solos them), copies the take into the project (`live.wav`, or `zoom/live_bars_...wav`), removes the track and restores solo/metronome/loop. It then prints the same loudness table as `eval`, the stereo report, and a `view` drawn from Live's audio. Capture after every push you intend to present, and judge mix decisions — sidechain depth, compressor settings, master clipping, width — on it rather than on the preview. A zoomed capture of 8 bars takes ~15 s; use those while iterating and one full capture at the end.
+
+## Effects and compressors
+
+A track's `effects` is an ordered list of Live audio effects placed after the instrument. Every parameter is set by the value Live displays, in Live's own names and units:
+
+```json
+{"op": "track", "name": "Bass", "set": {"effects": [
+  {"device": "Compressor", "sidechain": "Kick", "sidechain_tap": "Post FX",
+   "params": {"Threshold": -32, "Ratio": 6, "Attack": 0.1, "Release": 110, "Knee": 3,
+              "Model": "Peak", "LookAhead": "1 ms", "Makeup": false, "S/C EQ On": false, "Dry/Wet": 100}}]}}
+```
+
+Numbers are dB, ms, Hz, % or the ratio's first figure (`"inf"` for a limiter); switches take true/false; menus take the option's name. Compressor parameters: Threshold, Ratio, Expansion Ratio, Attack, Release, Auto Release On/Off, Output, Makeup, Dry/Wet, Model (Peak | RMS | Expand), Env Mode (Lin | Log), Knee, LookAhead (0 ms | 1 ms | 10 ms), S/C Listen, S/C EQ On, S/C EQ Type, S/C EQ Freq, S/C EQ Q, S/C EQ Gain, S/C On, S/C Gain, S/C Mix. `sidechain` names the track that keys the device (a Compressor on the bass keyed from the kick is the house pump); `sidechain_tap` is Pre FX, Post FX or Post Mixer. The push report echoes what Live shows after setting each value and lists any name it did not find — an unknown parameter name is reported with the device's full parameter list, which is also how to discover the parameters of any other device (EQ Eight, Saturator, Reverb, Glue Compressor...). `sidechain: true` on a track remains the shorthand for a default kick-keyed Compressor (−28 dB, 4:1, 0.5 ms, 120 ms). The offline preview only models the ducking, not the compressor's exact curve: tune compressors against `capture`.
 
 ## Using Splice / samples
 

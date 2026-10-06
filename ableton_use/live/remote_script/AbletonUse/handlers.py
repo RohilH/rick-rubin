@@ -4,7 +4,7 @@
 import math
 import traceback
 
-BRIDGE_VERSION = "0.4.0"
+BRIDGE_VERSION = "0.5.0"
 
 FILTER_PARAM_NAMES = ("Frequency", "Filter Freq", "Filter 1 Freq", "Filter Frequency", "Cutoff", "Filter Cutoff", "Freq")
 BROWSER_CATEGORIES = ("drums", "instruments", "sounds", "audio_effects", "user_library", "packs")
@@ -25,6 +25,31 @@ def _num(text):
         return float(out)
     except ValueError:
         return None
+
+
+def _disp(text):
+    """A Live display string as a number in base units: dB, ms, Hz, %, ratio.
+    '1.00 s' -> 1000.0 (ms), '3.56 kHz' -> 3560.0, 'inf : 1' -> inf, '1 : 1.15' -> 1.15."""
+    t = str(text).strip().lower().replace(",", ".")
+    if ":" in t:
+        left, right = [x.strip() for x in t.split(":", 1)]
+        if "inf" in left:
+            return math.inf
+        a, b = _num(left), _num(right)
+        return b if (a == 1 and b not in (None, 1)) else a
+    if t.startswith("-inf"):
+        return -math.inf
+    if t.startswith("inf") or t.startswith("+inf"):
+        return math.inf
+    v = _num(t)
+    if v is None:
+        return None
+    if "khz" in t:
+        return v * 1000.0
+    unit = t.split()[-1] if " " in t else ""
+    if unit == "s":
+        return v * 1000.0
+    return v
 
 
 def _hz(text):
@@ -62,16 +87,24 @@ def filter_mapper(param, lo_hz=60.0, hi_hz=18000.0, grid=96):
 
 
 def set_param_display(param, target, iters=40):
-    """Set a parameter so its *display* value (dB, ms, Hz...) is `target`, by
-    bisection over the raw range using str_for_value. Assumes monotonic display."""
+    """Set a parameter so its *display* value is `target` in base units (dB, ms,
+    Hz, %, ratio), by bisection over the raw range using str_for_value. Assumes a
+    monotonic display."""
+    target = float(target)
     lo, hi = param.min, param.max
-    f_lo, f_hi = _num(param.str_for_value(lo)), _num(param.str_for_value(hi))
+    f_lo, f_hi = _disp(param.str_for_value(lo)), _disp(param.str_for_value(hi))
     if f_lo is None or f_hi is None:
         raise ValueError("parameter %s has non-numeric display" % param.name)
     increasing = f_hi >= f_lo
+    if target <= min(f_lo, f_hi):
+        param.value = lo if increasing else hi
+        return param.str_for_value(param.value)
+    if target >= max(f_lo, f_hi):
+        param.value = hi if increasing else lo
+        return param.str_for_value(param.value)
     for _ in range(iters):
         mid = (lo + hi) / 2.0
-        f = _num(param.str_for_value(mid))
+        f = _disp(param.str_for_value(mid))
         if f is None:
             break
         if (f < target) == increasing:
@@ -79,9 +112,39 @@ def set_param_display(param, target, iters=40):
         else:
             hi = mid
     # pick whichever bracket end displays closest to the target (display strings are rounded)
-    best = min((lo, hi, (lo + hi) / 2.0), key=lambda v: abs((_num(param.str_for_value(v)) or 0) - target))
-    param.value = best
+    def err(v):
+        f = _disp(param.str_for_value(v))
+        return abs(f - target) if f is not None and not math.isinf(f) else math.inf
+    param.value = min((lo, hi, (lo + hi) / 2.0), key=err)
     return param.str_for_value(param.value)
+
+
+def set_param(param, value):
+    """Set a parameter from a human value: a display number (dB, ms, Hz, %, ratio),
+    or for switches/menus a bool or the option's name ('Peak', 'High pass', '10 ms')."""
+    if getattr(param, "is_quantized", False):
+        items = [str(x) for x in (getattr(param, "value_items", None) or [])]
+        if isinstance(value, bool):
+            param.value = param.max if value else param.min
+        elif isinstance(value, str):
+            want = value.strip().lower()
+            low = [x.lower() for x in items]
+            if want in low:
+                param.value = param.min + low.index(want)
+            elif want in ("on", "off") and len(items) <= 2:
+                param.value = param.max if want == "on" else param.min
+            else:
+                raise ValueError("%s: no option %r among %s" % (param.name, value, items))
+        else:
+            # a number names the option that displays it ('10 ms' for 10), else it is the option index
+            hits = [i for i, x in enumerate(items) if _disp(x) == float(value)]
+            param.value = param.min + (hits[0] if hits else int(value))
+        return param.str_for_value(param.value)
+    if isinstance(value, str):
+        value = _disp(value)
+        if value is None:
+            raise ValueError("%s: cannot read value" % param.name)
+    return set_param_display(param, value)
 
 
 def norm_to_param(param, v):
@@ -421,40 +484,71 @@ class Handlers(object):
             except Exception:  # noqa: BLE001
                 pass
 
-    def cmd_sidechain(self, track, source_track_name, threshold_db=-28.0, ratio=4.0, release_ms=120.0):
-        """Insert a Compressor on `track` keyed from another track (the kick)."""
+    def _find_device(self, t, name, nth=0):
+        want = str(name).lower()
+        hits = [d for d in t.devices if d.name.lower() == want or str(getattr(d, "class_display_name", "")).lower() == want]
+        return hits[nth] if len(hits) > nth else None
+
+    def cmd_device(self, track, device, params=None, sidechain=None, sidechain_tap=None, nth=0, describe=False):
+        """Make sure `track` has `device` (a Live audio effect, by name; the nth one of
+        that name) and set its parameters by displayed value:
+          params = {"Threshold": -30, "Ratio": 4, "Attack": 1, "Release": 80, "Knee": 6,
+                    "Model": "Peak", "LookAhead": "1 ms", "Makeup": false, "Dry/Wet": 100}
+        sidechain = name of the track that keys it (Compressor, Gate, Auto Filter...);
+        sidechain_tap = 'Pre FX' | 'Post FX' | 'Post Mixer'. Returns what Live now shows."""
         t = self._track(track)
-        comp = None
-        for d in t.devices:
-            if getattr(d, "class_name", "") in ("Compressor2", "Compressor") or d.name == "Compressor":
-                comp = d
-        if comp is None:
-            self.cmd_insert_device(track, "Compressor")
-            comp = t.devices[len(t.devices) - 1]
-        routed = False
-        types = getattr(comp, "available_input_routing_types", None) or []
-        for rt in types:
-            if source_track_name in str(_rname(rt)):
-                comp.input_routing_type = rt
+        dev = self._find_device(t, device, int(nth))
+        created = False
+        if dev is None:
+            before = len(t.devices)
+            self.cmd_insert_device(track, device)
+            if len(t.devices) <= before:
+                raise RuntimeError("%s did not load on %s" % (device, t.name))
+            dev = t.devices[len(t.devices) - 1]
+            created = True
+        report = {"device": dev.name, "created": created, "set": {}, "errors": []}
+        by_name = dict((p.name.lower(), p) for p in dev.parameters)
+        if sidechain:
+            routed = False
+            types = list(getattr(dev, "available_input_routing_types", None) or [])
+            exact = [rt for rt in types if str(_rname(rt)).lower() == str(sidechain).lower()]
+            loose = [rt for rt in types if str(sidechain).lower() in str(_rname(rt)).lower()]
+            for rt in (exact or loose)[:1]:
+                dev.input_routing_type = rt
                 routed = True
-                break
-        report = {"device": comp.name, "routed": routed}
-        for p in comp.parameters:
-            pn = p.name.lower()
+            report["sidechain"] = str(_rname(dev.input_routing_type)) if routed else None
+            if not routed:
+                report["errors"].append("no sidechain source %r among %s" % (sidechain, [str(_rname(x)) for x in types]))
+            elif sidechain_tap:
+                chans = list(getattr(dev, "available_input_routing_channels", None) or [])
+                pick = [c for c in chans if str(_rname(c)).lower() == str(sidechain_tap).lower()]
+                if pick:
+                    dev.input_routing_channel = pick[0]
+                    report["sidechain_tap"] = str(_rname(pick[0]))
+                else:
+                    report["errors"].append("no sidechain tap %r among %s" % (sidechain_tap, [str(_rname(c)) for c in chans]))
+            sc_on = by_name.get("s/c on")
+            if sc_on is not None and routed and "s/c on" not in dict((k.lower(), 1) for k in (params or {})):
+                sc_on.value = sc_on.max
+        for name, value in (params or {}).items():
+            p = by_name.get(str(name).lower())
+            if p is None:
+                report["errors"].append("no parameter %r (have: %s)" % (name, ", ".join(q.name for q in dev.parameters)))
+                continue
             try:
-                if pn in ("s/c on", "sidechain on", "s/c enabled", "sidechain"):
-                    p.value = p.max
-                elif pn == "threshold":
-                    report["threshold"] = set_param_display(p, threshold_db)
-                elif pn == "ratio":
-                    report["ratio"] = set_param_display(p, ratio)
-                elif pn == "release":
-                    report["release"] = set_param_display(p, release_ms)
-                elif pn == "attack":
-                    report["attack"] = set_param_display(p, 0.5)
+                report["set"][p.name] = set_param(p, value)
             except Exception as e:  # noqa: BLE001
-                report.setdefault("param_errors", []).append("%s: %s" % (p.name, e))
+                report["errors"].append("%s: %s" % (p.name, e))
+        if describe:
+            report["parameters"] = dict((p.name, p.str_for_value(p.value)) for p in dev.parameters)
         return report
+
+    def cmd_sidechain(self, track, source_track_name, threshold_db=-28.0, ratio=4.0, release_ms=120.0, attack_ms=0.5):
+        """Shorthand: a Compressor on `track` keyed from another track (the kick)."""
+        r = self.cmd_device(track, "Compressor", {"Threshold": threshold_db, "Ratio": ratio, "Attack": attack_ms,
+                                                  "Release": release_ms}, sidechain=source_track_name)
+        r["routed"] = bool(r.get("sidechain"))
+        return r
 
     def _resolve_param(self, t, param, ensure=True):
         """'filter' | 'volume' | 'pan' | 'Device Name:Param Name'."""

@@ -228,7 +228,9 @@ class _SampleBank:
 
 
 def render_preview(song: Song, out_path: str | Path, sr: int = SR, stems_dir: str | Path | None = None,
-                   seed: int = 0) -> PreviewResult:
+                   seed: int = 0, tracks: list[str] | None = None) -> PreviewResult:
+    """`tracks` renders only those tracks (a solo). They are still ducked by the
+    kick even when the kick itself is not among them, as they would be in Live."""
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     clips, _ = song.flatten()
@@ -251,7 +253,7 @@ def render_preview(song: Song, out_path: str | Path, sr: int = SR, stems_dir: st
     stems: dict[str, np.ndarray] = {}
     smp = _SampleBank(song, sr)
     for trk in song.tracks:
-        if trk.mute:
+        if trk.mute or (tracks and trk.name not in tracks):
             continue
         buf = np.zeros(total, dtype=np.float32)
         mine = [c for c in clips if c.track == trk.name]
@@ -290,7 +292,7 @@ def render_preview(song: Song, out_path: str | Path, sr: int = SR, stems_dir: st
             ctrl = _filter_curve(env_pts, total, sr, spb)
             cutoff = 60.0 * (base / 60.0) ** ctrl
             buf = _apply_lowpass(buf, cutoff, sr)
-        if trk.sidechain:
+        if trk.ducked:
             depth = DUCK_DEPTH.get(trk.role, 0.55)
             buf *= 1 - depth * (1 - duck)
         stems[trk.name] = buf * (10 ** (trk.volume_db / 20))

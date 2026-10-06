@@ -8,7 +8,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from fake_live import FakeLiveServer, Param, _vol_fmt  # noqa: E402
 from handlers import _hz, _num, filter_mapper, norm_to_param, set_param_display  # noqa: E402
 
-from ableton_use import generate  # noqa: E402
+from ableton_use import Song, generate  # noqa: E402
+from ableton_use.score import pack  # noqa: E402
 from ableton_use.live import BridgeError, LiveBridge, push_song  # noqa: E402
 
 
@@ -77,3 +78,53 @@ def test_unknown_command_errors():
     with LiveBridge(port=srv.port) as b:
         with pytest.raises(BridgeError, match="unknown command"):
             b.call("nope")
+
+
+def test_display_units_and_set_param():
+    from handlers import _disp, set_param
+    inf = float("inf")
+    assert [_disp(x) for x in ("-28.0 dB", "1.00 s", "120 ms", "3.56 kHz", "inf : 1", "4.00 : 1", "1 : 1.15", "-inf dB", "0.71")] == \
+        [-28.0, 1000.0, 120.0, 3560.0, inf, 4.0, 1.15, -inf, 0.71]
+    srv = FakeLiveServer()
+    srv.song.tracks[0].insert_device("Compressor")
+    P = {p.name: p for p in srv.song.tracks[0].devices[0].parameters}
+    assert set_param(P["Release"], 1500) == "1.50 s" and set_param(P["Attack"], 0.5) == "0.50 ms"
+    assert set_param(P["Ratio"], inf) == "inf : 1" and set_param(P["Ratio"], "8 : 1") == "8.00 : 1"
+    assert set_param(P["Threshold"], -inf) == "-inf dB" and set_param(P["S/C EQ Freq"], 2000) == "2.00 kHz"
+    assert set_param(P["Model"], "peak") == "Peak" and set_param(P["LookAhead"], 10) == "10 ms"
+    assert set_param(P["Makeup"], True) == "On" and set_param(P["Makeup"], "off") == "Off"
+    with pytest.raises(ValueError, match="no option"):
+        set_param(P["Model"], "Opto")
+
+
+def test_push_effects_chain_and_sidechain():
+    srv = FakeLiveServer()
+    s = generate("classic", template="radio", seed=1)
+    s.track("Bass").effects = [{"device": "Compressor", "sidechain": "Kick", "sidechain_tap": "Pre FX",
+                                "params": {"Threshold": -35, "Ratio": 8, "Attack": 0.1, "Release": 90, "Knee": 0,
+                                           "Model": "Peak", "LookAhead": "1 ms", "Nope": 1}}]
+    s.track("Kick").effects = [{"device": "Compressor", "params": {"Threshold": -12, "Ratio": 2, "Makeup": True}}]
+    s.track("Pad").sidechain = True          # shorthand still works next to explicit chains
+    assert s.track("Bass").ducked and not s.track("Kick").ducked
+    assert "fx Compressor keyed from Kick: Threshold -35, Ratio 8" in pack(s)
+    s2 = Song.from_json(s.to_json())
+    assert s2.track("Bass").effects == s.track("Bass").effects and "effects" not in s2.to_json()["tracks"]["Clap"]
+    with LiveBridge(port=srv.port) as b:
+        rep = push_song(s, b)
+    live = {t.name: t for t in srv.song.tracks}
+    comps = [d for d in live["Bass"].devices if d.name == "Compressor"]
+    assert len(comps) == 1                   # the explicit compressor replaces the shorthand one
+    shown = {p.name: p.str_for_value(p.value) for p in comps[0].parameters}
+    assert shown["Threshold"] == "-35.0 dB" and shown["Ratio"] == "8.00 : 1" and shown["Attack"] == "0.10 ms"
+    assert shown["Release"] == "90.00 ms" and shown["Knee"] == "0.0 dB" and shown["Model"] == "Peak"
+    assert shown["LookAhead"] == "1 ms" and shown["S/C On"] == "On"
+    assert comps[0].input_routing_type["display_name"] == "Kick" and comps[0].input_routing_channel["display_name"] == "Pre FX"
+    kick = [d for d in live["Kick"].devices if d.name == "Compressor"][0]
+    assert kick.input_routing_type is None and {p.name: p.str_for_value(p.value) for p in kick.parameters}["Makeup"] == "On"
+    pad = [d for d in live["Pad"].devices if d.name == "Compressor"][0]
+    assert pad.input_routing_type["display_name"] == "Kick"
+    assert [w for w in rep.warnings] == [w for w in rep.warnings if "no parameter 'Nope'" in w] and len(rep.warnings) == 1
+    assert "fx: Compressor <- Kick (Threshold -35.0 dB" in rep.text()
+    # a sidechain source has to be a track of the song
+    s.track("Pad").effects = [{"device": "Compressor", "sidechain": "Nobody"}]
+    assert any("sidechain source 'Nobody'" in e for e in s.validate())

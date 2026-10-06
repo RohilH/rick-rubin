@@ -295,3 +295,29 @@ def test_stereo_stats_and_checks(tmp_path):
     assert any("effectively mono" in m for m in rules(mono))
     write_wav24(tmp_path / "w.wav", SR, np.stack([lo + hi_l, lo + hi_r], 1))
     assert "| whole file | +" in stereo_report(tmp_path / "w.wav")
+
+
+# ---------------------------------------------------------------- zoom
+def test_zoom_on_bars_and_tracks(sampled, capsys):
+    from ableton_use.analysis import measure, section_windows
+    p, _ = sampled
+    song = p.load()
+    # windows: sections cut to the bar range, timed for a file that starts at bar 21
+    wins = section_windows(song, (21, 28), file_start_bar=21)
+    assert [w[0] for w in wins] == ["groove[21-24]", "breakdown[25-28]"]
+    assert wins[0][3] == 0.0 and abs(wins[1][3] - 4 * BAR_S) < 1e-9 and abs(wins[1][4] - 8 * BAR_S) < 1e-9
+    assert [w[0] for w in section_windows(song)] == [s.name for s in song.sections]
+    # a solo of the kick is silent in the breakdown and present in the groove
+    wav, m = p.measure_zoom((21, 28), ["Kick"])
+    assert wav.name == "preview_Kick.wav" and [s.name for s in m.sections] == ["groove[21-24]", "breakdown[25-28]"]
+    assert m.sections[0].lufs > -30 and m.sections[1].lufs == float("-inf") and not m.issues
+    # zoomed score: only those tracks, sections and patterns
+    text = pack(song, bars=(21, 28), tracks=["Kick", "Top"])
+    assert "zoom: bars 21-28, tracks Kick Top" in text and "| **groove** | groove | 9-24 (16)" in text
+    assert "### top" in text and "### kick" in text and "### bass" not in text and "**drop**" not in text and "- Bass" not in text
+    assert main(["score", str(p.root), "--tracks", "Bass"]) == 0
+    out = capsys.readouterr().out
+    assert "tracks Bass" in out and "### bass" in out and "### hats" not in out
+    assert "### hats" in p.score_path.read_text()          # score.md itself stays whole
+    assert main(["eval", str(p.root), "--bars", "9-16", "--tracks", "Kick", "Bass"]) == 0
+    assert "| groove[9-16] | groove |" in capsys.readouterr().out

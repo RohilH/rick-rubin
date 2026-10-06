@@ -122,7 +122,8 @@ Both exist so an agent can read what a producer would hear or see on a meter. `t
 * An instrument loaded by browser name, tried in order. For example, a drum track tries `909 Core Kit`, then `Kit-Core 909`, then `Drum Rack`. Set `instrument` per track to use your own presets or plug-ins.
 * One arrangement clip per (section, track), named `section · pattern`. Notes include baked-in swing.
 * Filter automation written as clip envelopes on an Auto Filter that the bridge inserts.
-* Sidechain: a Compressor on each `sidechain: true` track, with its sidechain input routed to the Kick track.
+* Effects: each track's `effects` chain — any Live audio effect, every parameter set by its displayed value (dB, ms, Hz, %, option names), with sidechain routing. `sidechain: true` is shorthand for a Compressor keyed from the Kick.
+* `ableton-use capture` records what Live actually plays (through a temporary Resampling track) so the self-eval can measure Live's sound instead of the sketch render.
 
 The push report lists anything that needs a human: an instrument not found, a sidechain that couldn't be routed, or a failed envelope.
 

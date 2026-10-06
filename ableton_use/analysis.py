@@ -259,14 +259,43 @@ class Measurement:
     issues: list[Issue] = field(default_factory=list)
 
 
-def measure(wav_path: str | Path, song: Song) -> Measurement:
+def section_windows(song: Song, bars: tuple[int, int] | None = None, file_start_bar: int = 1):
+    """(name, kind, energy, start_s, end_s) for every section, or for the parts of
+    sections inside `bars` (1-based, inclusive). Times are positions in an audio
+    file whose first sample is the downbeat of `file_start_bar`."""
+    spbar = 60.0 / song.bpm * BEATS_PER_BAR
+    out = []
+    for sec, sb in zip(song.sections, song.section_starts()):
+        a, b = sb + 1, sb + sec.bars                      # 1-based inclusive
+        name = sec.name
+        if bars:
+            a2, b2 = max(a, bars[0]), min(b, bars[1])
+            if a2 > b2:
+                continue
+            if (a2, b2) != (a, b):
+                name = f"{sec.name}[{a2}-{b2}]"
+            a, b = a2, b2
+        t0, t1 = (a - file_start_bar) * spbar, (b + 1 - file_start_bar) * spbar
+        if t1 > 0:
+            out.append((name, sec.kind, sec.energy, max(0.0, t0), t1))
+    return out
+
+
+def measure(wav_path: str | Path, song: Song, bars: tuple[int, int] | None = None, file_start_bar: int = 1) -> Measurement:
+    """Per-section loudness and balance. `bars` zooms in on a bar range (sections
+    are cut to it and the overall numbers cover only that range)."""
     from .samples import read_audio
     sr, x = read_audio(wav_path)
+    wins = section_windows(song, bars, file_start_bar)
+    if bars and wins:
+        lo, hi = int(wins[0][3] * sr), int(wins[-1][4] * sr)
+        whole = x[lo:hi]
+    else:
+        whole = x
     mono = x.mean(axis=1)
-    spbar = 60.0 / song.bpm * BEATS_PER_BAR
-    m = Measurement(loudness_lufs(x, sr), float(20 * np.log10(np.abs(x).max() + 1e-12)), int((np.abs(x) >= 0.999).sum()))
-    for sec, sb in zip(song.sections, song.section_starts()):
-        a, b = int(sb * spbar * sr), int((sb + sec.bars) * spbar * sr)
+    m = Measurement(loudness_lufs(whole, sr), float(20 * np.log10(np.abs(whole).max() + 1e-12)), int((np.abs(whole) >= 0.999).sum()))
+    for name, kind, energy, t0, t1 in wins:
+        a, b = int(t0 * sr), int(t1 * sr)
         seg, segm = x[a:b], mono[a:b]
         if len(segm) < sr:
             continue
@@ -277,9 +306,10 @@ def measure(wav_path: str | Path, song: Song) -> Measurement:
         tot = spec[(freqs >= 20) & (freqs < 20000)].sum() + 1e-12
         bands = {nm: float(100 * spec[(freqs >= lo) & (freqs < hi)].sum() / tot) for nm, lo, hi in BANDS}
         cen = float((freqs * spec).sum() / (spec.sum() + 1e-12))
-        m.sections.append(SectionStats(sec.name, sec.kind, sec.energy, loudness_lufs(seg, sr),
+        m.sections.append(SectionStats(name, kind, energy, loudness_lufs(seg, sr),
                                        float(20 * np.log10(pk)), float(20 * np.log10(pk / rms)), bands, cen))
-    _audio_checks(m)
+    if not bars:
+        _audio_checks(m)      # contrast and energy-curve rules only make sense over the whole arrangement
     return m
 
 
@@ -323,6 +353,16 @@ def _audio_checks(m: Measurement) -> None:
 
 
 # ============================================================================ report
+def measurement_table(meas: Measurement) -> list[str]:
+    L = ["| section | kind | energy | LUFS | crest dB | sub% | bass% | lowmid% | mid% | high% | air% | centroid |",
+         "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    for s in meas.sections:
+        b = s.bands
+        L.append(f"| {s.name} | {s.kind} | {s.energy} | {s.lufs:.1f} | {s.crest_db:.1f} | {b['sub']:.0f} | {b['bass']:.0f} | "
+                 f"{b['lowmid']:.0f} | {b['mid']:.0f} | {b['high']:.1f} | {b['air']:.1f} | {s.centroid_hz:.0f} Hz |")
+    return L
+
+
 def report(song: Song, lint_issues: list[Issue], meas: Measurement | None = None) -> str:
     L = [f"# Self-eval — {song.title}", ""]
     errs = [i for i in lint_issues if i.severity == "error"] + ([i for i in meas.issues if i.severity == "error"] if meas else [])
@@ -413,18 +453,22 @@ def stereo_issues(stats: list[StereoStats]) -> list[Issue]:
     return I
 
 
-def stereo_report(wav_path: str | Path, song: Song | None = None) -> str:
-    """Markdown width report for a file: whole file, plus one row per section when
-    `song` is given (the file is then taken to start at bar 1)."""
+def stereo_report(wav_path: str | Path, song: Song | None = None, bars: tuple[int, int] | None = None,
+                  file_start_bar: int = 1) -> str:
+    """Markdown width report for a file: the whole file (or bar range), plus one row
+    per section when `song` is given."""
     from .samples import read_audio
     sr, x = read_audio(wav_path)
-    rows = [stereo_stats(x, sr, "whole file")]
-    if song is not None:
-        spbar = 60.0 / song.bpm * BEATS_PER_BAR
-        for sec, sb in zip(song.sections, song.section_starts()):
-            seg = x[int(sb * spbar * sr): int((sb + sec.bars) * spbar * sr)]
-            if len(seg) > sr:
-                rows.append(stereo_stats(seg, sr, sec.name))
+    rows = []
+    wins = section_windows(song, bars, file_start_bar) if song is not None else []
+    if bars and wins:
+        rows.append(stereo_stats(x[int(wins[0][3] * sr): int(wins[-1][4] * sr)], sr, f"bars {bars[0]}-{bars[1]}"))
+    else:
+        rows.append(stereo_stats(x, sr, "whole file"))
+    for name, _, _, t0, t1 in wins:
+        seg = x[int(t0 * sr): int(t1 * sr)]
+        if len(seg) > sr and not (bars and len(wins) == 1):
+            rows.append(stereo_stats(seg, sr, name))
     L = [f"# Stereo image — {Path(wav_path).name}", "",
          "correlation: +1 mono · 0 very wide · negative = out of phase.  side %: share of energy that vanishes in mono (0 = mono).",
          "",

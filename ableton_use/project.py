@@ -92,11 +92,10 @@ class Project:
         self.save(song)
         return log
 
-    def score(self) -> str:
+    def score(self, bars: tuple[int, int] | None = None, tracks: list[str] | None = None) -> str:
         song = self.load()
-        text = score.pack(song)
-        self.score_path.write_text(text)
-        return text
+        self.score_path.write_text(score.pack(song))
+        return score.pack(song, bars=bars, tracks=tracks)
 
     def preview(self, stems: bool = False):
         return render_preview(self.load(), self.preview_path, stems_dir=self.root / "stems" if stems else None)
@@ -114,11 +113,16 @@ class Project:
         all_i = issues + (meas.issues if meas else [])
         return EvalResult(text, sum(i.severity == "error" for i in all_i), sum(i.severity == "warn" for i in all_i), self.eval_path)
 
-    def view(self, bars: tuple[int, int] | None = None, tracks: list[str] | None = None) -> Path:
+    def view(self, bars: tuple[int, int] | None = None, tracks: list[str] | None = None,
+             wav: str | Path | None = None, wav_start_bar: int = 1) -> Path:
+        """Timeline PNG. The audio rows show `wav` if given, else Live's capture if there is one, else the preview."""
         song = self.load()
         b = bars or (1, song.total_bars)
-        wav = self.preview_path if self.preview_path.exists() else None
-        return views.timeline_view(song, self.root / "views" / f"bars_{b[0]:03d}-{b[1]:03d}.png", b, wav, tracks)
+        if wav is None:
+            wav = self.live_path if self.live_path.exists() and self.live_path.stat().st_mtime >= self.song_path.stat().st_mtime \
+                else self.preview_path if self.preview_path.exists() else None
+        name = f"bars_{b[0]:03d}-{b[1]:03d}" + ("_" + "+".join(tracks) if tracks else "") + ("" if wav is None else "_" + Path(wav).stem.split("_")[0])
+        return views.timeline_view(song, self.root / "views" / f"{name}.png", b, wav, tracks, wav_start_bar)
 
     def midi(self) -> list[Path]:
         return export_midi(self.load(), self.root / "midi")
@@ -134,6 +138,27 @@ class Project:
         from .samples import import_sample
         return import_sample(self.root, src, name, loop=loop, src_bpm=src_bpm, bpm=self.load().bpm, bars=bars,
                              align=align, melodic=melodic, end_at=end_at)
+
+    def zoom_path(self, prefix: str, bars: tuple[int, int] | None, tracks: list[str] | None) -> Path:
+        """File name for audio of a bar range and/or a set of tracks, e.g. live_bars_033-048_Bass+Kick.wav."""
+        if not bars and not tracks:
+            return self.root / f"{prefix}.wav"
+        name = prefix + (f"_bars_{bars[0]:03d}-{bars[1]:03d}" if bars else "") + ("_" + "+".join(tracks) if tracks else "")
+        return self.root / "zoom" / f"{name}.wav"
+
+    def measure_zoom(self, bars: tuple[int, int] | None = None, tracks: list[str] | None = None):
+        """Measure a bar range and/or a subset of tracks of the offline preview."""
+        song = self.load()
+        wav = self.zoom_path("preview", None, tracks)
+        render_preview(song, wav, tracks=tracks)
+        return wav, analysis.measure(wav, song, bars=bars)
+
+    def capture(self, bars: tuple[int, int] | None = None, tracks: list[str] | None = None,
+                host: str = "127.0.0.1", port: int = 9889, progress=None) -> dict:
+        """Record the pushed arrangement from Live's master into live.wav (or zoom/live_bars_...wav)."""
+        from .live import LiveBridge, capture_live
+        with LiveBridge(host, port) as b:
+            return capture_live(self.load(), b, self.zoom_path("live", bars, tracks), bars=bars, tracks=tracks, progress=progress)
 
     # memory
     def remember(self, strategy: str = "", decisions: str = "", reasoning: str = "", outstanding: str = "") -> None:

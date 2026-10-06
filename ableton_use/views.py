@@ -17,7 +17,8 @@ from .model import BEATS_PER_BAR, Song
 
 
 def timeline_view(song: Song, out_path: str | Path, bars: tuple[int, int] | None = None,
-                  wav: str | Path | None = None, tracks: list[str] | None = None) -> Path:
+                  wav: str | Path | None = None, tracks: list[str] | None = None,
+                  wav_start_bar: int = 1) -> Path:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -100,9 +101,10 @@ def timeline_view(song: Song, out_path: str | Path, bars: tuple[int, int] | None
         from .samples import read_audio
         sr, x = read_audio(wav)
         x = x.mean(axis=1)
-        a, b = int(t0 * spb * sr), min(len(x), int(t1 * spb * sr))
+        w0 = (wav_start_bar - 1) * BEATS_PER_BAR          # beat at which the audio file starts
+        a, b = max(0, int((t0 - w0) * spb * sr)), min(len(x), int((t1 - w0) * spb * sr))
         seg = x[a:b]
-        beats = t0 + np.arange(len(seg)) / sr / spb
+        beats = max(t0, w0) + np.arange(len(seg)) / sr / spb
         axw, axs = axes[-2], axes[-1]
         step = max(1, len(seg) // 6000)
         env_hi = np.array([seg[i:i + step].max() for i in range(0, len(seg), step)])

@@ -172,10 +172,18 @@ class Track:
     sample: str | None = None         # one-shot played by Simpler (path relative to the project) instead of `instrument`
     sample_root: float | None = None  # MIDI pitch the sample sounds at (melodic samples; fractional = cents)
     audio: bool = False               # audio track holding audio-loop patterns
+    # Live audio effects after the instrument, in order. Each: {"device": "Compressor", "params": {name: displayed
+    # value}, "sidechain": "<track name>", "sidechain_tap": "Post FX"}. Parameter names and units are Live's own.
+    effects: list[dict] = field(default_factory=list)
 
     @property
     def is_drum(self) -> bool:
         return self.role in DRUM_ROLES
+
+    @property
+    def ducked(self) -> bool:
+        """Does anything on this track duck it against another track?"""
+        return self.sidechain or any(e.get("sidechain") for e in self.effects)
 
     def to_json(self) -> dict:
         d = asdict(self)
@@ -190,7 +198,7 @@ class Track:
                    sidechain=bool(d.get("sidechain", False)), swing=bool(d.get("swing", False)),
                    color=d.get("color"), mute=bool(d.get("mute", False)), sample=d.get("sample"),
                    sample_root=None if d.get("sample_root") is None else float(d["sample_root"]),
-                   audio=bool(d.get("audio", False)))
+                   audio=bool(d.get("audio", False)), effects=[dict(e) for e in d.get("effects", [])])
 
 
 @dataclass
@@ -417,6 +425,13 @@ class Song:
                 if trk.audio and not pat.is_audio:
                     errs.append(f"section {s.name}: MIDI pattern {pat.name!r} on audio track {tname!r}")
         for t in self.tracks:
+            for e in t.effects:
+                if not isinstance(e, dict) or not e.get("device"):
+                    errs.append(f"track {t.name}: each effect needs a 'device' name (got {e!r})")
+                elif e.get("sidechain") and e["sidechain"] not in names:
+                    errs.append(f"track {t.name}: {e['device']} sidechain source {e['sidechain']!r} is not a track")
+                elif e.get("sidechain") == t.name:
+                    errs.append(f"track {t.name}: {e['device']} cannot be sidechained from its own track")
             if t.sample and not t.is_drum and t.sample_root is None:
                 errs.append(f"track {t.name}: melodic sample needs sample_root (run `ableton-use sample ... --oneshot` to detect it)")
             if t.sample and self.base_dir is not None and not self.resolve(t.sample).exists():

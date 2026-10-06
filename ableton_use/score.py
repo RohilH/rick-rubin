@@ -114,7 +114,46 @@ def arrangement_grid(song: Song, cell_bars: int = 4) -> list[str]:
     return lines
 
 
-def pack(song: Song, include_patterns: bool = True) -> str:
+def _only(song: Song, sec) -> Song:
+    import copy
+    s = copy.copy(song)
+    s.sections = [sec]
+    return s
+
+
+def pack(song: Song, include_patterns: bool = True, bars: tuple[int, int] | None = None,
+         tracks: list[str] | None = None) -> str:
+    """The packed score. `bars` (1-based, inclusive) and `tracks` zoom in: only the
+    sections touching that range, only those tracks, and only the patterns they use there."""
+    if bars or tracks:
+        import copy
+        full, song = song, copy.deepcopy(song)
+        keep_t = [t for t in song.tracks if not tracks or t.name in tracks]
+        names = {t.name for t in keep_t}
+        secs = []
+        for sec, sb in zip(song.sections, full.section_starts()):
+            if bars and (sb + sec.bars < bars[0] or sb + 1 > bars[1]):
+                continue
+            sec.parts = {k: v for k, v in sec.parts.items() if k in names}
+            sec.fills = {k: v for k, v in sec.fills.items() if k in names}
+            sec.automation = {k: v for k, v in sec.automation.items() if k in names}
+            secs.append((sb, sec))
+        used = {p.pattern for _, sec in secs for p in list(sec.parts.values()) + list(sec.fills.values())}
+        head = [f"# {song.title} — zoom: " + ", ".join(x for x in (f"bars {bars[0]}-{bars[1]}" if bars else "", "tracks " + " ".join(sorted(names)) if tracks else "") if x),
+                f"{song.bpm:g} BPM · {song.key} · swing {song.swing:g}%", "", "## Tracks"]
+        whole = pack(full, include_patterns=False).splitlines()
+        head += [ln for ln in whole if ln.startswith("- ") and ln[2:].split(" (")[0] in names]
+        head += ["", "## Sections (bar numbers are the song's)", "| section | kind | bars | energy | playing | fills | automation |", "|---|---|---|---|---|---|---|"]
+        for sb, sec in secs:
+            row = next(ln for ln in pack(_only(song, sec), include_patterns=False).splitlines() if ln.startswith("| 0 |"))
+            cells = row.split(" | ")
+            head.append(f"| {cells[1]} | {cells[2]} | {sb + 1}-{sb + sec.bars} ({sec.bars}) | " + " | ".join(cells[5:]))
+        head += ["", "## Patterns"]
+        for pn, p in song.patterns.items():
+            if pn in used:
+                head.extend(pattern_text(p, song))
+                head.append("")
+        return "\n".join(head).rstrip() + "\n"
     L: list[str] = []
     spb = 60.0 / song.bpm * BEATS_PER_BAR
     L.append(f"# {song.title}")
@@ -130,6 +169,9 @@ def pack(song: Song, include_patterns: bool = True) -> str:
             inst = f"Simpler '{t.sample}'" + (f" root {pname(round(t.sample_root))} ({t.sample_root:.2f})" if t.sample_root is not None else " one-shot")
         else:
             inst = f"inst '{t.instrument[0] if t.instrument else '?'}'"
+        for e in t.effects:
+            prm = ", ".join(f"{k} {v}" for k, v in (e.get("params") or {}).items())
+            flags.append("fx " + e["device"] + (f" keyed from {e['sidechain']}" if e.get("sidechain") else "") + (f": {prm}" if prm else ""))
         L.append(f"- {t.name} ({t.role}) {t.volume_db:+.0f} dB, pan {t.pan:+.1f}, {inst}" + (f" [{', '.join(flags)}]" if flags else ""))
     L.append("")
     L.append("## Sections")

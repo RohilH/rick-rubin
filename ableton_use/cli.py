@@ -29,8 +29,20 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--title")
     s.add_argument("--progression", help="scale degrees, e.g. '1 6 4 5'")
 
-    for name, hlp in (("score", "print the packed score (and refresh score.md)"),
-                      ("midi", "export song.mid + per-track .mid"),
+    def zoom(sp):
+        sp.add_argument("--bars", type=_bars, help="zoom in on a bar range, e.g. 33-48")
+        sp.add_argument("--tracks", nargs="*", help="zoom in on these tracks only")
+
+    s = sub.add_parser("score", help="print the packed score (and refresh score.md); --bars/--tracks print a zoomed score")
+    s.add_argument("dir")
+    zoom(s)
+
+    s = sub.add_parser("capture", help="record the pushed arrangement from Live's own output (real time) and measure it")
+    s.add_argument("dir")
+    zoom(s)
+    s.add_argument("--port", type=int, default=9889)
+
+    for name, hlp in (("midi", "export song.mid + per-track .mid"),
                       ("undo", "revert the last edit batch"),
                       ("info", "one-line JSON summary")):
         sub.add_parser(name, help=hlp).add_argument("dir")
@@ -46,6 +58,8 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("eval", help="lint + render + measure -> eval.md")
     s.add_argument("dir")
     s.add_argument("--no-audio", action="store_true")
+    s.add_argument("--live", action="store_true", help="measure live.wav (from `capture`) instead of rendering the preview")
+    zoom(s)
 
     s = sub.add_parser("view", help="timeline PNG for a bar range, e.g. --bars 65-80")
     s.add_argument("dir")
@@ -83,6 +97,7 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("width", help="stereo image report: correlation, side %, mono loss, per band and per section")
     s.add_argument("dir")
     s.add_argument("wav", nargs="?", help="file to analyse (default: live.wav if captured, else preview.wav); a sample path gets a whole-file report")
+    s.add_argument("--bars", type=_bars, help="zoom in on a bar range of the mix")
 
     s = sub.add_parser("remember", help="append a session entry to project.md")
     s.add_argument("dir")
@@ -106,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"created {p.song_path}\n")
         print(p.score_path.read_text())
     elif a.cmd == "score":
-        print(Project(a.dir).score())
+        print(Project(a.dir).score(a.bars, a.tracks))
     elif a.cmd == "info":
         print(json.dumps(Project(a.dir).summary()))
     elif a.cmd == "midi":
@@ -121,6 +136,34 @@ def main(argv: list[str] | None = None) -> int:
     elif a.cmd == "preview":
         r = Project(a.dir).preview(stems=a.stems)
         print(f"{r.path} ({r.duration_s:.1f}s)" + (f", {len(r.stems)} stems" if r.stems else ""))
+    elif a.cmd == "capture":
+        from .analysis import measure, measurement_table, stereo_report
+        p = Project(a.dir)
+        r = p.capture(a.bars, a.tracks, port=a.port, progress=lambda m: print("·", m, file=sys.stderr))
+        song = p.load()
+        m = measure(r["path"], song, bars=a.bars, file_start_bar=r["bars"][0])
+        what = ", ".join(x for x in (f"bars {r['bars'][0]}-{r['bars'][1]}", "solo " + " ".join(a.tracks) if a.tracks else "") if x)
+        print(f"# Live capture — {what}\n{r['path']}  ({r['seconds']:.1f} s, {m.integrated_lufs:.1f} LUFS, peak {m.peak_db:.1f} dBFS, "
+              f"{m.clipped_samples} clipped samples)\n")
+        print("\n".join(measurement_table(m)))
+        print("\n".join(str(i) for i in m.issues))
+        print()
+        print(stereo_report(r["path"], song, a.bars, r["bars"][0]))
+        print("view:", p.view(a.bars, a.tracks, wav=r["path"], wav_start_bar=r["bars"][0]))
+    elif a.cmd == "eval" and (a.bars or a.tracks or a.live):
+        from .analysis import measure, measurement_table
+        p = Project(a.dir)
+        if a.live:
+            if a.tracks:
+                ap.error("--live measures Live's full mix; use `capture --tracks ...` to record a solo")
+            wav, m = p.live_path, measure(p.live_path, p.load(), bars=a.bars)
+        else:
+            wav, m = p.measure_zoom(a.bars, a.tracks)
+        what = ", ".join(x for x in (f"bars {a.bars[0]}-{a.bars[1]}" if a.bars else "", "tracks " + " ".join(a.tracks) if a.tracks else "") if x) or "whole song"
+        print(f"# Measured — {what} ({'Live capture' if a.live else 'offline preview'}: {wav.name})")
+        print(f"{m.integrated_lufs:.1f} LUFS, peak {m.peak_db:.1f} dBFS\n")
+        print("\n".join(measurement_table(m)))
+        print("\n".join(str(i) for i in m.issues))
     elif a.cmd == "eval":
         r = Project(a.dir).evaluate(audio=not a.no_audio)
         print(r.text)
@@ -155,8 +198,8 @@ def main(argv: list[str] | None = None) -> int:
             wav, full_mix = (p.live_path if p.live_path.exists() else p.preview_path), True
             if wav == p.preview_path:
                 print("(no Live capture yet — this is the offline sketch, whose stems are mono; width only reflects panning)\n")
-        text = stereo_report(wav, p.load() if full_mix else None)
-        if full_mix:
+        text = stereo_report(wav, p.load() if full_mix else None, a.bars if full_mix else None)
+        if full_mix and not a.bars:
             (p.root / "width.md").write_text(text)
         print(text)
     elif a.cmd == "transcribe":

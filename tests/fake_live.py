@@ -17,8 +17,11 @@ SONG_TEMPO = [120.0]
 
 
 class Param:
-    def __init__(self, name, lo, hi, value, fmt):
+    def __init__(self, name, lo, hi, value, fmt, items=None):
         self.name, self.min, self.max, self.value, self._fmt = name, lo, hi, value, fmt
+        self.is_quantized, self.value_items = items is not None, items or []
+        if items:
+            self._fmt = lambda v: items[int(round(v))]
 
     def str_for_value(self, v):
         return self._fmt(v)
@@ -160,13 +163,22 @@ class Track:
             # like Live 12's Auto Filter: raw 0..1, shown as 20 Hz .. 20 kHz
             d = Device(name, "AutoFilter2", [Param("Frequency", 0.0, 1.0, 1.0, _hz_fmt)])
         elif name == "Compressor":
+            ms = lambda lo, hi: (lambda v: (lambda x: "%.2f s" % (x / 1000) if x >= 1000 else "%.2f ms" % x)(lo * (hi / lo) ** v))  # noqa: E731
             d = Device(name, "Compressor2", [
-                Param("Threshold", 0.0, 1.0, 1.0, lambda v: "%.1f dB" % (-60 + 60 * v)),
-                Param("Ratio", 0.0, 1.0, 0.0, lambda v: "%.2f : 1" % (1 + 99 * v ** 3)),
-                Param("Release", 0.0, 1.0, 0.0, lambda v: "%.1f ms" % (1 + 2999 * v ** 2)),
-                Param("Attack", 0.0, 1.0, 0.0, lambda v: "%.2f ms" % (0.01 + 999 * v ** 3)),
-                Param("S/C On", 0.0, 1.0, 0.0, lambda v: "on" if v > 0.5 else "off"),
+                Param("Threshold", 0.0, 1.0, 1.0, lambda v: "-inf dB" if v <= 0 else "%.1f dB" % (-60 + 66 * v)),
+                Param("Ratio", 0.0, 1.0, 0.0, lambda v: "inf : 1" if v >= 1 else "%.2f : 1" % (1 / (1 - v))),
+                Param("Attack", 0.0, 1.0, 0.0, ms(0.01, 1000.0)),
+                Param("Release", 0.0, 1.0, 0.0, ms(1.0, 3000.0)),
+                Param("Knee", 0.0, 18.0, 6.0, lambda v: "%.1f dB" % v),
+                Param("Dry/Wet", 0.0, 1.0, 1.0, lambda v: "%.0f %%" % (100 * v)),
+                Param("Makeup", 0.0, 1.0, 0.0, None, ["Off", "On"]),
+                Param("Model", 0.0, 2.0, 1.0, None, ["Peak", "RMS", "Expand"]),
+                Param("LookAhead", 0.0, 2.0, 0.0, None, ["0 ms", "1 ms", "10 ms"]),
+                Param("S/C EQ Freq", 0.0, 1.0, 0.0, _hz_fmt),
+                Param("S/C On", 0.0, 1.0, 0.0, None, ["Off", "On"]),
             ])
+            d.available_input_routing_channels = [{"display_name": c} for c in ("Pre FX", "Post FX", "Post Mixer")]
+            d.input_routing_channel = None
             d.available_input_routing_types = [{"display_name": t} for t in ("No Input", "1-Kick", "Kick")]
         else:
             raise RuntimeError("unknown device " + name)
