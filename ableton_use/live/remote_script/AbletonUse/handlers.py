@@ -4,7 +4,7 @@
 import math
 import traceback
 
-BRIDGE_VERSION = "0.3.0"
+BRIDGE_VERSION = "0.4.0"
 
 FILTER_PARAM_NAMES = ("Frequency", "Filter Freq", "Filter 1 Freq", "Filter Frequency", "Cutoff", "Filter Cutoff", "Freq")
 BROWSER_CATEGORIES = ("drums", "instruments", "sounds", "audio_effects", "user_library", "packs")
@@ -25,6 +25,40 @@ def _num(text):
         return float(out)
     except ValueError:
         return None
+
+
+def _hz(text):
+    """'632 Hz' -> 632.0, '3.56 kHz' -> 3560.0, anything else -> None."""
+    t = str(text).lower()
+    if "hz" not in t:
+        return None
+    v = _num(t)
+    if v is None:
+        return None
+    return v * 1000.0 if "khz" in t else v
+
+
+def filter_mapper(param, lo_hz=60.0, hi_hz=18000.0, grid=96):
+    """0..1 -> raw value for a cutoff parameter, so that v sweeps lo_hz..hi_hz
+    exponentially (the same curve the offline preview uses) whatever the
+    parameter's own raw scale is. Falls back to norm_to_param when the display
+    is not in Hz."""
+    raws = [param.min + (param.max - param.min) * i / float(grid) for i in range(grid + 1)]
+    hzs = [_hz(param.str_for_value(r)) for r in raws]
+    if any(h is None or h <= 0 for h in hzs) or any(b < a for a, b in zip(hzs, hzs[1:])) or hzs[-1] <= hzs[0]:
+        return lambda v: norm_to_param(param, v)
+    logs = [math.log(h) for h in hzs]
+
+    def to_raw(v):
+        target = math.log(lo_hz * (hi_hz / lo_hz) ** max(0.0, min(1.0, float(v))))
+        if target <= logs[0]:
+            return raws[0]
+        for i in range(grid):
+            if logs[i] <= target <= logs[i + 1]:
+                span = logs[i + 1] - logs[i]
+                return raws[i] + (raws[i + 1] - raws[i]) * ((target - logs[i]) / span if span > 0 else 0.0)
+        return raws[-1]
+    return to_raw
 
 
 def set_param_display(param, target, iters=40):
@@ -309,6 +343,12 @@ class Handlers(object):
             report["mode"] = mode
         except Exception as e:  # noqa: BLE001
             report["mode_error"] = str(e)
+        for p in dev.parameters:
+            if p.name == "Volume":
+                try:
+                    report["volume"] = set_param_display(p, 0.0)   # default is -12 dB; track volume does the mixing
+                except Exception as e:  # noqa: BLE001
+                    report.setdefault("param_errors", []).append("Volume: %s" % e)
         if voices is not None:
             try:
                 dev.voices = int(voices)
@@ -330,35 +370,49 @@ class Handlers(object):
                 report["warning"] = "no Transpose parameter found; notes will sound %+d st off" % (-semis)
         return report
 
+    def _free_slot(self, t):
+        for sl in t.clip_slots:
+            if not sl.has_clip:
+                return sl
+        self.song.create_scene(-1)
+        return t.clip_slots[len(t.clip_slots) - 1]
+
     def cmd_create_audio_clip(self, track, path, start, name=None, warping=False, envelopes=None, color_index=None):
         """Place an audio file in the arrangement at `start` (beats). Files are expected
-        to be pre-conformed to the song tempo, so warping is off by default."""
+        to be pre-conformed to the song tempo, so warping is off by default.
+
+        Live only lets scripts write automation into Session clips, so a clip with
+        envelopes is built in a free session slot and copied to the arrangement,
+        where its envelopes become track automation."""
         t = self._track(track)
         start = float(start)
-        method = "create_audio_clip"
-        if hasattr(t, "create_audio_clip"):
+        envelopes = envelopes or {}
+        env_report = {}
+        if hasattr(t, "create_audio_clip") and not envelopes:
+            method = "create_audio_clip"
             r = t.create_audio_clip(str(path), start)
             clip = r if hasattr(r, "start_time") else self._arrangement_clip_at(t, start)
+            if clip is not None:
+                self._dress(clip, name, color_index, warping)
         else:
             method = "session+duplicate"
-            slot = None
-            for sl in t.clip_slots:
-                if not sl.has_clip:
-                    slot = sl
-                    break
-            if slot is None:
-                self.song.create_scene(-1)
-                slot = t.clip_slots[len(t.clip_slots) - 1]
+            slot = self._free_slot(t)
             slot.create_audio_clip(str(path))
+            self._dress(slot.clip, name, color_index, warping)
+            env_report = self._apply_envelopes(t, slot.clip, envelopes)
             t.duplicate_clip_to_arrangement(slot.clip, start)
             slot.delete_clip()
             clip = self._arrangement_clip_at(t, start)
         if clip is None:
             raise RuntimeError("audio clip not found after creation at beat %s" % start)
-        try:
-            clip.warping = bool(warping)
-        except Exception:  # noqa: BLE001
-            pass
+        return {"start": clip.start_time, "length": clip.length, "method": method, "envelopes": env_report}
+
+    def _dress(self, clip, name, color_index, warping=None):
+        if warping is not None:
+            try:
+                clip.warping = bool(warping)
+            except Exception:  # noqa: BLE001
+                pass
         if name:
             clip.name = name
         if color_index is not None:
@@ -366,8 +420,6 @@ class Handlers(object):
                 clip.color_index = int(color_index)
             except Exception:  # noqa: BLE001
                 pass
-        env_report = self._apply_envelopes(t, clip, envelopes or {})
-        return {"start": clip.start_time, "length": clip.length, "method": method, "envelopes": env_report}
 
     def cmd_sidechain(self, track, source_track_name, threshold_db=-28.0, ratio=4.0, release_ms=120.0):
         """Insert a Compressor on `track` keyed from another track (the kick)."""
@@ -419,18 +471,16 @@ class Handlers(object):
                             return p
             raise ValueError("parameter %r not found" % param)
         if param in ("filter", "cutoff"):
-            # prefer an Auto Filter, then any filter-ish parameter on an instrument
-            for prefer_auto in (True, False):
-                for d in t.devices:
-                    if prefer_auto and "filter" not in d.name.lower():
-                        continue
+            # always an Auto Filter: instrument filters are often switched off (Simpler) or mean something else
+            for d in t.devices:
+                if "AutoFilter" in getattr(d, "class_name", "") or d.name == "Auto Filter":
                     for p in d.parameters:
                         if p.name in FILTER_PARAM_NAMES:
                             return p
             if ensure:
                 self.cmd_insert_device(list(self.song.tracks).index(t), "Auto Filter")
                 return self._resolve_param(t, param, ensure=False)
-            raise ValueError("no filter parameter on track %s" % t.name)
+            raise ValueError("no Auto Filter on track %s" % t.name)
         for d in t.devices:
             for p in d.parameters:
                 if p.name.lower() == param.lower():
@@ -459,42 +509,31 @@ class Handlers(object):
 
     def cmd_create_clip(self, track, start, length, notes=None, name=None, envelopes=None, color_index=None):
         """Create an arrangement MIDI clip with notes [[pitch, start, dur, vel], ...]
-        (times relative to clip start) and envelopes {param: [[beat, value01], ...]}."""
+        (times relative to clip start) and envelopes {param: [[beat, value01], ...]}.
+        Clips with envelopes go through a session slot (see cmd_create_audio_clip)."""
         t = self._track(track)
         start, length = float(start), float(length)
-        method = "create_midi_clip"
-        clip = None
-        if hasattr(t, "create_midi_clip"):
+        envelopes = envelopes or {}
+        env_report = {}
+        if hasattr(t, "create_midi_clip") and not envelopes:
+            method = "create_midi_clip"
             clip = t.create_midi_clip(start, length)
             if clip is None or not hasattr(clip, "start_time"):
                 clip = self._arrangement_clip_at(t, start)
             self._add_notes(clip, notes or [])
+            self._dress(clip, name, color_index)
         else:
-            # Live < 12.?: build in a free session slot and copy to the arrangement
             method = "session+duplicate"
-            slot = None
-            for sl in t.clip_slots:
-                if not sl.has_clip:
-                    slot = sl
-                    break
-            if slot is None:
-                self.song.create_scene(-1)
-                slot = t.clip_slots[len(t.clip_slots) - 1]
+            slot = self._free_slot(t)
             slot.create_clip(length)
             self._add_notes(slot.clip, notes or [])
+            self._dress(slot.clip, name, color_index)
+            env_report = self._apply_envelopes(t, slot.clip, envelopes)
             t.duplicate_clip_to_arrangement(slot.clip, start)
             slot.delete_clip()
             clip = self._arrangement_clip_at(t, start)
         if clip is None:
             raise RuntimeError("clip not found after creation at beat %s" % start)
-        if name:
-            clip.name = name
-        if color_index is not None:
-            try:
-                clip.color_index = int(color_index)
-            except Exception:  # noqa: BLE001
-                pass
-        env_report = self._apply_envelopes(t, clip, envelopes or {})
         return {"start": clip.start_time, "length": clip.length, "method": method, "envelopes": env_report}
 
     def _apply_envelopes(self, t, clip, envelopes):
@@ -507,11 +546,12 @@ class Handlers(object):
                     env = clip.create_automation_envelope(p)
                 step = 0.25
                 pts = sorted(pts)
+                to_raw = filter_mapper(p) if param in ("filter", "cutoff") else (lambda v, p=p: norm_to_param(p, v))
                 for (b0, v0), (b1, v1) in zip(pts, pts[1:]):
                     b = b0
                     while b < b1 - 1e-9:
                         frac = (b - b0) / (b1 - b0) if b1 > b0 else 1.0
-                        val = norm_to_param(p, v0 + (v1 - v0) * frac)
+                        val = to_raw(v0 + (v1 - v0) * frac)
                         env.insert_step(b, min(step, b1 - b), val)
                         b += step
                 env_report[param] = p.name
@@ -528,24 +568,29 @@ class Handlers(object):
         return n
 
     # ------------------------------------------------------------------ locators
-    def cmd_add_locators(self, markers, replace=True):
+    def cmd_add_locator(self, name, beat):
+        """Name the locator at `beat`, creating it if the playhead is there. Live applies
+        a playhead move only after the current tick, so the client first calls
+        transport(beat=...) and then this, as two separate requests."""
         s = self.song
-        existing = {round(c.time, 3): c for c in s.cue_points}
-        made = 0
-        for name, beat in markers:
-            b = round(float(beat), 3)
-            cue = existing.get(b)
-            if cue is None:
-                s.current_song_time = float(beat)
-                s.set_or_delete_cue()
-                for c in s.cue_points:
-                    if abs(c.time - float(beat)) < 1e-3:
-                        cue = c
-                made += 1
-            if cue is not None and (replace or not cue.name):
-                cue.name = str(name)
-        s.current_song_time = 0.0
-        return made
+        beat = float(beat)
+
+        def find():
+            for c in s.cue_points:
+                if abs(c.time - beat) < 1e-3:
+                    return c
+            return None
+        cue = find()
+        if cue is None:
+            if abs(s.current_song_time - beat) > 1e-3:
+                s.current_song_time = beat
+                return {"created": False, "retry": True}
+            s.set_or_delete_cue()
+            cue = find()
+        if cue is None:
+            return {"created": False, "retry": True}
+        cue.name = str(name)
+        return {"created": True}
 
     # ------------------------------------------------------------------ generic Live Object Model access
     def _lom_resolve(self, path):

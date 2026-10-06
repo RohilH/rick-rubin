@@ -25,6 +25,10 @@ def pattern_text(p: Pattern, song: Song) -> list[str]:
     lines = [head]
     if p.is_audio:
         lines.append(f"  audio loop '{p.audio}'" + (f", key {p.key}" if p.key else "") + f" — repeats every {p.bars} bar{'s' if p.bars > 1 else ''}")
+        from .transcribe import load_words, words_text
+        words = load_words(song.resolve(p.audio))
+        if words:
+            lines.extend(words_text(words))
         return lines
     if not p.notes:
         lines.append("  (empty)")

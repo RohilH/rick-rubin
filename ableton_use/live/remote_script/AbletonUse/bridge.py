@@ -12,7 +12,7 @@ except ImportError:  # pragma: no cover
 import Live  # provided by Ableton Live
 from _Framework.ControlSurface import ControlSurface
 
-from .handlers import BRIDGE_VERSION, Handlers
+from . import handlers as _handlers
 
 HOST = "127.0.0.1"
 PORT = 9889
@@ -24,12 +24,26 @@ class AbletonUse(ControlSurface):
         ControlSurface.__init__(self, c_instance)
         self._inbox = queue.Queue()
         self._running = True
-        self._handlers = Handlers(self.song, Live.Application.get_application, Live, self._log)
+        self._handlers = None
+        self._load_handlers()
         self._sock = None
         self._thread = threading.Thread(target=self._serve, name="ableton-use-bridge")
         self._thread.daemon = True
         self._thread.start()
-        self.show_message("ableton-use bridge %s listening on %s:%d" % (BRIDGE_VERSION, HOST, PORT))
+        self.show_message("ableton-use bridge %s listening on %s:%d" % (_handlers.BRIDGE_VERSION, HOST, PORT))
+
+    def _load_handlers(self):
+        """(Re)read handlers.py from disk, so `ableton-use install-bridge` + the 'reload'
+        command picks up handler changes without restarting Live."""
+        try:
+            import importlib
+            importlib.reload(_handlers)
+        except Exception as e:  # noqa: BLE001
+            self._log("ableton-use: reload failed: %s" % e)
+            if self._handlers is not None:
+                raise
+        self._handlers = _handlers.Handlers(self.song, Live.Application.get_application, Live, self._log)
+        return {"bridge": _handlers.BRIDGE_VERSION}
 
     def _log(self, text, show=False):
         self.log_message(text)
@@ -100,7 +114,13 @@ class AbletonUse(ControlSurface):
                 req, box = self._inbox.get_nowait()
             except queue.Empty:
                 break
-            box["resp"] = self._handlers.dispatch(req)
+            if isinstance(req, dict) and req.get("cmd") == "reload":
+                try:
+                    box["resp"] = {"ok": True, "result": self._load_handlers()}
+                except Exception as e:  # noqa: BLE001
+                    box["resp"] = {"ok": False, "error": "reload: %s" % e}
+            else:
+                box["resp"] = self._handlers.dispatch(req)
             box["event"].set()
 
     def disconnect(self):

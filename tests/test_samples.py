@@ -247,3 +247,51 @@ def test_cli_sample(tmp_path, capsys):
     assert "samples/lp.wav: 2-bar loop (from 130 BPM)" in out and '"audio": "samples/lp.wav"' in out
     with pytest.raises(SystemExit):
         main(["sample", str(p.root), str(loop), "--name", "lp", "--loop"])
+
+
+# ---------------------------------------------------------------- transcription (no model needed)
+def test_words_snap_to_sound_and_grid(tmp_path):
+    from ableton_use.transcribe import HOP_S, _envelope, load_words, sidecar, snap_to_audio, to_grid, words_text
+    # three bursts of sound at 120 BPM: beat 1 (0.5 s), beat 2.5 (1.25 s) and beat 4 (2.0 s), 0.2 s each
+    x = np.zeros((3 * SR, 1), np.float32)
+    for t in (0.5, 1.25, 2.0):
+        i = int(t * SR)
+        x[i:i + int(0.2 * SR), 0] = 0.5 * np.sin(np.arange(int(0.2 * SR)) * 0.05)
+    env = _envelope(x, SR)
+    # a model that starts the first word in silence, lets the second run across a gap, and starts the third late
+    raw = [("gonna", 0.0, 0.7, 0.9), ("take", 0.7, 1.95, 0.4), ("time", 2.05, 2.6, 0.99)]
+    snapped = snap_to_audio(raw, env)
+    assert [round(s, 2) for _, s, _, _ in snapped] == [0.5, 1.25, 2.0]
+    assert all(abs((e - s) - 0.2) < 4 * HOP_S for _, s, e, _ in snapped)
+    words = to_grid(snapped, 120.0)
+    assert [w.pos for w in words] == ["1.2.1", "1.3.3", "2.1.1"] and all(abs(w.off_ms) < 6 for w in words)
+    assert words_text(words) == ["  words bar 1: 2.1 gonna; 3.3 take?", "  words bar 2: 1.1 time"]
+    assert load_words(tmp_path / "none.wav") is None and sidecar("a/b.wav").name == "b.words.json"
+
+
+# ---------------------------------------------------------------- stereo image
+def test_stereo_stats_and_checks(tmp_path):
+    from ableton_use.analysis import stereo_issues, stereo_report, stereo_stats
+    rng = np.random.default_rng(0)
+    n = 3 * SR
+    a, b = rng.standard_normal(n) * 0.1, rng.standard_normal(n) * 0.1
+    mono = stereo_stats(np.stack([a, a], 1), SR, "mono")
+    assert mono.correlation > 0.999 and mono.side_pct < 0.01 and abs(mono.mono_loss_lu) < 0.05 and abs(mono.balance_db) < 0.01
+    wide = stereo_stats(np.stack([a, b], 1), SR, "wide")
+    assert abs(wide.correlation) < 0.05 and 45 < wide.side_pct < 55 and 2.5 < wide.mono_loss_lu < 3.5
+    flipped = stereo_stats(np.stack([a, -a], 1), SR, "flipped")
+    assert flipped.correlation < -0.999 and flipped.side_pct > 99.9 and flipped.mono_loss_lu > 20
+    left = stereo_stats(np.stack([a, a * 0.5], 1), SR, "left")
+    assert 5.9 < left.balance_db < 6.1
+    # wide highs over a centred low end is fine; a wide low end is flagged
+    from scipy.signal import butter, sosfilt
+    lo = sosfilt(butter(4, 120, fs=SR, output="sos"), a) * 4
+    hi_l, hi_r = (sosfilt(butter(4, 3000, btype="high", fs=SR, output="sos"), v) for v in (a, b))
+    good = stereo_stats(np.stack([lo + hi_l, lo + hi_r], 1), SR, "good")
+    assert good.bands["low"][0] < 1 and good.bands["high"][0] > 40
+    rules = lambda s: [i.message for i in stereo_issues([s])]  # noqa: E731
+    assert not any("low end" in m for m in rules(good)) and any("low end" in m for m in rules(wide))
+    assert any("out of phase" in m for m in rules(flipped)) and any("leans left" in m for m in rules(left))
+    assert any("effectively mono" in m for m in rules(mono))
+    write_wav24(tmp_path / "w.wav", SR, np.stack([lo + hi_l, lo + hi_r], 1))
+    assert "| whole file | +" in stereo_report(tmp_path / "w.wav")

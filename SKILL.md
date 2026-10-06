@@ -57,6 +57,8 @@ ableton-use new <dir> --subgenre deep|classic|tech --template club|radio|dj_tool
 ableton-use score <dir>                       # print/refresh score.md
 ableton-use edit <dir> ops.json               # or '-' for stdin; see ops below
 ableton-use undo <dir>
+ableton-use transcribe <dir> samples/vocal.wav [--model small.en]   # words -> bar.beat.16th, cached, shown in score.md
+ableton-use width <dir> [file]                # stereo image: correlation, side %, mono loss, per band and section
 ableton-use sample <dir> <file> --name N --oneshot [--melodic]                       # Simpler one-shot; --melodic measures its pitch
 ableton-use sample <dir> <file> --name N --loop --src-bpm B [--bars N] [--align end] [--end-at S] # audio loop, conformed to the song tempo
 ableton-use eval <dir>                        # lint + preview render + measurements -> eval.md (exit 1 on errors)
@@ -106,6 +108,12 @@ Workflow:
 3. **Import** with `ableton-use sample`. It prints the measured root or bar count and a ready-made edit op.
 4. **Wire up** with `track` / `pattern` / `part` ops, then re-read `score.md`.
 5. **Eval.** The preview plays the real samples (repitched like Simpler), so loudness and balance numbers now reflect them. Lint `H14-samples` flags notes more than two octaves from a sample's root and loops cut mid-pass; `H4-key` flags loops in a foreign key.
+
+**Vocals: read the words.** `ableton-use transcribe <dir> samples/vocal.wav` runs a local Whisper model, tightens each word against the audio's own envelope and lists every word with its `bar.beat.sixteenth` position, its offset from that 16th in ms and the model's confidence. `score.md` then prints the words under the loop's pattern (`?` = doubtful word). Use it to decide where a phrase starts and ends before cutting a loop with `start`/`end`, to keep the hook word on a downbeat, and to keep leads out of the way of the lyric. Short chopped vocals transcribe roughly: trust positions more than spellings.
+
+**Stereo image: read the width.** `ableton-use width <dir> [file]` is a correlation meter and imager in table form: correlation (+1 mono, 0 very wide, negative = out of phase), side % (the share of energy that disappears in mono), L/R balance, loudness lost in mono, and side %/correlation in four bands — for the whole file and per section. Rules it checks: low end centred below 150 Hz, no negative correlation, under 3 LU lost in mono, no lean over 1.5 dB. Run it on samples before using them (wide risers and loops are common) and on audio captured from Live. The offline preview is built from mono stems, so its width only reflects panning.
+
+Plug-ins: an `instrument` name is looked up in Live's instruments and sounds, then your User Library, then VST/AU plug-ins, so `["Serum 2"]` loads Serum. Live exposes no plug-in presets or parameters to scripts, so it arrives on its default patch; save patches as Live presets or racks in the User Library to load them by name.
 
 Presets are not samples: nothing here loads a third-party synth preset. Use a one-shot in Simpler, or name a Live instrument in `instrument`.
 

@@ -104,6 +104,16 @@ audio tracks because they are conformed to the song tempo on import (needs `ffmp
 self-eval use the same files, so what you measure is what Live will play for those tracks. An agent with the
 Splice MCP connected can search, download and import in one go — see "Using Splice / samples" in `SKILL.md`.
 
+## Reading tools for vocals and width
+
+```
+ableton-use transcribe my-track samples/vocal.wav    # which word falls on which bar.beat.16th (local Whisper)
+ableton-use width my-track [file]                    # stereo image as numbers: correlation, side %, mono loss, per band
+```
+
+Both exist so an agent can read what a producer would hear or see on a meter. `transcribe` needs
+`pip install "ableton-use[transcribe]"`; its result is cached next to the sample and printed in `score.md`.
+
 ## What gets built in Live
 
 * Tempo, 4/4, and one locator per section.
@@ -131,6 +141,7 @@ ableton_use/
   render/preview.py  numpy sketch synth with sidechain + filter automation
   live/client.py  bridge client + push_song()
   live/remote_script/AbletonUse/  Live remote script (TCP JSON bridge; handlers testable without Live)
+  transcribe.py   words of a vocal sample on the song grid
   samples.py      sample import: pitch detection, tempo-conforming loops, 24-bit WAV io
   project.py      project folder, history/undo, project.md memory
 SKILL.md          agent instructions: principles, hard rules, process, house craft

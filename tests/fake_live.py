@@ -32,6 +32,11 @@ def _vol_fmt(v):
     return "%.1f dB" % db
 
 
+def _hz_fmt(v):
+    hz = 20.0 * 1000.0 ** v
+    return "%.2f kHz" % (hz / 1000.0) if hz >= 1000 else "%.0f Hz" % hz
+
+
 class Device:
     def __init__(self, name, class_name, params):
         self.name, self.class_name, self.parameters = name, class_name, params
@@ -70,6 +75,32 @@ class Clip:
         return self.envs[id(p)]
 
 
+class ClipSlot:
+    def __init__(self, track):
+        self._track, self.clip = track, None
+
+    @property
+    def has_clip(self):
+        return self.clip is not None
+
+    def create_clip(self, length):
+        assert not self._track.is_audio
+        self.clip = Clip(0.0, length)
+
+    def create_audio_clip(self, path):
+        assert self._track.is_audio
+        self.clip = Clip(0.0, _wav_beats(path), path)
+
+    def delete_clip(self):
+        self.clip = None
+
+
+def _wav_beats(path):
+    import wave
+    with wave.open(path) as w:
+        return w.getnframes() / w.getframerate() * SONG_TEMPO[0] / 60.0
+
+
 class Mixer:
     def __init__(self):
         self.volume = Param("Track Volume", 0.0, 1.0, 0.85, _vol_fmt)
@@ -81,6 +112,7 @@ class Simpler(Device):
         Device.__init__(self, "Simpler", "OriginalSimpler", [
             Param("Transpose", -48.0, 48.0, 0.0, lambda v: "%d st" % round(v)),
             Param("Detune", -50.0, 50.0, 0.0, lambda v: "%d ct" % round(v)),
+            Param("Volume", -36.0, 36.0, -12.0, lambda v: "%.1f dB" % v),
         ])
         self.sample_path, self.playback_mode, self.voices = None, 0, 1
 
@@ -95,13 +127,18 @@ class Track:
         self.mixer_device = Mixer()
         self.has_midi_input = not audio
         self.is_audio = audio
+        self.clip_slots = [ClipSlot(self) for _ in range(2)]
+
+    def duplicate_clip_to_arrangement(self, clip, start):
+        # like Live: the copy is a new arrangement clip; session envelopes become automation at that position
+        c = Clip(start, clip.length, clip.file_path)
+        c.name, c.notes, c.envs, c.warping = clip.name, list(clip.notes), dict(clip.envs), clip.warping
+        c.is_midi_clip = clip.is_midi_clip
+        self.arrangement_clips.append(c)
 
     def create_audio_clip(self, path, start):
         assert self.is_audio, "create_audio_clip on a MIDI track"
-        import wave
-        with wave.open(path) as w:
-            secs = w.getnframes() / w.getframerate()
-        c = Clip(start, secs * SONG_TEMPO[0] / 60.0, path)
+        c = Clip(start, _wav_beats(path), path)
         self.arrangement_clips.append(c)
         return c
 
@@ -120,7 +157,8 @@ class Track:
             self.devices.insert(0 if index is None else index, d)
             return
         if name == "Auto Filter":
-            d = Device(name, "AutoFilter", [Param("Frequency", 20.0, 18500.0, 18500.0, lambda v: "%.0f Hz" % v)])
+            # like Live 12's Auto Filter: raw 0..1, shown as 20 Hz .. 20 kHz
+            d = Device(name, "AutoFilter2", [Param("Frequency", 0.0, 1.0, 1.0, _hz_fmt)])
         elif name == "Compressor":
             d = Device(name, "Compressor2", [
                 Param("Threshold", 0.0, 1.0, 1.0, lambda v: "%.1f dB" % (-60 + 60 * v)),
@@ -178,6 +216,10 @@ class Song:
     def delete_track(self, i):
         del self.tracks[i]
 
+    def create_scene(self, i):
+        for t in self.tracks:
+            t.clip_slots.append(ClipSlot(t))
+
     def set_or_delete_cue(self):
         for c in self.cue_points:
             if c.time == self.current_song_time:
@@ -205,6 +247,8 @@ class Browser:
         self.instruments = Item("Instruments", [Item("Operator"), Item("Wavetable"), Item("Drift")], False)
         self.sounds = Item("Sounds", [], False)
         self.audio_effects = Item("Audio Effects", [Item("Auto Filter"), Item("Compressor")], False)
+        self.user_library = Item("User Library", [], False)
+        self.plugins = Item("Plug-Ins", [Item("Xfer Records", [Item("Serum 2")], False)], False)
 
     def load_item(self, item):
         t = self._song.view.selected_track

@@ -6,7 +6,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 
 from fake_live import FakeLiveServer, Param, _vol_fmt  # noqa: E402
-from handlers import _num, norm_to_param, set_param_display  # noqa: E402
+from handlers import _hz, _num, filter_mapper, norm_to_param, set_param_display  # noqa: E402
 
 from ableton_use import generate  # noqa: E402
 from ableton_use.live import BridgeError, LiveBridge, push_song  # noqa: E402
@@ -18,6 +18,22 @@ def test_param_helpers():
     assert set_param_display(p, -12.0) == "-12.0 dB"
     f = Param("Frequency", 20.0, 20000.0, 0, str)
     assert abs(norm_to_param(f, 0.5) - (20 * 1000 ** 0.5)) < 1e-6
+    # cutoff automation follows the preview's 60 Hz..18 kHz curve whatever the raw scale is
+    assert _hz("632 Hz") == 632.0 and _hz("3.56 kHz") == 3560.0 and _hz("50 %") is None
+    af = Param("Frequency", 0.0, 1.0, 1.0, lambda v: "%.3f kHz" % (0.02 * 1000 ** v) if v > 0.57 else "%.1f Hz" % (20 * 1000 ** v))
+    m = filter_mapper(af)
+    for v in (0.0, 0.3, 0.5, 1.0):
+        assert abs(20 * 1000 ** m(v) / (60 * 300 ** v) - 1) < 0.02
+    assert filter_mapper(Param("Cutoff", 0.0, 127.0, 0, str))(0.5) == 63.5
+
+
+def test_plugin_instruments_load_by_name():
+    srv = FakeLiveServer()
+    s = generate("classic", template="radio", seed=1)
+    s.track("Lead").instrument = ["Serum 2"]
+    with LiveBridge(port=srv.port) as b:
+        rep = push_song(s, b)
+    assert rep.tracks["Lead"]["instrument"] == "Serum 2" and not rep.warnings
 
 
 def test_push_song_end_to_end():

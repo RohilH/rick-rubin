@@ -347,3 +347,92 @@ def report(song: Song, lint_issues: list[Issue], meas: Measurement | None = None
         L.append("## Audio checks")
         L.extend(str(i) for i in meas.issues) if meas.issues else L.append("clean")
     return "\n".join(L) + "\n"
+
+
+# ============================================================================ stereo image
+# The reading view of a stereo imager / correlation meter: instead of a
+# vectorscope to look at, numbers per section and per band that say how wide the
+# audio is, whether the low end is centred, and what is lost in mono.
+WIDTH_BANDS = [("low", 20, 150), ("lowmid", 150, 800), ("mid", 800, 4000), ("high", 4000, 20000)]
+
+
+@dataclass
+class StereoStats:
+    name: str
+    correlation: float               # +1 mono, 0 unrelated L/R (very wide), <0 out of phase
+    side_pct: float                  # share of energy in the side (L-R) signal; 0 = mono
+    balance_db: float                # L minus R level; + = leans left
+    mono_loss_lu: float              # loudness lost when summed to mono
+    bands: dict[str, tuple[float, float]]   # band -> (side %, correlation)
+
+
+def _corr(a: np.ndarray, b: np.ndarray) -> float:
+    d = float(np.sqrt((a * a).sum() * (b * b).sum()))
+    return float((a * b).sum() / d) if d > 1e-12 else 1.0
+
+
+def stereo_stats(x: np.ndarray, sr: int, name: str = "") -> StereoStats:
+    """x: (n, 2) float. Mono input reports as perfectly centred."""
+    from scipy.signal import butter, sosfilt
+    if x.ndim == 1 or x.shape[1] == 1:
+        x = np.repeat(x.reshape(-1, 1), 2, axis=1)
+    L, R = x[:, 0].astype(np.float64), x[:, 1].astype(np.float64)
+    mid, side = (L + R) / 2, (L - R) / 2
+    em, es = float((mid ** 2).sum()), float((side ** 2).sum())
+    pct = lambda m, s: 100.0 * s / (m + s) if m + s > 1e-12 else 0.0  # noqa: E731
+    rms = lambda v: np.sqrt(np.mean(v ** 2)) + 1e-12  # noqa: E731
+    lu_st = loudness_lufs(x, sr)
+    lu_mono = loudness_lufs(np.stack([mid, mid], axis=1), sr)
+    # nothing left in mono at all reads as a 60 LU loss rather than infinity
+    loss = 0.0 if not np.isfinite(lu_st) else min(60.0, lu_st - lu_mono) if np.isfinite(lu_mono) else 60.0
+    bands = {}
+    for nm, lo, hi in WIDTH_BANDS:
+        sos = butter(4, [lo, min(hi, sr / 2 * 0.99)], btype="band", fs=sr, output="sos")
+        l, r = sosfilt(sos, L), sosfilt(sos, R)
+        bands[nm] = (pct(float((((l + r) / 2) ** 2).sum()), float((((l - r) / 2) ** 2).sum())), _corr(l, r))
+    return StereoStats(name, _corr(L, R), pct(em, es), float(20 * np.log10(rms(L) / rms(R))), float(loss), bands)
+
+
+def stereo_issues(stats: list[StereoStats]) -> list[Issue]:
+    I = []
+    add = lambda sev, where, msg: I.append(Issue(sev, "W1-stereo", where, msg))  # noqa: E731
+    for s in stats:
+        if s.correlation < 0:
+            add("warn", s.name, f"correlation {s.correlation:+.2f} — L and R are out of phase; this cancels in mono (clubs, phones)")
+        elif s.correlation < 0.3:
+            add("info", s.name, f"correlation {s.correlation:+.2f} — very wide; check it in mono")
+        if s.mono_loss_lu > 3:
+            add("warn", s.name, f"loses {s.mono_loss_lu:.1f} LU when summed to mono")
+        low_side, low_corr = s.bands["low"]
+        if low_side > 10 or low_corr < 0.7:
+            add("warn", s.name, f"low end is not centred below 150 Hz (side {low_side:.0f}%, correlation {low_corr:+.2f}) — keep kick and bass mono")
+        if abs(s.balance_db) > 1.5:
+            add("warn", s.name, f"leans {'left' if s.balance_db > 0 else 'right'} by {abs(s.balance_db):.1f} dB")
+    if stats and all(s.side_pct < 0.5 for s in stats):
+        add("info", "all", "effectively mono throughout — pan or widen something above the bass (hats, pads, FX) if that is not intended")
+    return I
+
+
+def stereo_report(wav_path: str | Path, song: Song | None = None) -> str:
+    """Markdown width report for a file: whole file, plus one row per section when
+    `song` is given (the file is then taken to start at bar 1)."""
+    from .samples import read_audio
+    sr, x = read_audio(wav_path)
+    rows = [stereo_stats(x, sr, "whole file")]
+    if song is not None:
+        spbar = 60.0 / song.bpm * BEATS_PER_BAR
+        for sec, sb in zip(song.sections, song.section_starts()):
+            seg = x[int(sb * spbar * sr): int((sb + sec.bars) * spbar * sr)]
+            if len(seg) > sr:
+                rows.append(stereo_stats(seg, sr, sec.name))
+    L = [f"# Stereo image — {Path(wav_path).name}", "",
+         "correlation: +1 mono · 0 very wide · negative = out of phase.  side %: share of energy that vanishes in mono (0 = mono).",
+         "",
+         "| part | correlation | side % | balance L-R | mono loss | " + " | ".join(f"{n} side% (corr)" for n, _, _ in WIDTH_BANDS) + " |",
+         "|---|---|---|---|---|" + "---|" * len(WIDTH_BANDS)]
+    for s in rows:
+        L.append(f"| {s.name} | {s.correlation:+.2f} | {s.side_pct:.1f} | {s.balance_db:+.1f} dB | {s.mono_loss_lu:.1f} LU | "
+                 + " | ".join(f"{s.bands[n][0]:.1f} ({s.bands[n][1]:+.2f})" for n, _, _ in WIDTH_BANDS) + " |")
+    issues = stereo_issues(rows)
+    L += ["", "## Checks"] + ([str(i) for i in issues] or ["clean"])
+    return "\n".join(L) + "\n"

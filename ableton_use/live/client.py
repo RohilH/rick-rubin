@@ -16,6 +16,8 @@ import numpy as np
 from ..model import Song
 
 DEFAULT_PORT = 9889
+# where instrument names are looked up, in order: Live's own, then the user's saved presets, then VST/AU plug-ins
+INSTRUMENT_CATEGORIES = ["drums", "instruments", "sounds", "user_library", "plugins"]
 REMOTE_SCRIPT_DIR = Path(__file__).parent / "remote_script" / "AbletonUse"
 
 
@@ -97,7 +99,7 @@ class PushReport:
 
 
 def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instruments: bool = True,
-              sidechain: bool = True, clip_batch: int = 8, progress=None) -> PushReport:
+              sidechain: bool = True, clip_batch: int = 8, progress=None, clean: bool = False) -> PushReport:
     """Render a Song into Live's Arrangement View.
 
     One MIDI track per Song track, one arrangement clip per (section, track),
@@ -117,6 +119,19 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
             raise BridgeError(f"Live set already has tracks {sorted(clash)}; re-run with replace=True to overwrite them")
         say(f"deleting {len(clash)} existing tracks")
         bridge.call("delete_tracks", names=sorted(clash))
+
+    if clean:
+        # drop the untouched tracks of a new set (no devices, no clips) — they count against Live Intro/Lite track limits
+        empty = []
+        for t in bridge.call("get_state")["tracks"]:
+            if t["devices"] or t["arrangement_clips"] or t["name"] in {x.name for x in song.tracks}:
+                continue
+            slots = bridge.call("lom", path=f"song.tracks[{t['index']}].clip_slots")
+            if not any(bridge.call("lom", path=f"song.tracks[{t['index']}].clip_slots[{j}].has_clip") for j in range(len(slots))):
+                empty.append(t["index"])
+        if empty:
+            say(f"removing {len(empty)} empty tracks")
+            bridge.call("delete_tracks", indices=empty)
 
     clips, markers = song.flatten()
     bridge.call("set_tempo", bpm=song.bpm)
@@ -142,7 +157,7 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
                 if r.get("warning") or r.get("mode_error") or r.get("param_errors"):
                     rep.warnings.append(f"{t.name}: Simpler {r.get('warning') or r.get('mode_error') or r.get('param_errors')}")
         elif load_instruments and t.instrument:
-            r = bridge.call("load_instrument", track=i, queries=t.instrument)
+            r = bridge.call("load_instrument", track=i, queries=t.instrument, categories=INSTRUMENT_CATEGORIES)
             info["instrument"] = r.get("loaded")
             if not r.get("loaded"):
                 rep.warnings.append(f"{t.name}: none of {t.instrument} found in the Live browser — load an instrument manually")
@@ -192,7 +207,13 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
                 except BridgeError as e:
                     rep.warnings.append(f"{t.name}: sidechain failed ({e})")
 
-    bridge.call("add_locators", markers=[[m.name, m.start] for m in markers])
+    for m in markers:
+        for _ in range(5):
+            bridge.call("transport", action="stop", beat=m.start)
+            if bridge.call("add_locator", name=m.name, beat=m.start).get("created"):
+                break
+        else:
+            rep.warnings.append(f"locator {m.name!r} at beat {m.start:g} was not created")
     bridge.call("transport", action="stop", beat=0)
     bridge.call("show_message", text=f"ableton-use: pushed '{song.title}' ({rep.clips} clips)")
     return rep

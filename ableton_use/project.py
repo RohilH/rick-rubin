@@ -49,6 +49,9 @@ class Project:
     @property
     def preview_path(self) -> Path: return self.root / "preview.wav"
 
+    @property
+    def live_path(self) -> Path: return self.root / "live.wav"      # audio recorded from Live's master (`capture`)
+
     @classmethod
     def create(cls, root: str | Path, song: Song | None = None, **gen_kwargs) -> "Project":
         p = cls(root)
@@ -120,10 +123,10 @@ class Project:
     def midi(self) -> list[Path]:
         return export_midi(self.load(), self.root / "midi")
 
-    def push(self, host: str = "127.0.0.1", port: int = 9889, replace: bool = False, load_instruments: bool = True, progress=None):
+    def push(self, host: str = "127.0.0.1", port: int = 9889, replace: bool = False, load_instruments: bool = True, progress=None, clean: bool = False):
         from .live import LiveBridge, push_song
         with LiveBridge(host, port) as b:
-            return push_song(self.load(), b, replace=replace, load_instruments=load_instruments, progress=progress)
+            return push_song(self.load(), b, replace=replace, load_instruments=load_instruments, progress=progress, clean=clean)
 
     def add_sample(self, src: str | Path, name: str, *, loop: bool = False, src_bpm: float | None = None,
                    bars: int | None = None, align: str = "start", melodic: bool = False, end_at: float | None = None):

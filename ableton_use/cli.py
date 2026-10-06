@@ -55,6 +55,7 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("push", help="render into Ableton Live via the bridge")
     s.add_argument("dir")
     s.add_argument("--replace", action="store_true", help="delete same-named tracks first")
+    s.add_argument("--clean", action="store_true", help="also remove the set's untouched empty tracks (Live Intro/Lite have a 16/8-track limit)")
     s.add_argument("--no-instruments", action="store_true")
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=9889)
@@ -71,6 +72,17 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--align", default="start", choices=["start", "end"], help="'end' keeps the tail (risers)")
     s.add_argument("--end-at", type=float, help="seconds into the loop to cut at first; with --align end, puts that moment (a riser's peak) on the next downbeat")
     s.add_argument("--melodic", action="store_true", help="measure the one-shot's pitch (sample_root)")
+
+    s = sub.add_parser("transcribe", help="words of a vocal sample with their bar.beat.sixteenth positions (cached; shown in score.md)")
+    s.add_argument("dir")
+    s.add_argument("sample", help="project-relative path, e.g. samples/vocal.wav")
+    s.add_argument("--bpm", type=float, help="tempo to map onto (default: the song's — right for conformed loops)")
+    s.add_argument("--model", default="small.en", help="Whisper model: tiny.en, base.en, small.en, medium.en, or multilingual names")
+    s.add_argument("--language")
+
+    s = sub.add_parser("width", help="stereo image report: correlation, side %, mono loss, per band and per section")
+    s.add_argument("dir")
+    s.add_argument("wav", nargs="?", help="file to analyse (default: live.wav if captured, else preview.wav); a sample path gets a whole-file report")
 
     s = sub.add_parser("remember", help="append a session entry to project.md")
     s.add_argument("dir")
@@ -116,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
     elif a.cmd == "view":
         print(Project(a.dir).view(a.bars, a.tracks))
     elif a.cmd == "push":
-        rep = Project(a.dir).push(a.host, a.port, a.replace, not a.no_instruments, progress=lambda m: print("·", m, file=sys.stderr))
+        rep = Project(a.dir).push(a.host, a.port, a.replace, not a.no_instruments, clean=a.clean, progress=lambda m: print("·", m, file=sys.stderr))
         print(rep.text())
     elif a.cmd == "sample":
         if a.loop and not a.src_bpm:
@@ -133,6 +145,30 @@ def main(argv: list[str] | None = None) -> int:
                 fields["sample_root"] = round(r.root, 2)
             hint = [{"op": "track", "name": "<Track>", "set": fields}]
         print("use it with:  " + json.dumps({"ops": hint}))
+    elif a.cmd == "width":
+        from .analysis import stereo_report
+        p = Project(a.dir)
+        if a.wav:
+            wav = Path(a.wav) if Path(a.wav).exists() else p.root / a.wav
+            full_mix = wav.resolve() in (p.live_path.resolve(), p.preview_path.resolve())
+        else:
+            wav, full_mix = (p.live_path if p.live_path.exists() else p.preview_path), True
+            if wav == p.preview_path:
+                print("(no Live capture yet — this is the offline sketch, whose stems are mono; width only reflects panning)\n")
+        text = stereo_report(wav, p.load() if full_mix else None)
+        if full_mix:
+            (p.root / "width.md").write_text(text)
+        print(text)
+    elif a.cmd == "transcribe":
+        from .transcribe import transcribe
+        p = Project(a.dir)
+        song = p.load()
+        words = transcribe(song.resolve(a.sample), a.bpm or song.bpm, a.model, a.language)
+        print(f"{a.sample} at {a.bpm or song.bpm:g} BPM — {len(words)} words")
+        print("pos (bar.beat.16th)  offset   time            conf  word")
+        for w in words:
+            print(f"{w.pos:<20} {w.off_ms:+6.0f}ms {w.start_s:6.2f}-{w.end_s:5.2f}s   {w.conf:.2f}  {w.text}")
+        p.score()
     elif a.cmd == "remember":
         Project(a.dir).remember(a.strategy, a.decisions, a.reasoning, a.outstanding)
         print("ok")
