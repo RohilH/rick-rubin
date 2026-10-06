@@ -4,7 +4,7 @@
 import math
 import traceback
 
-BRIDGE_VERSION = "0.5.0"
+BRIDGE_VERSION = "0.6.0"
 
 FILTER_PARAM_NAMES = ("Frequency", "Filter Freq", "Filter 1 Freq", "Filter Frequency", "Cutoff", "Filter Cutoff", "Freq")
 BROWSER_CATEGORIES = ("drums", "instruments", "sounds", "audio_effects", "user_library", "packs")
@@ -187,7 +187,52 @@ class Handlers(object):
         return self._song()
 
     def _track(self, index):
+        """A track by number, or "return:0" (return track A), or "master"."""
+        if isinstance(index, str) and not index.lstrip("-").isdigit():
+            if index == "master":
+                return self.song.master_track
+            if index.startswith("return:"):
+                return self.song.return_tracks[int(index.split(":", 1)[1])]
+            raise ValueError("unknown track reference %r" % index)
         return self.song.tracks[int(index)]
+
+    def cmd_ensure_returns(self, count):
+        """Make sure at least `count` return tracks exist (Live Intro and Lite allow two)."""
+        s = self.song
+        made = 0
+        while len(s.return_tracks) < int(count):
+            s.create_return_track()
+            made += 1
+        return {"returns": [r.name for r in s.return_tracks], "created": made}
+
+    def cmd_set_chain(self, track, devices, name=None):
+        """Remove every device on `track` that is not one of `devices` (names), so a return or the
+        master holds exactly the chain the song asks for. Existing devices of those names are kept."""
+        t = self._track(track)
+        want = [str(d).lower() for d in devices]
+        removed = []
+        for i in range(len(t.devices) - 1, -1, -1):
+            d = t.devices[i]
+            if d.name.lower() not in want and str(getattr(d, "class_display_name", "")).lower() not in want:
+                removed.append(d.name)
+                t.delete_device(i)
+        if name:
+            try:
+                t.name = name
+            except Exception:  # noqa: BLE001
+                pass
+        return {"removed": removed, "devices": [d.name for d in t.devices]}
+
+    def cmd_set_send(self, track, index, db=None):
+        """Send level of `track` to return number `index`, in dB (None = off)."""
+        sends = self._track(track).mixer_device.sends
+        if int(index) >= len(sends):
+            raise ValueError("no send %s (the set has %d return tracks)" % (index, len(sends)))
+        p = sends[int(index)]
+        if db is None:
+            p.value = p.min
+            return p.str_for_value(p.value)
+        return set_param_display(p, float(db))
 
     # ------------------------------------------------------------------ info
     def cmd_ping(self):
@@ -361,7 +406,7 @@ class Handlers(object):
                 return {"device": name, "method": "insert_device", "index": len(t.devices) - 1}
             except Exception:  # noqa: BLE001
                 pass
-        item = self._find_browser_item(name, ["audio_effects", "plugins"])
+        item = self._find_browser_item(name, ["audio_effects", "midi_effects", "plugins"])
         if item is None:
             raise ValueError("device %r not found" % name)
         self.song.view.selected_track = t
@@ -491,7 +536,7 @@ class Handlers(object):
         hits = [d for d in t.devices if d.name.lower() == want or str(getattr(d, "class_display_name", "")).lower() == want]
         return hits[nth] if len(hits) > nth else None
 
-    def cmd_device(self, track, device, params=None, sidechain=None, sidechain_tap=None, nth=0, describe=False):
+    def cmd_device(self, track, device, params=None, sidechain=None, sidechain_tap=None, nth=0, describe=False, at=None):
         """Make sure `track` has `device` (a Live audio effect, by name; the nth one of
         that name) and set its parameters by displayed value:
           params = {"Threshold": -30, "Ratio": 4, "Attack": 1, "Release": 80, "Knee": 6,
@@ -503,10 +548,17 @@ class Handlers(object):
         created = False
         if dev is None:
             before = len(t.devices)
-            self.cmd_insert_device(track, device)
-            if len(t.devices) <= before:
-                raise RuntimeError("%s did not load on %s" % (device, t.name))
-            dev = t.devices[len(t.devices) - 1]
+            if at is not None and hasattr(t, "insert_device"):
+                # a position in the chain (MIDI effects go in front of the instrument)
+                t.insert_device(device, int(at))
+                if len(t.devices) <= before:
+                    raise RuntimeError("%s did not load on %s" % (device, t.name))
+                dev = t.devices[int(at)]
+            else:
+                self.cmd_insert_device(track, device)
+                if len(t.devices) <= before:
+                    raise RuntimeError("%s did not load on %s" % (device, t.name))
+                dev = t.devices[len(t.devices) - 1]
             created = True
         report = {"device": dev.name, "created": created, "set": {}, "errors": []}
         by_name = dict((p.name.lower(), p) for p in dev.parameters)

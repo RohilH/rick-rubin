@@ -247,6 +247,11 @@ class Track:
     # Live audio effects after the instrument, in order. Each: {"device": "Compressor", "params": {name: displayed
     # value}, "sidechain": "<track name>", "sidechain_tap": "Post FX"}. Parameter names and units are Live's own.
     effects: list[dict] = field(default_factory=list)
+    # Send levels in dB to the return tracks, by letter: {"A": -14, "B": -20}. Unlisted sends are off.
+    sends: dict = field(default_factory=dict)
+    # MIDI effects in front of the instrument, in order: {"device": "Chord", "params": {"Shift1": 3, "Shift2": 7}}.
+    # Real devices in Live; emulated offline where deterministic (see midifx.py).
+    midi_effects: list[dict] = field(default_factory=list)
     # Feel, baked into the notes by flatten(). Keys (all optional): "swing" % (overrides Song.swing for this track),
     # "timing" 16 offsets in ms, one per 16th of the bar (+ late / - early), "accent" 16 velocity offsets,
     # "gate" note-length multiplier, "humanize" {"ms": n, "vel": n, "seed": n}.
@@ -290,7 +295,8 @@ class Track:
                    audio=bool(d.get("audio", False)), effects=[dict(e) for e in d.get("effects", [])],
                    groove=dict(d.get("groove") or {}), instrument_params=dict(d.get("instrument_params") or {}),
                    serum=d.get("serum"), serum_params=dict(d.get("serum_params") or {}),
-                   delay_ms=float(d.get("delay_ms", 0) or 0))
+                   delay_ms=float(d.get("delay_ms", 0) or 0), midi_effects=[dict(e) for e in d.get("midi_effects", [])],
+                   sends={str(k).upper(): float(v) for k, v in (d.get("sends") or {}).items()})
 
 
 @dataclass
@@ -459,6 +465,11 @@ class Song:
     patterns: dict[str, Pattern] = field(default_factory=dict)
     sections: list[Section] = field(default_factory=list)
     meta: dict[str, Any] = field(default_factory=dict)
+    # Return tracks by letter, each an effect chain like a track's `effects`: {"A": [{"device": "Reverb", "params": {...}}]}.
+    # Tracks feed them with `sends`. One shared reverb or delay instead of one per track.
+    returns: dict[str, list[dict]] = field(default_factory=dict)
+    # Effects on the master track, in order (e.g. a Limiter).
+    master_effects: list[dict] = field(default_factory=list)
     base_dir: Path | None = field(default=None, repr=False, compare=False)   # project folder (not serialized)
 
     def resolve(self, rel: str) -> Path:
@@ -510,8 +521,8 @@ class Song:
     # ---- writing a song in Python (see compose.py for the notations)
     def add_track(self, name: str, role: str, **fields: Any) -> Track:
         """A new track. role: kick clap snare hat openhat perc crash fx (drums) · bass chords pad lead keys vocal ...
-        fields: sample, sample_root, audio, instrument, volume_db, pan, swing, sidechain, groove, effects,
-        instrument_params, color."""
+        fields: sample, sample_root, audio, serum, serum_params, instrument, instrument_params, volume_db, pan,
+        delay_ms, swing, groove, sidechain, effects, midi_effects, sends, color."""
         if any(t.name == name for t in self.tracks):
             raise ValueError(f"track {name!r} already exists")
         inst = fields.pop("instrument", [])
@@ -555,6 +566,14 @@ class Song:
         self.sections.append(sec)
         return sec
 
+    def add_return(self, letter: str, effects: list[dict]) -> str:
+        """A return track (Ableton's A, B, ...) with an effect chain, e.g.
+        song.add_return("A", [{"device": "Reverb", "params": {"Decay Time": 1800, "Dry/Wet": 100}}]).
+        Feed it from tracks with sends={"A": -14} (dB). Returns the letter."""
+        letter = letter.upper()
+        self.returns[letter] = [dict(e) for e in effects]
+        return letter
+
     def arrange(self, *sections: Section) -> None:
         """Set the order of the arrangement. A section listed twice plays twice (the repeat is named 'name (2)')."""
         out: list[Section] = []
@@ -574,6 +593,8 @@ class Song:
             "format": "ableton-use/song@1",
             "title": self.title, "bpm": self.bpm, "key": self.key, "swing": self.swing,
             "meta": self.meta,
+            **({"returns": self.returns} if self.returns else {}),
+            **({"master_effects": self.master_effects} if self.master_effects else {}),
             "tracks": {t.name: t.to_json() for t in self.tracks},
             "patterns": {k: p.to_json() for k, p in self.patterns.items()},
             "sections": [s.to_json() for s in self.sections],
@@ -584,6 +605,8 @@ class Song:
         return cls(
             title=d.get("title", "Untitled"), bpm=float(d.get("bpm", 124)), key=d.get("key", "A minor"),
             swing=float(d.get("swing", 50)), meta=d.get("meta", {}),
+            returns={str(k).upper(): [dict(e) for e in v] for k, v in (d.get("returns") or {}).items()},
+            master_effects=[dict(e) for e in d.get("master_effects", [])],
             tracks=[Track.from_json(k, v) for k, v in d.get("tracks", {}).items()],
             patterns={k: Pattern.from_json(k, v) for k, v in d.get("patterns", {}).items()},
             sections=[Section.from_json(s) for s in d.get("sections", [])],
@@ -630,6 +653,22 @@ class Song:
             for tname in s.automation:
                 if tname not in names:
                     errs.append(f"section {s.name}: automation on unknown track {tname!r}")
+        letters = "ABCDEFGHIJKL"
+        for letter, chain in self.returns.items():
+            if len(letter) != 1 or letter not in letters:
+                errs.append(f"return {letter!r}: returns are named by letter (A, B, ...)")
+            for e in chain:
+                if not isinstance(e, dict) or not e.get("device"):
+                    errs.append(f"return {letter}: each effect needs a 'device' name (got {e!r})")
+        for e in self.master_effects:
+            if not isinstance(e, dict) or not e.get("device"):
+                errs.append(f"master: each effect needs a 'device' name (got {e!r})")
+        for t in self.tracks:
+            for letter, db in t.sends.items():
+                if letter not in self.returns:
+                    errs.append(f"track {t.name}: send {letter} has no return — define it with song.add_return({letter!r}, [...])")
+                elif db > 0:
+                    errs.append(f"track {t.name}: send {letter} is {db:g} dB; sends go from -inf to 0 dB")
         tracks = {t.name: t for t in self.tracks}
         for s in self.sections:
             for tname, part in list(s.parts.items()) + [(k, v) for k, v in s.fills.items()]:
@@ -649,6 +688,11 @@ class Song:
             bad = set(g) - {"swing", "timing", "accent", "gate", "humanize"}
             if bad:
                 errs.append(f"track {t.name}: unknown groove keys {sorted(bad)}")
+            for e in t.midi_effects:
+                if not isinstance(e, dict) or not e.get("device"):
+                    errs.append(f"track {t.name}: each MIDI effect needs a 'device' name (got {e!r})")
+            if t.midi_effects and t.audio:
+                errs.append(f"track {t.name}: MIDI effects need a MIDI track, not an audio-loop track")
             for e in t.effects:
                 if not isinstance(e, dict) or not e.get("device"):
                     errs.append(f"track {t.name}: each effect needs a 'device' name (got {e!r})")
@@ -707,8 +751,12 @@ class Song:
             vel += round(rng.uniform(-1, 1) * float(h.get("vel", 0)))
         return off, dur * float(g.get("gate", 1.0)), int(max(1, min(127, vel)))
 
-    def flatten(self) -> tuple[list[ArrangementClip], list[Marker]]:
-        """Expand sections into one arrangement clip per (section, track)."""
+    def flatten(self, sounding: bool = False) -> tuple[list[ArrangementClip], list[Marker]]:
+        """Expand sections into one arrangement clip per (section, track).
+
+        sounding=False gives the notes as written — what goes into Live's clips, in front of any MIDI
+        effects. sounding=True gives the notes after each track's `midi_effects` (a Chord device's
+        added voices, a Pitch shift...) — what is actually heard, for lint, preview and views."""
         errs = self.validate()
         if errs:
             raise ValueError("song invalid:\n  " + "\n  ".join(errs))
@@ -779,6 +827,9 @@ class Song:
                             segs.append([(b - first) * BEATS_PER_BAR, BEATS_PER_BAR, pbar * BEATS_PER_BAR])
                         prev = (pat, pbar)
                     clip.segments = [tuple(x) for x in segs]
+                if sounding and trk.midi_effects and clip.notes:
+                    from .midifx import apply as _midifx
+                    clip.notes = _no_same_pitch_overlap(_midifx(clip.notes, trk.midi_effects, self.bpm))
                 if trk.delay_ms:
                     start = clip.start + trk.delay_ms * self.bpm / 60000.0
                     if start < 0:                     # nothing can start before the song does: only the notes move

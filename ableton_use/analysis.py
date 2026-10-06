@@ -88,7 +88,7 @@ def lint(song: Song) -> list[Issue]:
         if mel:
             add("warn", "H3-dj-friendly", last.name, f"melodic parts in the last 8 bars ({', '.join(sorted(mel))})")
 
-    clips, _ = song.flatten()
+    clips, _ = song.flatten(sounding=True)
 
     # H4 key / H5 bass range+mono / H10 low-end mud / H13 density
     out_key: dict[str, set] = defaultdict(set)
@@ -187,6 +187,18 @@ def lint(song: Song) -> list[Issue]:
                 continue
             if {(pk.root + i) % 12 for i in pk.intervals} != {(key.root + i) % 12 for i in key.intervals}:
                 add("warn", "H4-key", p.name, f"audio loop is in {pk}, the song is in {song.key} (not the same key or its relative)")
+
+    # H15 MIDI effects the offline tools cannot follow
+    from .midifx import unemulated
+    for tr in song.tracks:
+        for why in unemulated(tr.midi_effects):
+            add("warn", "H15-midi-fx", tr.name, f"{why} — score lint, preview and eval show the notes without it; judge this track on a capture from Live")
+
+    for letter, chain in song.returns.items():
+        if chain and (str(chain[0].get("device", "")).lower() not in ("reverb", "delay") or len(chain) > 1):
+            add("info", "H16-returns", f"return {letter}", "the offline preview only approximates a Reverb or Delay first in the chain — judge this return on a capture from Live")
+        if not any(letter in tr.sends for tr in song.tracks):
+            add("info", "H16-returns", f"return {letter}", "no track sends to it")
 
     # H12 unused
     used = {p.pattern for s in song.sections for p in s.parts.values()} | {f.pattern for s in song.sections for f in s.fills.values()}

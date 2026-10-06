@@ -40,6 +40,10 @@ def _hz_fmt(v):
     return "%.2f kHz" % (hz / 1000.0) if hz >= 1000 else "%.0f Hz" % hz
 
 
+def _send_fmt(v):
+    return "-inf dB" if v <= 1e-6 else "%.1f dB" % (-60 * (1 - v) ** 1.5)
+
+
 class Device:
     def __init__(self, name, class_name, params):
         self.name, self.class_name, self.parameters = name, class_name, params
@@ -108,6 +112,7 @@ class Mixer:
     def __init__(self):
         self.volume = Param("Track Volume", 0.0, 1.0, 0.85, _vol_fmt)
         self.panning = Param("Track Panning", -1.0, 1.0, 0.0, lambda v: "%dC" % (v * 50))
+        self.sends = [Param("A-Reverb", 0.0, 1.0, 0.0, _send_fmt), Param("B-Delay", 0.0, 1.0, 0.0, _send_fmt)]
 
 
 class Simpler(Device):
@@ -154,6 +159,9 @@ class Track:
     def delete_clip(self, c):
         self.arrangement_clips.remove(c)
 
+    def delete_device(self, i):
+        del self.devices[i]
+
     def insert_device(self, name, index=None):
         if name == "Simpler":
             d = Simpler()
@@ -180,9 +188,23 @@ class Track:
             d.available_input_routing_channels = [{"display_name": c} for c in ("Pre FX", "Post FX", "Post Mixer")]
             d.input_routing_channel = None
             d.available_input_routing_types = [{"display_name": t} for t in ("No Input", "1-Kick", "Kick")]
+        elif name == "Chord":
+            ps = []
+            for i in range(1, 7):
+                ps += [Param("Shift%d" % i, -36.0, 36.0, 0.0, lambda v: "%+d st" % round(v) if round(v) else "0 st"),
+                       Param("Velocity%d" % i, 1.0, 200.0, 100.0, lambda v: "%.0f %%" % v)]
+            d = Device(name, "MidiChord", ps + [Param("Strum", -400.0, 400.0, 0.0, lambda v: "%.2f ms" % v)])
+        elif name == "Pitch":
+            d = Device(name, "MidiPitcher", [Param("Pitch", -128.0, 128.0, 0.0, lambda v: "%+d st" % round(v) if round(v) else "0 st")])
+        elif name in ("Reverb", "Delay", "Channel EQ", "Utility", "Arpeggiator", "Limiter", "Saturator"):
+            d = Device(name, name.replace(" ", ""), [Param("Dry/Wet", 0.0, 1.0, 0.5, lambda v: "%.0f %%" % (100 * v)),
+                                                     Param("Decay Time", 0.0, 1.0, 0.3, lambda v: "%.0f ms" % (200 * 300 ** v))])
         else:
             raise RuntimeError("unknown device " + name)
-        self.devices.append(d)
+        if index is None:
+            self.devices.append(d)
+        else:
+            self.devices.insert(index, d)
 
 
 class Cue:
@@ -197,6 +219,10 @@ class View:
 class Song:
     def __init__(self):
         self.tracks = [Track("1-MIDI")]
+        self.return_tracks = [Track("A-Reverb", audio=True), Track("B-Delay", audio=True)]
+        self.return_tracks[0].insert_device("Reverb")
+        self.return_tracks[1].insert_device("Delay")
+        self.master_track = Track("Main", audio=True)
         self.tempo = 120.0
         self.signature_numerator, self.signature_denominator = 4, 4
         self.cue_points, self.current_song_time, self.is_playing = [], 0.0, False

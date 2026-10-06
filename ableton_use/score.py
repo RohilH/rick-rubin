@@ -186,12 +186,21 @@ def pack(song: Song, include_patterns: bool = True, bars: tuple[int, int] | None
             flags.append("groove " + ", ".join(bits))
         if t.delay_ms:
             flags.append(f"delay {t.delay_ms:+g} ms")
+        if t.sends:
+            flags.append("sends " + ", ".join(f"{k} {v:g} dB" for k, v in sorted(t.sends.items())))
         if t.instrument_params:
             flags.append("inst " + ", ".join(f"{k} {v}" for k, v in t.instrument_params.items()))
+        for e in t.midi_effects:
+            prm = ", ".join(f"{k} {v}" for k, v in (e.get("params") or {}).items())
+            flags.append("midi fx " + e["device"] + (f": {prm}" if prm else ""))
         for e in t.effects:
             prm = ", ".join(f"{k} {v}" for k, v in (e.get("params") or {}).items())
             flags.append("fx " + e["device"] + (f" keyed from {e['sidechain']}" if e.get("sidechain") else "") + (f": {prm}" if prm else ""))
         L.append(f"- {t.name} ({t.role}) {t.volume_db:+.0f} dB, pan {t.pan:+.1f}, {inst}" + (f" [{', '.join(flags)}]" if flags else ""))
+    for letter in sorted(song.returns):
+        L.append(f"- return {letter}: " + " → ".join(e["device"] + (" (" + ", ".join(f"{k} {v}" for k, v in (e.get("params") or {}).items()) + ")" if e.get("params") else "") for e in song.returns[letter]))
+    if song.master_effects:
+        L.append("- master: " + " → ".join(e["device"] + (" (" + ", ".join(f"{k} {v}" for k, v in (e.get("params") or {}).items()) + ")" if e.get("params") else "") for e in song.master_effects))
     L.append("")
     L.append("## Sections")
     L.append("| # | section | kind | bars | time | energy | playing | fills | automation |")

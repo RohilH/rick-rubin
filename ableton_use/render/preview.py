@@ -227,6 +227,50 @@ class _SampleBank:
         return y
 
 
+def _return_fx(bus: np.ndarray, effect: dict, sr: int, bpm: float, seed: int = 0) -> tuple[np.ndarray, np.ndarray]:
+    """(left, right) wet signal for the first effect of a return. Approximations of Live's Reverb
+    (decaying noise tail from Decay Time and Predelay) and Delay (synced 16ths or ms, with Feedback);
+    anything else passes the send through unchanged."""
+    from scipy.signal import fftconvolve
+    dev = str(effect.get("device", "")).lower()
+    prm = {str(k).lower(): val for k, val in (effect.get("params") or {}).items()}
+
+    def num(name, default):
+        try:
+            return float(str(prm.get(name, default)).split()[0])
+        except (ValueError, IndexError):
+            return float(default)
+    if dev == "reverb":
+        decay = max(0.2, num("decay time", 2500.0) / 1000.0)             # seconds to -60 dB
+        pre = int(num("predelay", 2.5) / 1000.0 * sr)
+        n = int(min(decay, 6.0) * sr)
+        rng = np.random.default_rng(seed + 7)
+        env = np.exp(-6.9 * np.arange(n) / (decay * sr))
+        out = []
+        for _ in range(2):
+            ir = rng.standard_normal(n) * env
+            ir /= np.sqrt((ir ** 2).sum()) + 1e-12
+            wet = fftconvolve(bus, ir.astype(np.float32))[: len(bus)]
+            out.append(np.concatenate([np.zeros(pre, np.float32), wet])[: len(bus)].astype(np.float32) * 0.5)
+        return out[0], out[1]
+    if dev == "delay":
+        fb = min(0.95, num("feedback", 21.0) / 100.0)
+        sync = str(prm.get("l sync", "on")).lower() in ("on", "true", "1", "1.0")
+        out = []
+        for side in ("l", "r"):
+            d = num(f"{side} 16th", 3) * 60.0 / bpm / 4 if sync else num(f"{side} time", 250.0) / 1000.0
+            step = max(1, int(d * sr))
+            wet = np.zeros(len(bus), np.float32)
+            g, k = 1.0, 1
+            while g > 0.01 and k * step < len(bus):
+                wet[k * step:] += bus[: len(bus) - k * step] * g
+                g *= fb
+                k += 1
+            out.append(wet * 0.7)
+        return out[0], out[1]
+    return bus * 0.7, bus * 0.7
+
+
 def render_preview(song: Song, out_path: str | Path, sr: int = SR, stems_dir: str | Path | None = None,
                    seed: int = 0, tracks: list[str] | None = None, master_peak: float | None = None) -> PreviewResult:
     """`tracks` renders only those tracks (a solo). They are still ducked by the
@@ -235,7 +279,7 @@ def render_preview(song: Song, out_path: str | Path, sr: int = SR, stems_dir: st
     its level relative to that mix instead of being normalised on its own."""
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    clips, _ = song.flatten()
+    clips, _ = song.flatten(sounding=True)
     spb = 60.0 / song.bpm
     total = int((song.total_bars * BEATS_PER_BAR * spb + 2.0) * sr)
     voices = _Voices(sr, seed)
@@ -318,6 +362,17 @@ def render_preview(song: Song, out_path: str | Path, sr: int = SR, stems_dir: st
         p = (trk.pan + 1) / 2
         L += stems[trk.name] * np.cos(p * np.pi / 2) * np.sqrt(2)
         R += stems[trk.name] * np.sin(p * np.pi / 2) * np.sqrt(2)
+    # return tracks: a rough stand-in for a Reverb or Delay first in the chain, so space is not invisible offline
+    for letter, chain in song.returns.items():
+        fed = [(t, t.sends[letter]) for t in song.tracks if letter in t.sends and t.name in stems]
+        if not fed or not chain:
+            continue
+        bus = np.zeros(total, dtype=np.float32)
+        for t, db in fed:
+            bus += stems[t.name] * (10 ** (db / 20))
+        wl, wr = _return_fx(bus, chain[0], sr, song.bpm, seed)
+        L[: len(wl)] += wl[:total]
+        R[: len(wr)] += wr[:total]
     peak = float(max(np.abs(L).max(), np.abs(R).max(), 1e-9))
     peak_db = 20 * np.log10(peak)
     # gentle master: normalise, soft-clip, -1 dBFS ceiling

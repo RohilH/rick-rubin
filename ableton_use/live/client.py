@@ -96,9 +96,12 @@ class PushReport:
         L = [f"Pushed to Live {self.live_version or '?'}: {len(self.tracks)} tracks, {self.clips} clips, {self.notes} notes"]
         for name, info in self.tracks.items():
             L.append(f"  - {name}: instrument={info.get('instrument')!s}" + (f", sidechain={info['sidechain']}" if info.get("sidechain") else ""))
+            L += [f"      midi fx: {e}" for e in info.get("midi_effects", [])]
             if info.get("instrument_params"):
                 L.append(f"      instrument: {info['instrument_params']}")
             L += [f"      fx: {e}" for e in info.get("effects", [])]
+            if info.get("sends"):
+                L.append("      sends: " + ", ".join(info["sends"]))
         L += [f"  ! {w}" for w in self.warnings]
         return "\n".join(L)
 
@@ -139,6 +142,7 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
             bridge.call("delete_tracks", indices=empty)
 
     clips, markers = song.flatten()
+    sounding, _ = song.flatten(sounding=True)             # for parts rendered offline (Serum): what the MIDI effects make of them
     bridge.call("set_tempo", bpm=song.bpm)
     bridge.call("set_signature", numerator=4, denominator=4)
 
@@ -168,6 +172,17 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
             info["instrument"] = r.get("loaded")
             if not r.get("loaded"):
                 rep.warnings.append(f"{t.name}: none of {t.instrument} found in the Live browser — load an instrument manually")
+        for k, e in enumerate([] if (t.audio or t.serum) else t.midi_effects):
+            try:                                            # in front of the instrument, in chain order
+                r = bridge.call("device", track=i, device=e["device"], params=e.get("params") or {}, at=k,
+                                nth=sum(1 for x in t.midi_effects[:k] if x["device"] == e["device"]))
+                shown = ", ".join(f"{a} {b}" for a, b in r.get("set", {}).items())
+                info.setdefault("midi_effects", []).append(e["device"] + (f" ({shown})" if shown else ""))
+                rep.warnings += [f"{t.name}: {e['device']}: {m}" for m in r.get("errors", [])]
+            except BridgeError as err:
+                rep.warnings.append(f"{t.name}: MIDI effect {e['device']} failed ({err})")
+        if t.serum and t.midi_effects:
+            info["midi_effects"] = [e["device"] + " (rendered into the audio)" for e in t.midi_effects]
         if t.instrument_params and not t.audio and not t.serum:
             dev = "Simpler" if t.sample else (info.get("instrument") or "")
             try:
@@ -186,7 +201,7 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
         if t.serum and mine:
             # one unwarped clip for the whole song: the part as Serum plays it, with any filter/volume moves rendered in
             from ..serum import track_stem
-            stem = track_stem(song, t, clips)
+            stem = track_stem(song, t, sounding)
             regions = [(c.start, {k: v for k, v in c.envelopes.items() if k in ("filter", "cutoff", "volume")}) for c in mine]
             path = _baked_stem(song, stem, [(st, env) for st, env in regions if env])
             cmds.append(("create_audio_clip", {"track": index[t.name], "path": str(path), "start": 0.0, "name": f"Serum · {t.serum}"}))
@@ -247,6 +262,43 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
             if e.get("sidechain"):
                 rep.tracks[t.name]["sidechain"] = "keyed from " + e["sidechain"] if r.get("sidechain") else "not routed"
             rep.warnings += [f"{t.name}: {dev}: {m}" for m in r.get("errors", [])]
+
+    # returns, sends and the master chain
+    letters = sorted(song.returns)
+    if letters:
+        need = max("ABCDEFGHIJKL".index(x) for x in letters) + 1
+        try:
+            bridge.call("ensure_returns", count=need)
+        except BridgeError as err:
+            rep.warnings.append(f"returns: could not create return tracks ({err})")
+    for where, label, chain in ([(f"return:{'ABCDEFGHIJKL'.index(x)}", f"return {x}", song.returns[x]) for x in letters]
+                                + ([("master", "master", song.master_effects)] if song.master_effects else [])):
+        try:
+            bridge.call("set_chain", track=where, devices=[e["device"] for e in chain],
+                        name=chain[0]["device"] if chain and where != "master" else None)
+            seen: dict[str, int] = {}
+            shown_all = []
+            for e in chain:
+                nth = seen.get(e["device"], 0)
+                seen[e["device"]] = nth + 1
+                r = bridge.call("device", track=where, device=e["device"], params=e.get("params") or {}, nth=nth)
+                shown = ", ".join(f"{k} {v}" for k, v in r.get("set", {}).items())
+                shown_all.append(e["device"] + (f" ({shown})" if shown else ""))
+                rep.warnings += [f"{label}: {e['device']}: {m}" for m in r.get("errors", [])]
+            rep.tracks[label] = {"instrument": "—", "effects": shown_all}
+        except BridgeError as err:
+            rep.warnings.append(f"{label}: {err}")
+    if letters or any(t.sends for t in song.tracks):
+        n_returns = len(bridge.call("lom", path="song.return_tracks"))
+        for t in song.tracks:
+            for k in range(n_returns):
+                letter = "ABCDEFGHIJKL"[k]
+                try:
+                    v = bridge.call("set_send", track=index[t.name], index=k, db=t.sends.get(letter))
+                    if letter in t.sends:
+                        rep.tracks[t.name].setdefault("sends", []).append(f"{letter} {v}")
+                except BridgeError as err:
+                    rep.warnings.append(f"{t.name}: send {letter} failed ({err})")
 
     for m in markers:
         for _ in range(5):

@@ -27,7 +27,7 @@ def timeline_view(song: Song, out_path: str | Path, bars: tuple[int, int] | None
     out_path.parent.mkdir(parents=True, exist_ok=True)
     b0, b1 = bars or (1, song.total_bars)          # 1-based inclusive
     t0, t1 = (b0 - 1) * BEATS_PER_BAR, b1 * BEATS_PER_BAR
-    clips, markers = song.flatten()
+    clips, markers = song.flatten(sounding=True)
     trks = [t for t in song.tracks if not tracks or t.name in tracks]
     trks = [t for t in trks if any(c.track == t.name and c.start < t1 and c.start + c.length > t0 for c in clips)]
 
