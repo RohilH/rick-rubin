@@ -149,7 +149,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("words", nargs="*", help="show/params/render/view: the preset's name (or words from it, or a path); "
                                             "search/list: words that must all match")
     s.add_argument("--sort", help="search: attack decay bright dark sub bass wide loud length")
-    s.add_argument("--like", help="search: rank by closeness in sound to this preset")
+    s.add_argument("--like", nargs="+", help="search: rank by closeness in sound to this preset (its name, or words from it)")
     s.add_argument("--not", dest="exclude", nargs="+", default=[], metavar="WORD", help="search: leave out anything matching these words")
     s.add_argument("--limit", type=int, default=25)
     s.add_argument("--note", action="append", default=[], help="render: note(s) to play, e.g. --note C1 --note G1 (default C2); Ableton naming")
@@ -398,6 +398,7 @@ def main(argv: list[str] | None = None) -> int:
         elif a.action == "search":
             from .samples import FEATURE_HEAD, feature_row
             words = list(a.words) + (a.search.split() if a.search else []) + ["-" + w for w in a.exclude]
+            a.like = " ".join(a.like) if a.like else None
             hits = serum.search(words, a.folder, a.tag, a.sort, a.like, a.limit)
             print(f"each preset played as a 1 s C2; 'pitch' is what came out (shows the patch's own octave)")
             print(FEATURE_HEAD)
