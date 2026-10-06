@@ -266,7 +266,7 @@ def main(argv: list[str] | None = None) -> int:
         from .render.preview import render_preview
         mix_peak = None
         if a.tracks:                                  # solos keep their level relative to the full offline mix
-            mix_peak = 10 ** (render_preview(song, p.preview_path).peak_db / 20)
+            mix_peak = 10 ** (render_preview(song, p.preview_path).peak_dbfs_premaster / 20)
         for t in a.tracks or []:
             wav = p.zoom_path("preview", None, [t])
             render_preview(song, wav, tracks=[t], master_peak=mix_peak)
