@@ -184,6 +184,8 @@ def pack(song: Song, include_patterns: bool = True, bars: tuple[int, int] | None
             bits += [f"gate {g['gate']:g}"] if "gate" in g else []
             bits += [f"humanize ±{g['humanize'].get('ms', 0):g} ms ±{g['humanize'].get('vel', 0):g} vel"] if g.get("humanize") else []
             flags.append("groove " + ", ".join(bits))
+        if t.delay_ms:
+            flags.append(f"delay {t.delay_ms:+g} ms")
         if t.instrument_params:
             flags.append("inst " + ", ".join(f"{k} {v}" for k, v in t.instrument_params.items()))
         for e in t.effects:

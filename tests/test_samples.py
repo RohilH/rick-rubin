@@ -671,3 +671,29 @@ def test_serum_track_is_rendered_through_the_plugin(tmp_path):
     assert clips[0].file_path.endswith(".baked.wav") and [d.name for d in live["Synth"].devices] == ["Compressor"]
     song.track("Synth").sample = "x.wav"
     assert any("cannot also have sample" in e for e in song.validate())
+
+
+def test_track_delay_shifts_the_whole_track(sampled):
+    p, _ = sampled
+    song = p.load()
+    base = {(c.track, c.section): c.start for c in song.flatten()[0]}
+    song.track("Clap").delay_ms = 12
+    song.track("Top").delay_ms = -9          # an audio-loop track
+    song.track("Kick").delay_ms = -5         # starts at beat 0: cannot go earlier
+    clips = song.flatten()[0]
+    ms = lambda beats: beats * 60000.0 / song.bpm  # noqa: E731
+    for c in clips:
+        want = {"Clap": 12, "Top": -9, "Kick": -5}.get(c.track, 0)
+        if c.track == "Kick" and base[(c.track, c.section)] == 0:
+            assert c.start == 0.0 and min(n.start for n in c.notes) == 0.0 and sorted(n.start for n in c.notes)[1] < 1.0
+        else:
+            assert abs(ms(c.start - base[(c.track, c.section)]) - want) < 1e-6
+    assert "delay +12 ms" in pack(song) and "delay -9 ms" in pack(song)
+    assert Song.from_json(song.to_json()).track("Top").delay_ms == -9
+    srv = FakeLiveServer()
+    with LiveBridge(port=srv.port) as b:
+        push_song(song, b)
+    live = {t.name: t for t in srv.song.tracks}
+    assert abs(ms(min(c.start_time for c in live["Top"].arrangement_clips) - 48) + 9) < 1e-3
+    song.track("Clap").delay_ms = 250
+    assert any("more than 100 ms" in e for e in song.validate())

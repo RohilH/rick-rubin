@@ -251,6 +251,9 @@ class Track:
     # "timing" 16 offsets in ms, one per 16th of the bar (+ late / - early), "accent" 16 velocity offsets,
     # "gate" note-length multiplier, "humanize" {"ms": n, "vel": n, "seed": n}.
     groove: dict = field(default_factory=dict)
+    # Track delay in ms, like Ableton's Track Delay: + plays the whole track late, - early. Applied by shifting the
+    # track's clips (Live does not let scripts set its own Track Delay), so it shows in the arrangement.
+    delay_ms: float = 0.0
     # A Serum 2 preset (name, words from it, or a .SerumPreset path) to play this track's notes. The part is rendered
     # through the real plug-in offline and reaches Live as audio; serum_params sets Serum parameters by name
     # ({"macro_1": 60, "filter_1_freq_hz": 900}) — see `ableton-use serum params`.
@@ -286,7 +289,8 @@ class Track:
                    sample_root=None if d.get("sample_root") is None else float(d["sample_root"]),
                    audio=bool(d.get("audio", False)), effects=[dict(e) for e in d.get("effects", [])],
                    groove=dict(d.get("groove") or {}), instrument_params=dict(d.get("instrument_params") or {}),
-                   serum=d.get("serum"), serum_params=dict(d.get("serum_params") or {}))
+                   serum=d.get("serum"), serum_params=dict(d.get("serum_params") or {}),
+                   delay_ms=float(d.get("delay_ms", 0) or 0))
 
 
 @dataclass
@@ -652,6 +656,8 @@ class Song:
                     errs.append(f"track {t.name}: {e['device']} sidechain source {e['sidechain']!r} is not a track")
                 elif e.get("sidechain") == t.name:
                     errs.append(f"track {t.name}: {e['device']} cannot be sidechained from its own track")
+            if abs(t.delay_ms) > 100:
+                errs.append(f"track {t.name}: delay_ms {t.delay_ms:g} is more than 100 ms — that is a different rhythm, not a track delay")
             if t.serum and (t.sample or t.audio):
                 errs.append(f"track {t.name}: a Serum track cannot also have sample= or audio=True")
             if t.sample and not t.is_drum and t.sample_root is None:
@@ -773,6 +779,12 @@ class Song:
                             segs.append([(b - first) * BEATS_PER_BAR, BEATS_PER_BAR, pbar * BEATS_PER_BAR])
                         prev = (pat, pbar)
                     clip.segments = [tuple(x) for x in segs]
+                if trk.delay_ms:
+                    start = clip.start + trk.delay_ms * self.bpm / 60000.0
+                    if start < 0:                     # nothing can start before the song does: only the notes move
+                        clip.notes = [Note(n.pitch, max(0.0, n.start + start), n.dur, n.vel) for n in clip.notes]
+                        start = 0.0
+                    clip.start = start
                 clips.append(clip)
         return clips, markers
 
