@@ -224,10 +224,17 @@ def import_sample(project_dir: str | Path, src: str | Path, name: str, *, loop: 
 # ============================================================================ audition
 def describe_sample(path: str | Path) -> dict:
     """What a sample is, in numbers — so candidates can be compared without listening:
-    length, level, how fast it hits and dies, where its energy sits, its pitch and octave, its width."""
-    from .analysis import BANDS, loudness_lufs, stereo_stats
-    from .pitch import hz, sample_notes
+    length, level, how fast it hits and dies, where its energy sits, its pitch and octave, its width,
+    plus `character`: the same facts as plain words (see `character_words`)."""
     sr, x = read_audio(path)
+    return describe_audio(sr, x, Path(path).name)
+
+
+def describe_audio(sr: int, x: np.ndarray, name: str = "") -> dict:
+    """describe_sample for audio already in memory (float, shape (n, channels))."""
+    from .analysis import BANDS, loudness_lufs, stereo_stats
+    from .pitch import hz, segment_notes, track_pitch
+    from .theory import name as pitch_name
     m = x.mean(axis=1).astype(np.float64)
     peak = float(np.abs(m).max() + 1e-12)
     rms = float(np.sqrt(np.mean(m * m)) + 1e-12)
@@ -243,32 +250,159 @@ def describe_sample(path: str | Path) -> dict:
     spec = np.abs(np.fft.rfft(m * np.hanning(len(m)))) ** 2
     f = np.fft.rfftfreq(len(m), 1 / sr)
     tot = spec[(f >= 20) & (f < 20000)].sum() + 1e-12
-    notes = sample_notes(path, 120.0, save=False, fmin=30.0)
-    main = max(notes, key=lambda n: n.end_s - n.start_s) if notes else None
+    times, midi = track_pitch(x, sr, fmin=30.0)
+    notes = segment_notes(times, midi)
+    main = max(notes, key=lambda n: n[1] - n[0]) if notes else None
     lufs = loudness_lufs(x, sr) if len(x) >= 0.5 * sr else float("nan")
     st = stereo_stats(x, sr)
-    return {
-        "file": Path(path).name, "seconds": len(x) / sr, "peak_db": 20 * np.log10(peak), "rms_db": 20 * np.log10(rms),
-        "lufs": lufs, "crest_db": 20 * np.log10(peak / rms), "attack_ms": float(a90 - a10), "decay_ms": float(under[0]) if len(under) else float("nan"),
+    d = {
+        "file": name, "seconds": len(x) / sr, "peak_db": float(20 * np.log10(peak)), "rms_db": float(20 * np.log10(rms)),
+        "lufs": float(lufs), "crest_db": float(20 * np.log10(peak / rms)), "attack_ms": float(a90 - a10),
+        "decay_ms": float(under[0]) if len(under) else float("nan"),
         "centroid_hz": float((f * spec).sum() / (spec.sum() + 1e-12)),
         "bands": {nm: float(100 * spec[(f >= lo) & (f < hi)].sum() / tot) for nm, lo, hi in BANDS},
-        "pitch": main.name if main else None, "pitch_hz": hz(main.midi) if main else None, "cents": main.cents if main else None,
-        "n_notes": len(notes), "side_pct": st.side_pct, "correlation": st.correlation, "low_side_pct": st.bands["low"][0],
+        "pitch": pitch_name(int(round(main[2]))) if main else None, "pitch_hz": float(hz(main[2])) if main else None,
+        "cents": float(round((main[2] - round(main[2])) * 100)) if main else None,
+        "n_notes": len(notes), "side_pct": float(st.side_pct), "correlation": float(st.correlation),
+        "low_side_pct": float(st.bands["low"][0]),
     }
+    d["character"] = character_words(d)
+    return d
+
+
+def character_words(d: dict) -> list[str]:
+    """A sound's measured character as plain words — one shared vocabulary for samples and synth presets,
+    so they can be searched and compared the same way. Thresholds are deliberately coarse.
+
+    length:      short (< 0.3 s) · long (> 2 s)
+    attack:      snappy (< 5 ms) · soft-attack (30-120 ms) · slow-attack (> 120 ms)
+    decay:       tight (< 120 ms to -20 dB) · ringing (> 600 ms) · sustained (does not fall 20 dB while it lasts)
+    brightness:  dark (centroid < 400 Hz) · warm (400-1200) · bright (1200-4000) · airy (> 4000)
+    low end:     subby (> 35% of energy below 60 Hz) · bassy (> 60% below 200 Hz) · no-low-end (< 3% below 200 Hz)
+    width:       mono (side < 1%) · wide (> 15%) · very-wide (> 30%) · wide-low-end (> 10% side below 150 Hz)
+    pitch:       pitched · unpitched · melodic (several notes)
+    dynamics:    punchy (crest > 14 dB) · dense (crest < 8 dB)"""
+    w = []
+    sec, att, dec, cen = d["seconds"], d["attack_ms"], d["decay_ms"], d["centroid_hz"]
+    b = d["bands"]
+    if sec < 0.3:
+        w.append("short")
+    elif sec > 2.0:
+        w.append("long")
+    w.append("snappy" if att < 5 else "slow-attack" if att > 120 else "soft-attack" if att >= 30 else "")
+    w.append("sustained" if dec is None or dec != dec else "tight" if dec < 120 else "ringing" if dec > 600 else "")
+    w.append("dark" if cen < 400 else "warm" if cen < 1200 else "bright" if cen < 4000 else "airy")
+    low = b["sub"] + b["bass"]
+    w.append("subby" if b["sub"] > 35 else "")
+    w.append("bassy" if low > 60 else "no-low-end" if low < 3 else "")
+    w.append("mono" if d["side_pct"] < 1 else "very-wide" if d["side_pct"] > 30 else "wide" if d["side_pct"] > 15 else "")
+    if d["low_side_pct"] > 10:
+        w.append("wide-low-end")
+    w.append("melodic" if d["n_notes"] > 2 else "pitched" if d["pitch"] else "unpitched")
+    w.append("punchy" if d["crest_db"] > 14 else "dense" if d["crest_db"] < 8 else "")
+    return [x for x in w if x]
+
+
+def _has(v) -> bool:
+    return v is not None and v == v and v != float("-inf")
+
+
+def feature_row(r: dict, label: str | None = None) -> str:
+    b = r["bands"]
+    loud = f"{r['lufs']:.1f} LUFS" if _has(r.get("lufs")) else f"{r['rms_db']:.1f} rms"
+    pitch = f"{r['pitch']} {r['pitch_hz']:.0f} Hz {r['cents']:+.0f}c" if r.get("pitch") else "—"
+    decay = f"{r['decay_ms']:.0f} ms" if _has(r.get("decay_ms")) else "sustains"
+    return (f"| {label or r['file']} | {r['seconds']:.2f} | {r['peak_db']:.1f} | {loud} | {r['crest_db']:.1f} | {r['attack_ms']:.0f} ms | {decay} | "
+            f"{r['centroid_hz']:.0f} Hz | {b['sub']:.0f} | {b['bass']:.0f} | {b['lowmid']:.0f} | {b['mid']:.0f} | {b['high']:.0f} | {b['air']:.1f} | "
+            f"{pitch} | {r['side_pct']:.1f} ({r['low_side_pct']:.1f}) | {' '.join(r.get('character', []))} |")
+
+
+FEATURE_HEAD = ("| name | sec | peak | loud | crest | attack | decay | centroid | sub% | bass% | lowmid% | mid% | high% | air% | pitch | side% (low) | character |\n"
+                "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
 
 
 def audition_table(paths: list[str | Path]) -> str:
     """Candidates side by side. Columns: length, peak, loudness (LUFS, or RMS for short hits), crest,
-    attack (10-90%), decay (to -20 dB), spectral centroid, energy by band, main pitch with octave, stereo side %."""
-    rows = [describe_sample(p) for p in paths]
-    L = ["| file | sec | peak | loud | crest | attack | decay | centroid | sub% | bass% | lowmid% | mid% | high% | air% | pitch | notes | side% (low) |",
-         "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
-    for r in rows:
-        b = r["bands"]
-        loud = f"{r['lufs']:.1f} LUFS" if r["lufs"] == r["lufs"] and r["lufs"] != float("-inf") else f"{r['rms_db']:.1f} rms"
-        pitch = f"{r['pitch']} {r['pitch_hz']:.0f} Hz {r['cents']:+.0f}c" if r["pitch"] else "—"
-        decay = f"{r['decay_ms']:.0f} ms" if r["decay_ms"] == r["decay_ms"] else "sustains"
-        L.append(f"| {r['file']} | {r['seconds']:.2f} | {r['peak_db']:.1f} | {loud} | {r['crest_db']:.1f} | {r['attack_ms']:.0f} ms | {decay} | "
-                 f"{r['centroid_hz']:.0f} Hz | {b['sub']:.0f} | {b['bass']:.0f} | {b['lowmid']:.0f} | {b['mid']:.0f} | {b['high']:.0f} | {b['air']:.1f} | "
-                 f"{pitch} | {r['n_notes']} | {r['side_pct']:.1f} ({r['low_side_pct']:.1f}) |")
-    return "\n".join(L)
+    attack (10-90%), decay (to -20 dB), spectral centroid, energy by band, main pitch with octave,
+    stereo side %, and the character words (see `character_words`)."""
+    return FEATURE_HEAD + "\n" + "\n".join(feature_row(describe_sample(p)) for p in paths)
+
+
+def jsonable(d: dict) -> dict:
+    """describe_* output with NaN/inf replaced by None, for JSON."""
+    return {k: (None if isinstance(v, float) and (v != v or v in (float("inf"), float("-inf"))) else v) for k, v in d.items()}
+
+
+# ============================================================================ a project's sample library
+def analyse_project_samples(project_dir: str | Path) -> dict[str, dict]:
+    """Measured character of every wav under <project>/samples (raw downloads and imports), cached in
+    samples/manifest.json under "analysis" and refreshed when a file changes."""
+    import json
+    project_dir = Path(project_dir)
+    mpath = project_dir / "samples" / "manifest.json"
+    manifest = json.loads(mpath.read_text()) if mpath.exists() else {}
+    cache = manifest.get("analysis", {})
+    out: dict[str, dict] = {}
+    changed = False
+    for wav in sorted((project_dir / "samples").rglob("*.wav")):
+        if "cuts" in wav.parts:
+            continue
+        rel = str(wav.relative_to(project_dir))
+        mt = round(wav.stat().st_mtime, 3)
+        hit = cache.get(rel)
+        if hit and hit.get("mtime") == mt:
+            out[rel] = hit
+            continue
+        d = jsonable(describe_sample(wav))
+        d["mtime"] = mt
+        out[rel] = d
+        changed = True
+    if changed or set(cache) != set(out):
+        manifest["analysis"] = out
+        mpath.parent.mkdir(parents=True, exist_ok=True)
+        mpath.write_text(json.dumps(manifest, indent=1) + "\n")
+    return out
+
+
+SORT_KEYS = {
+    "attack": lambda d: d["attack_ms"], "decay": lambda d: d["decay_ms"] if _has(d.get("decay_ms")) else 1e9,
+    "bright": lambda d: -d["centroid_hz"], "dark": lambda d: d["centroid_hz"], "sub": lambda d: -d["bands"]["sub"],
+    "bass": lambda d: -(d["bands"]["sub"] + d["bands"]["bass"]), "wide": lambda d: -d["side_pct"], "loud": lambda d: -d["rms_db"],
+    "length": lambda d: d["seconds"],
+}
+
+
+def search_rows(rows: dict[str, dict], words: list[str] | None = None, sort: str | None = None,
+                extra: dict[str, str] | None = None) -> list[tuple[str, dict]]:
+    """Filter analysed sounds by words — each must appear in the name, the character words, or `extra[name]`
+    (tags, description...). A word starting with '-' excludes. sort: attack decay bright dark sub bass wide loud length."""
+    out = []
+    for name, d in rows.items():
+        hay = " ".join([name.lower(), " ".join(d.get("character", [])), (extra or {}).get(name, "").lower()])
+        toks = hay.replace("/", " ").replace("_", " ").split()
+        ok = True
+        for w in words or []:
+            w = w.lower()
+            if w.startswith("-") and len(w) > 1:
+                ok = ok and not (w[1:] in toks or w[1:] in hay.split())
+            else:
+                ok = ok and (w in toks or w in hay)
+        if ok:
+            out.append((name, d))
+    if sort:
+        if sort not in SORT_KEYS:
+            raise ValueError(f"sort by one of: {', '.join(SORT_KEYS)}")
+        out.sort(key=lambda kv: SORT_KEYS[sort](kv[1]))
+    return out
+
+
+def similar(rows: dict[str, dict], target: dict, n: int = 10) -> list[tuple[str, dict, float]]:
+    """The `n` sounds in `rows` whose measured character is closest to `target` (attack, decay, brightness,
+    low-end share, width, crest)."""
+    def vec(d):
+        dec = d["decay_ms"] if _has(d.get("decay_ms")) else 4000.0
+        return np.array([np.log10(d["attack_ms"] + 1.0) / 2.5, np.log10(dec + 1.0) / 3.6, np.log10(max(d["centroid_hz"], 20.0)) / 4.3,
+                         d["bands"]["sub"] / 100.0, (d["bands"]["sub"] + d["bands"]["bass"]) / 100.0, d["side_pct"] / 50.0, d["crest_db"] / 24.0])
+    t = vec(target)
+    scored = [(name, d, float(np.linalg.norm(vec(d) - t))) for name, d in rows.items()]
+    return sorted(scored, key=lambda x: x[2])[:n]

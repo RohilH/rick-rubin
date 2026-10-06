@@ -110,6 +110,12 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--model", default="small.en", help="Whisper model for the words: small.en, medium.en, large-v3 ...")
     s.add_argument("--language")
 
+    s = sub.add_parser("samples", help="this project's samples (raw downloads and imports) with their measured character; search and sort them")
+    s.add_argument("dir")
+    s.add_argument("words", nargs="*", help="words that must match the file name or character (snappy dark subby wide ...); -word excludes")
+    s.add_argument("--sort", help="attack decay bright dark sub bass wide loud length")
+    s.add_argument("--like", help="rank by closeness in sound to this sample (project-relative path)")
+
     s = sub.add_parser("audition", help="compare candidate samples side by side by measurement (length, punch, spectrum, pitch+octave, width)")
     s.add_argument("dir")
     s.add_argument("files", nargs="+", help="sample files (project-relative or absolute); pass every candidate for one role together")
@@ -138,7 +144,11 @@ def main(argv: list[str] | None = None) -> int:
                    help="place piece N yourself, e.g. --move 3=2.3.1 (bar.beat.sixteenth); repeatable")
 
     s = sub.add_parser("serum", help="read Serum 2 presets: `serum list` to find one, `serum show NAME` for its patch sheet")
-    s.add_argument("action", choices=["list", "show", "params", "render", "view"])
+    s.add_argument("action", choices=["list", "search", "index", "show", "params", "render", "view"])
+    s.add_argument("words", nargs="*", help="search: more words (all must match); -word excludes")
+    s.add_argument("--sort", help="search: attack decay bright dark sub bass wide loud length")
+    s.add_argument("--like", help="search: rank by closeness in sound to this preset")
+    s.add_argument("--limit", type=int, default=25)
     s.add_argument("name", nargs="?", help="show/params/render: preset name, words from it, or a .SerumPreset path")
     s.add_argument("--note", action="append", default=[], help="render: note(s) to play, e.g. --note C1 --note G1 (default C2); Ableton naming")
     s.add_argument("--secs", type=float, default=1.0, help="render: how long each note is held")
@@ -235,6 +245,10 @@ def main(argv: list[str] | None = None) -> int:
             ap.error("--loop needs --src-bpm (the tempo the loop was recorded at)")
         r = Project(a.dir).add_sample(a.src, a.name, loop=a.loop, src_bpm=a.src_bpm, bars=a.bars, align=a.align, melodic=a.melodic, end_at=a.end_at)
         print(r.describe())
+        from .samples import FEATURE_HEAD, analyse_project_samples, feature_row
+        rows = analyse_project_samples(Project(a.dir).root)          # measured character, recorded in the manifest
+        if r.rel in rows:
+            print(FEATURE_HEAD + "\n" + feature_row(rows[r.rel], r.rel))
         var = "".join(ch if ch.isalnum() else "_" for ch in a.name)
         if r.kind == "loop":
             print("in song.py:")
@@ -301,6 +315,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{a.sample} at {bpm:g} BPM — {len(words)} words, {sum(len(w.syllables) for w in words)} syllables")
         print("(position and offset are of the vowel — what is heard as on or off the beat; 'cut at' is where the sound starts)")
         print(table(words))
+    elif a.cmd == "samples":
+        from .samples import FEATURE_HEAD, analyse_project_samples, feature_row, search_rows, similar
+        p = Project(a.dir)
+        rows = analyse_project_samples(p.root)
+        hits = search_rows(rows, a.words, a.sort)
+        if a.like:
+            if a.like not in rows:
+                ap.error(f"{a.like} is not one of this project's samples")
+            hits = [(k, d) for k, d, _ in similar({k: d for k, d in dict(hits).items() if k != a.like}, rows[a.like], 20)]
+        print(FEATURE_HEAD)
+        for name, d in hits:
+            print(feature_row(d, name))
+        print(f"{len(hits)} of {len(rows)} samples (analysis cached in samples/manifest.json)")
     elif a.cmd == "audition":
         from .samples import audition_table
         p = Project(a.dir)
@@ -361,6 +388,21 @@ def main(argv: list[str] | None = None) -> int:
             if not a.name:
                 ap.error("serum show needs a preset name")
             print(serum.sheet(serum.find(a.name, a.root)))
+        elif a.action == "index":
+            idx = serum.build_index(a.root, progress=lambda m: print("·", m, file=sys.stderr))
+            bad = [d["name"] for d in idx.values() if "error" in d]
+            print(f"indexed {len(idx)} presets -> {serum.index_path()}" + (f"; {len(bad)} could not be rendered: {', '.join(bad[:8])}" if bad else ""))
+        elif a.action == "search":
+            from .samples import FEATURE_HEAD, feature_row
+            words = ([a.name] if a.name else []) + list(a.words) + (a.search.split() if a.search else [])
+            hits = serum.search(words, a.folder, a.tag, a.sort, a.like, a.limit)
+            print(f"each preset played as a 1 s C2; 'pitch' is what came out (shows the patch's own octave)")
+            print(FEATURE_HEAD)
+            for _, d in hits:
+                label = f"{d['folder']}/{d['name']}" + (f" [{d['voices']}; fx {' '.join(d['fx']) or '-'}]")
+                print(feature_row(d, label))
+            print(f"{len(hits)} shown" + (f" (closest to {a.like!r} first)" if a.like else "") + " — words can be character (snappy dark subby wide sustained ...), "
+                  "folder, tag, mono/poly, engine (wavetable sample granular spectral sub noise), fx (reverb delay distortion ...) or macro names")
         elif a.action == "view":
             from .pictures import serum_png
             if not a.name or not a.out:

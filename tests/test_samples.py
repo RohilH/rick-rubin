@@ -729,3 +729,42 @@ song.add_section("outro", 16, kind="outro", energy=3, parts={kick: four})
         assert errors >= 1 and stage in failed and needle in failed[stage], (line, stages)
     capsys.readouterr()
     assert main(["check", str(root)]) == 1 and "FAIL  syntax" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------- character vocabulary and the sample library
+def test_character_words_and_project_sample_search(tmp_path, capsys):
+    import json
+    from ableton_use.samples import analyse_project_samples, character_words, describe_sample, search_rows, similar
+    root = tmp_path / "lib"
+    assert main(["init", str(root), "--title", "Lib", "--bpm", "126", "--key", "A minor"]) == 0
+    raw = root / "samples" / "raw"
+    t = np.arange(SR) / SR
+    write_wav24(raw / "sub_drone.wav", SR, (0.5 * np.sin(2 * np.pi * 45 * t) * np.minimum(1, t / 0.2)).astype(np.float32))
+    rng = np.random.default_rng(0)
+    tick = np.zeros(SR // 8, np.float32)
+    tick[:400] = 0.8 * rng.standard_normal(400) * np.linspace(1, 0, 400) ** 2
+    write_wav24(raw / "tick.wav", SR, tick)
+    wide = np.stack([rng.standard_normal(SR), rng.standard_normal(SR)], 1).astype(np.float32) * 0.2
+    write_wav24(raw / "wide_noise.wav", SR, wide)
+    sub, tk, wd = (describe_sample(raw / f) for f in ("sub_drone.wav", "tick.wav", "wide_noise.wav"))
+    assert {"slow-attack", "sustained", "dark", "subby", "bassy", "mono", "pitched"} <= set(sub["character"])
+    assert {"short", "snappy", "tight", "no-low-end", "unpitched", "punchy"} <= set(tk["character"]) and ("bright" in tk["character"] or "airy" in tk["character"])
+    assert {"very-wide", "wide-low-end", "unpitched"} <= set(wd["character"]) and character_words(sub) == sub["character"]
+    rows = analyse_project_samples(root)
+    assert set(rows) == {"samples/raw/sub_drone.wav", "samples/raw/tick.wav", "samples/raw/wide_noise.wav"}
+    saved = json.loads((root / "samples" / "manifest.json").read_text())
+    assert saved["analysis"]["samples/raw/tick.wav"]["character"] == tk["character"] and saved["song"]["title"] == "Lib"
+    assert saved["analysis"]["samples/raw/sub_drone.wav"]["decay_ms"] is None             # NaN stored as null
+    assert [k for k, _ in search_rows(rows, ["snappy"])] == ["samples/raw/tick.wav"]
+    assert [k for k, _ in search_rows(rows, ["-mono"])] == ["samples/raw/wide_noise.wav"]
+    assert [k for k, _ in search_rows(rows, [], "sub")][0] == "samples/raw/sub_drone.wav"
+    assert [k for k, _ in search_rows(rows, [], "bright")][-1] == "samples/raw/sub_drone.wav"
+    assert similar({k: v for k, v in rows.items() if "tick" not in k}, rows["samples/raw/tick.wav"], 1)[0][0] == "samples/raw/wide_noise.wav"
+    capsys.readouterr()
+    assert main(["samples", str(root), "subby", "--sort", "sub"]) == 0
+    out = capsys.readouterr().out
+    assert "samples/raw/sub_drone.wav" in out and "tick.wav" not in out and "1 of 3 samples" in out
+    # importing prints and records the character
+    assert main(["sample", str(root), str(raw / "tick.wav"), "--name", "tick", "--oneshot"]) == 0
+    out = capsys.readouterr().out
+    assert "snappy" in out and "samples/tick.wav" in json.loads((root / "samples" / "manifest.json").read_text())["analysis"]

@@ -409,3 +409,115 @@ def track_stem(song, track, clips) -> Path:
         old.unlink()
     write_wav24(out, sr, audio)
     return out
+
+
+# ============================================================================ searchable index of presets
+INDEX_NOTE = 48          # C2: every preset is played on the same key, so octave differences between patches show up
+INDEX_VERSION = 2
+
+
+def index_path() -> Path:
+    """Where the preset index lives: inside this repo's (git-ignored) .cache folder."""
+    return Path(__file__).resolve().parent.parent / ".cache" / "serum-index.json"
+
+
+def _patch_facts(tree: dict) -> dict:
+    """Searchable facts read straight from the patch: voices, oscillator engines, FX, macro names."""
+    engines, fx, macros = set(), [], []
+    for i, o in _numbered(tree, "Oscillator"):
+        pp = o.get("plainParams") if isinstance(o.get("plainParams"), dict) else {}
+        if not pp.get("kParamEnable", 1.0 if i == 0 else 0.0):
+            continue
+        if i == 4:
+            engines.add("sub")
+        elif i == 3:
+            engines.add("noise")
+        else:
+            used = [nm for pre, nm in ENGINES.items() for k, v in o.items() if k.startswith(pre) and isinstance(v, dict)
+                    and (v.get("plainParams") != "default" or v.get("relativePathToWT") or v.get("relativePathToSample"))]
+            engines.update(used or ["wavetable"])
+    for _, rack in _numbered(tree, "FXRack"):
+        for unit in rack.get("FX") or []:
+            fx += [k[2:].lower() for k, v in unit.items() if k.startswith("FX") and isinstance(v, dict)]
+    for _, m in _numbered(tree, "Macro"):
+        if m.get("name"):
+            macros.append(str(m["name"]).lower())
+    glob = next((g.get("plainParams") for _, g in _numbered(tree, "Global") if isinstance(g.get("plainParams"), dict)), {}) or {}
+    return {"voices": "mono" if glob.get("kParamMonoToggle") else "poly", "engines": sorted(engines), "fx": fx, "macros": macros}
+
+
+def build_index(root: str | Path | None = None, progress=None, limit: int | None = None) -> dict:
+    """Play every installed preset once (a 1 s C2) through the hosted plug-in and record what it sounds
+    like — attack, decay, brightness, low-end share, width, the pitch that actually comes out — next to
+    its folder, tags, description and patch facts. Takes a few minutes the first time; later runs only
+    render presets that are new or changed."""
+    from .samples import describe_audio, jsonable
+    from .theory import name as pitch_name
+    path = index_path()
+    old = {}
+    if path.exists():
+        data = json.loads(path.read_text())
+        if data.get("version") == INDEX_VERSION:
+            old = data.get("presets", {})
+    host = SerumHost.get()
+    out: dict[str, dict] = {}
+    todo = catalog(root)[:limit]
+    for n, info in enumerate(todo):
+        key = str(info.path)
+        mt = round(info.path.stat().st_mtime, 3)
+        if key in old and old[key].get("mtime") == mt:
+            out[key] = old[key]
+            continue
+        try:
+            _, tree = read_preset(info.path)
+            host.load(info.path)
+            audio = host.render([(INDEX_NOTE, 0.0, 1.0, 100)], 2.5)
+            d = jsonable(describe_audio(44100, audio, info.name))
+            silent = d["peak_db"] < -70
+        except Exception as e:  # noqa: BLE001
+            out[key] = {"name": info.name, "folder": info.folder, "tags": info.tags, "error": f"{type(e).__name__}: {e}", "mtime": mt}
+            continue
+        facts = _patch_facts(tree)
+        d.update({"name": info.name, "folder": info.folder, "tags": info.tags, "author": info.author, "description": info.description,
+                  "mtime": mt, "silent": silent, "played": pitch_name(INDEX_NOTE), **facts})
+        out[key] = d
+        if progress and (n % 25 == 0 or n == len(todo) - 1):
+            progress(f"{n + 1}/{len(todo)} {info.name}")
+    host.load(None)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"version": INDEX_VERSION, "note": INDEX_NOTE, "presets": out}) + "\n")
+    return out
+
+
+def load_index() -> dict[str, dict] | None:
+    path = index_path()
+    if not path.exists():
+        return None
+    data = json.loads(path.read_text())
+    return data.get("presets") if data.get("version") == INDEX_VERSION else None
+
+
+def search(words: list[str] | None = None, folder: str | None = None, tag: str | None = None, sort: str | None = None,
+           like: str | None = None, limit: int = 25) -> list[tuple[str, dict]]:
+    """Presets from the index matching all `words` — which may come from the name, description, author, folder,
+    tags, measured character (snappy, dark, subby, wide, sustained ...), voices (mono/poly), oscillator engines,
+    FX names or macro names; '-word' excludes. `like` ranks by closeness in sound to that preset."""
+    from .samples import search_rows, similar
+    idx = load_index()
+    if idx is None:
+        raise FileNotFoundError("no Serum index yet — run `ableton-use serum index` once (a few minutes)")
+    rows = {k: d for k, d in idx.items() if "error" not in d and not d.get("silent")}
+    if folder:
+        rows = {k: d for k, d in rows.items() if folder.lower() in d["folder"].lower()}
+    if tag:
+        rows = {k: d for k, d in rows.items() if tag.lower() in [t.lower() for t in d["tags"]]}
+    extra = {k: " ".join([d["name"], d["folder"], d.get("author", ""), d.get("description", ""), " ".join(d["tags"]), d["voices"],
+                          " ".join(d["engines"]), " ".join(d["fx"]), " ".join(d["macros"])]) for k, d in rows.items()}
+    hits = dict(search_rows(rows, words, sort, extra))
+    if like:
+        target_path = str(find(like))
+        target = idx.get(target_path)
+        if target is None or "error" in target:
+            raise KeyError(f"{like!r} is not in the index")
+        return [(k, d) for k, d, _ in similar({k: d for k, d in hits.items() if k != target_path}, target, limit)]
+    return list(hits.items())[:limit]

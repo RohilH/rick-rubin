@@ -56,8 +56,11 @@ First-time install lives in `install.md`. On cold start just verify: `ableton-us
 
 ```
 ableton-use init <dir> --title "..." --bpm 126 --key "A minor"   # a song project from project-template/: CLAUDE.md, empty song.py, project.md, manifest
-ableton-use audition <dir> samples/raw/kick_*.wav   # candidates side by side: punch, decay, spectrum, pitch+octave, width
+ableton-use audition <dir> samples/raw/kick_*.wav [--png name]   # candidates side by side: punch, decay, spectrum, pitch+octave, width, character
+ableton-use samples <dir> [words] [--sort bright] [--like samples/x.wav]   # the project's sample library, searchable by measured character
+ableton-use serum search [words] [--folder Bass] [--sort sub] [--like "<preset>"]   # Serum presets by how they sound (run `serum index` once)
 ableton-use browse "sounds/Bass" [--search sub]     # what Live offers: instruments, presets, effects, plug-ins
+ableton-use check <dir> [--audio]             # ruff + mypy on song.py, build, music lint — run after every edit
 ableton-use build <dir>                       # run song.py -> song.json + score.md (every other command does this when song.py changed)
 ableton-use score <dir> [--bars 33-48] [--tracks Bass Kick]   # print/refresh score.md; with a zoom, print just that slice
 ableton-use transcribe <dir> samples/vocal.wav [--text "lyric"]   # syllables -> bar.beat.16th + ms off the grid
@@ -125,6 +128,7 @@ song.arrange(intro, drop, intro, drop2)      # listing a section twice plays it 
 - **`pattern.variant(name, ...)`**: `repeat`, `length`, `bars={n: content}`, `add=`, `drop=`, `transpose`, `mono`. **`a.then(b, name)`** joins two patterns.
 - **`section.variant(name, ...)`**: `add` (set or replace parts), `without` (remove tracks), `fills`, `automation`, `bars`, `energy`, `kind`. Because `song.py` re-runs on every build, changing the original changes every variant.
 - **Groove is per track and explicit**: `swing` (% for that track), `timing` (16 offsets in ms, one per 16th of the bar; + is late), `accent` (16 velocity offsets), `gate` (note-length multiplier), `humanize` (`{"ms", "vel", "seed"}`, repeatable). There are no named grooves: decide where the clap sits against the kick, which 16ths the hats lean on, how much each part drifts — and write the numbers. Flat velocities and everything dead on the grid is the most common reason a beat sounds lifeless.
+- **`sends`**, **`midi_effects`** — see "Returns, sends and the master" and "MIDI effects" below.
 - **`delay_ms`** is Ableton's Track Delay: `delay_ms=-8` plays the whole track 8 ms early, `+12` late — notes and audio loops alike. Use it to seat a whole part against the kick (a clap or top loop a few ms late, a bass a few ms early); use `groove["timing"]` when only some 16ths should move. It is applied by shifting the track's clips, because Live does not let scripts set its own Track Delay.
 - **`instrument_params`** sets the track instrument's own parameters by displayed value — for Simpler e.g. `{"Ve Attack": 4, "Ve Release": 60, "Vol < Vel": 75}`. Attack time and velocity sensitivity are per track; per-hit feel comes from velocity and timing.
 - **Automation** values run 0..1 over the section: `[start, end]` or `[[fraction, value], ...]`. `filter` is a low-pass sweep (60 Hz–18 kHz), `volume` and `pan` are the mixer; `"Device:Parameter"` reaches anything else on MIDI tracks. On audio-loop tracks, `filter` and `volume` are rendered into the audio.
@@ -141,6 +145,26 @@ Great tracks come from comparing options, not from accepting the first one. You 
 - **Arrangement and mix.** Change one thing at a time, capture the affected bars, compare numbers.
 
 Stop exploring a question when one option is clearly right for this track and you can say why — not when the first one passes lint.
+
+## One vocabulary for how things sound
+
+Every sample you import and every Serum preset in the index is measured the same way and described with the same words, so you can search either by character:
+
+| | words |
+|---|---|
+| length | `short` (< 0.3 s) · `long` (> 2 s) |
+| attack | `snappy` (< 5 ms) · `soft-attack` (30–120 ms) · `slow-attack` (> 120 ms) |
+| decay | `tight` (< 120 ms) · `ringing` (> 600 ms) · `sustained` |
+| brightness | `dark` · `warm` · `bright` · `airy` (spectral centroid under 400 Hz / to 1.2 k / to 4 k / above) |
+| low end | `subby` (> 35% below 60 Hz) · `bassy` (> 60% below 200 Hz) · `no-low-end` |
+| width | `mono` · `wide` · `very-wide` · `wide-low-end` |
+| pitch | `pitched` · `unpitched` · `melodic` |
+| dynamics | `punchy` (crest > 14 dB) · `dense` (crest < 8 dB) |
+
+- **Samples.** `ableton-use sample ...` prints the measured row and character on import and records it in `samples/manifest.json` (`analysis`); anything dropped into `samples/raw/` is measured the first time you run `ableton-use samples <dir>`. Search and sort the whole project library: `samples <dir> snappy dark`, `samples <dir> --sort sub`, `samples <dir> -wide pitched`, `samples <dir> --like samples/raw/kick_03.wav`. So when candidates come back from Splice: download, then read their character before you choose.
+- **Serum presets.** `ableton-use serum index` plays every installed preset once (a 1 s C2) and records the same measurements plus patch facts; it takes a few minutes the first time and is incremental afterwards. Then `serum search bass subby mono --sort sub`, `serum search pad wide slow-attack -reverb`, `serum search pluck snappy bright --folder Leads`, `serum search --like "BS Gunman Reese"`. Words can be character, folder, tag, `mono`/`poly`, engine (`wavetable sample granular spectral sub noise`), FX names (`reverb delay distortion chorus ...`) or macro names; `-word` excludes. The `pitch` column is what came out when C2 was played — it shows the patch's own octave.
+
+The words are coarse on purpose: use them to narrow 700 options to 10, then compare those 10 with `audition`, `serum view` and in context.
 
 ## Pictures of the things producers look at
 
@@ -174,6 +198,36 @@ A track's `effects` is an ordered list of Live audio effects placed after the in
 ```
 
 Numbers are dB, ms, Hz, % or the ratio's first figure (`"inf"` for a limiter); switches take true/false; menus take the option's name. Compressor parameters: Threshold, Ratio, Expansion Ratio, Attack, Release, Auto Release On/Off, Output, Makeup, Dry/Wet, Model (Peak | RMS | Expand), Env Mode (Lin | Log), Knee, LookAhead (0 ms | 1 ms | 10 ms), S/C Listen, S/C EQ On, S/C EQ Type, S/C EQ Freq, S/C EQ Q, S/C EQ Gain, S/C On, S/C Gain, S/C Mix. `sidechain` names the track that keys the device (a Compressor on the bass keyed from the kick is the house pump); `sidechain_tap` is Pre FX, Post FX or Post Mixer. The push report echoes what Live shows after setting each value and lists any name it did not find — an unknown parameter name is reported with the device's full parameter list, which is also how to discover the parameters of any other device (EQ Eight, Saturator, Reverb, Glue Compressor...). `sidechain: true` on a track remains the shorthand for a default kick-keyed Compressor (−28 dB, 4:1, 0.5 ms, 120 ms). The offline preview only models the ducking, not the compressor's exact curve: tune compressors against `capture`.
+
+## MIDI effects
+
+`midi_effects` is a chain in front of the instrument — real devices in Live, so the clip holds what you wrote and the device does the rest:
+
+```python
+keys = song.add_track("Keys", "chords", instrument="Drift",
+                      midi_effects=[{"device": "Chord", "params": {"Shift1": 3, "Shift2": 7, "Shift3": 10, "Velocity3": 70, "Strum": 15}}])
+stab = song.pattern("stab", keys, ["1.1 F3 0.25; 2.3 F3 0.25; 4.1 Eb3 0.5"])     # one finger; the Chord device makes each a min7
+```
+
+- **Chord**: `Shift1`–`Shift6` (semitones from the played note, ±36), `Velocity1`–`6` (%), `Strum` (ms, ± direction), `Chance1`–`6`. A fixed shape parallel-moved by a one-note line is a classic house/techno stab sound — and changing one number revoices the whole part.
+- **Pitch** (`Pitch` semitones), **Note Length** (`Time Length` ms, `Gate` %), **Velocity** (`Out Low`, `Out Hi`, `Mode`), **Scale**, **Arpeggiator** (`Style`, `Synced Rate`, `Gate`, `Transp. Steps`…), **Random** — any Live MIDI effect by name, parameters by displayed value; an unknown parameter name comes back with the device's full list.
+- Offline, the score lint, `eval`, `view` and Serum renders see the notes that will *sound* for Chord, Pitch, Note Length and Velocity. Arpeggiator, Random, Scale and chance/scale-degree settings are not emulated: lint says so (`H15-midi-fx`) and that track must be judged on a `capture`.
+- On a `serum=` track the MIDI effects are applied before rendering (the result is in the audio); on audio-loop tracks they do not apply.
+
+## Returns, sends and the master
+
+One shared reverb or delay on a return track instead of one per track — Ableton's A and B:
+
+```python
+song.add_return("A", [{"device": "Reverb", "params": {"Decay Time": 1800, "Predelay": 20, "Dry/Wet": 100}}])
+song.add_return("B", [{"device": "Delay", "params": {"L 16th": 3, "R 16th": 4, "Feedback": 35, "Dry/Wet": 100}}])
+clap = song.add_track("Clap", "clap", sample="samples/clap.wav", sends={"A": -14, "B": -22})     # dB; unlisted sends are off
+song.master_effects = [{"device": "Limiter", "params": {"Ceiling": -0.3}}]
+```
+
+- Return chains are effect chains like a track's `effects` (keep them 100% wet). `push` makes the return hold exactly that chain, sets every track's send levels, and puts `master_effects` on the master. Live Intro/Lite have two returns (A, B).
+- Offline, the preview approximates a Reverb or Delay that is first on a return (tail length from `Decay Time`, echoes from the 16ths/feedback), enough for `eval` and `width` to notice the space; its exact sound is Live's — check on a `capture`.
+- Keep kick and bass out of the reverb; send what needs depth (claps, vocals, stabs, FX) and check the low end stays centred with `width`.
 
 ## Using Splice / samples
 
@@ -223,7 +277,7 @@ Presets are not samples: nothing here loads a third-party synth preset. Use a on
 1. **Inventory.** If a project exists: read its `CLAUDE.md` and `project.md` (summarise the last session in one sentence), `song.py` and `score.md`. If not, ask what they want, then `init` — which copies the scaffold in `project-template/`.
 2. **Converse.** Ask questions shaped by the brief: reference tracks/artists, subgenre, BPM, key/mood, club vs radio length, vocal?, which instruments/plugins they own, what the drop should feel like. No fixed checklist.
 3. **Propose strategy** (4–8 sentences): tempo/key, arrangement with bar counts, groove, bass approach, harmony, hook, palette, what makes the drop land. **Wait for confirmation.**
-4. **Write.** Compose the parts in `song.py` — drums, bass, harmony, hook, arrangement, groove — by hand, for this brief. Re-read `score.md` after each round of changes; zoom with `--bars/--tracks` when the question is local.
+4. **Write.** Run `ableton-use check <dir>` after every edit (it catches misspelled names, wrong arguments, broken structure and music-lint errors before anything is rendered). Compose the parts in `song.py` — drums, bass, harmony, hook, arrangement, groove — by hand, for this brief. Re-read `score.md` after each round of changes; zoom with `--bars/--tracks` when the question is local.
 5. **Self-eval.** `eval`. Read every line. Lint errors are correctness bugs — fix them. Audio checks catch contrast (breakdown ≥3 LU under the drop), a flat energy curve, a swamped or missing low end, dull tops. `view` the transitions that matter (end of build → drop, breakdown entry) and check: the gap before the drop, the roll, sidechain pump visible on the waveform, the filter sweep. Fix → re-eval, max 3 passes.
 6. **Present.** Summarise the arrangement and what you changed and why. Offer the preview.wav as a sketch (not the final sound).
 7. **Push and capture.** `status`, then `push` (`--replace` on re-push), then `capture` and judge the mix on Live's own audio (clipping on the master, sidechain depth, balance, width). Read the push report: missing instruments and unrouted sidechains are listed as warnings — tell the user exactly what to fix by hand.

@@ -105,7 +105,10 @@ song, an empty `song.py`, `project.md` (brief, exploration log, decisions) and a
 project's `CLAUDE.md` imports `PREFERENCES.md` from this repo, so standing preferences (no templates;
 explore, don't one-shot; judge on Live's audio) are written once and apply to every song.
 
-`ableton-use audition <dir> <files...>` compares candidate samples by measurement and
+`ableton-use check <dir>` lints and type-checks `song.py` (ruff, mypy), builds it and runs the music lint;
+the scaffold ships the config. `ableton-use audition <dir> <files...>` compares candidate samples by measurement,
+`ableton-use samples <dir> snappy dark` and `ableton-use serum search bass subby mono` search samples and Serum
+presets by how they sound, and
 `ableton-use browse "sounds/Bass"` lists Live's instruments and presets — the tools that make exploring cheap.
 
 ## Samples (Splice or your own)
@@ -169,6 +172,8 @@ ableton_use/
   serum.py        Serum 2: preset catalog, patch sheets, and the plug-in hosted in-process (load presets, render parts)
   transcribe.py   syllable-level alignment of vocals to the grid, and re-timing
   pitch.py        the notes inside a single-voice sample
+  midifx.py       MIDI effects: real devices in Live, emulated offline where deterministic
+  pictures.py     imager, spectrum analyzer, Serum patch panel, sample comparer
   samples.py      sample import: pitch detection, tempo-conforming loops, 24-bit WAV io
   project.py      project folder, history/undo, project.md memory
 SKILL.md          agent instructions: principles, hard rules, process, house craft
