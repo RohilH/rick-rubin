@@ -34,19 +34,19 @@ class BridgeError(RuntimeError):
     pass
 
 
-def lock_path() -> Path:
+def lock_path(port: int = DEFAULT_PORT) -> Path:
     import tempfile
-    return Path(tempfile.gettempdir()) / "ableton-use-live.lock"
+    return Path(tempfile.gettempdir()) / ("ableton-use-live.lock" if port == DEFAULT_PORT else f"ableton-use-live-{port}.lock")
 
 
 @contextmanager
-def live_lock(what: str = "", wait_s: float = 1800.0, progress=None):
+def live_lock(what: str = "", wait_s: float = 1800.0, progress=None, port: int = DEFAULT_PORT):
     """One push/capture at a time: Live has a single arrangement and a single transport, so two agents
     (or two terminals) using it at once would record each other's audio. Waits for whoever holds it
     (a holder whose process is gone is ignored); nested use within one process is free."""
     import os
     import time
-    path = lock_path()
+    path = lock_path(port)
     me = os.getpid()
 
     def holder():
@@ -413,6 +413,9 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
                 break
         else:
             rep.warnings.append(f"locator {m.name!r} at beat {m.start:g} was not created")
+    if part and bridge.call("lom", path="song.is_playing"):
+        bridge.call("show_message", text=f"ableton-use: updated '{song.title}'")    # hot reload: leave the transport running
+        return rep
     bridge.call("transport", action="stop", beat=0)
     bridge.call("show_message", text=f"ableton-use: pushed '{song.title}' ({rep.clips} clips)")
     return rep

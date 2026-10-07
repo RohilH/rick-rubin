@@ -269,7 +269,7 @@ class Project:
         from .live import LiveBridge, push_song
         from .live.client import _fingerprints, live_lock, push_record, update_song
         song = self.load()
-        with live_lock(f"push {self.root.name}", progress=progress), LiveBridge(host, port) as b:
+        with live_lock(f"push {self.root.name}", progress=progress, port=port), LiveBridge(host, port) as b:
             if update:
                 return update_song(song, b, progress=progress, load_instruments=load_instruments)
             rep = push_song(song, b, replace=replace, load_instruments=load_instruments, progress=progress, clean=clean)
@@ -277,6 +277,57 @@ class Project:
             if rec:
                 rec.write_text(json.dumps(_fingerprints(song), indent=1) + "\n")
             return rep
+
+    def watch(self, bars: tuple[int, int] | None = None, play: bool = False, interval: float = 0.5,
+              host: str = "127.0.0.1", port: int = 9889, say=print, rounds: int | None = None) -> None:
+        """Hot reload: keep the Live set in step with song.py. Every time song.py (or a sample it uses) is
+        saved, the song is rebuilt and only what changed is redone in Live — while Live keeps playing.
+        `bars` sets Live's loop to that range; `play` starts playback. A song.py that does not build is
+        reported and Live is left as it was. Runs until interrupted (`rounds` limits the checks, for tests)."""
+        import time
+
+        from .live import LiveBridge
+        from .live.client import live_lock, update_song
+
+        def stamp():
+            files = [self.source_path] + sorted((self.root / "samples").glob("*.wav")) + sorted((self.root / "serum").glob("*.wav"))
+            return tuple((str(f), f.stat().st_mtime) for f in files if f.exists())
+
+        def sync():
+            t0 = time.time()
+            try:
+                song = self.build()
+            except Exception as e:  # noqa: BLE001
+                say(f"✗ song.py does not build — Live left as it was\n  {type(e).__name__}: {e}")
+                return
+            errs = [i for i in analysis.lint(song) if i.severity == "error"]
+            with live_lock(f"watch {self.root.name}", port=port), LiveBridge(host, port) as b:
+                rep = update_song(song, b)
+            say(f"{_dt.datetime.now():%H:%M:%S} ✓ {rep.mode} ({time.time() - t0:.1f} s)")
+            for w in rep.warnings:
+                say(f"  ! {w}")
+            for i in errs:
+                say(f"  {i}")
+
+        sync()
+        if bars or play:
+            with live_lock(f"watch {self.root.name}", port=port), LiveBridge(host, port) as b:
+                if bars:
+                    b.call("set_loop", start=(bars[0] - 1) * 4.0, length=(bars[1] - bars[0] + 1) * 4.0, on=True)
+                    b.call("transport", action="seek", beat=(bars[0] - 1) * 4.0)
+                if play and not b.call("lom", path="song.is_playing"):
+                    b.call("transport", action="play")
+        say(f"watching {self.source_path.name}" + (f" — Live loops bars {bars[0]}-{bars[1]}" if bars else "") + " — Ctrl-C to stop")
+        last = stamp()
+        n = 0
+        while rounds is None or n < rounds:
+            n += 1
+            time.sleep(interval)
+            now = stamp()
+            if now != last:
+                time.sleep(0.15)                            # let the editor finish writing
+                last = stamp()
+                sync()
 
     def add_sample(self, src: str | Path, name: str, *, loop: bool = False, src_bpm: float | None = None,
                    bars: int | None = None, align: str = "start", melodic: bool = False, end_at: float | None = None):
@@ -304,7 +355,7 @@ class Project:
         """Record the pushed arrangement from Live's master into live.wav (or zoom/live_bars_...wav)."""
         from .live import LiveBridge, capture_live
         from .live.client import live_lock
-        with live_lock(f"capture {self.root.name}", progress=progress), LiveBridge(host, port) as b:
+        with live_lock(f"capture {self.root.name}", progress=progress, port=port), LiveBridge(host, port) as b:
             return capture_live(self.load(), b, self.zoom_path("live", bars, tracks), bars=bars, tracks=tracks, progress=progress)
 
     def ab(self, variants: list[tuple[str, dict[str, str]]], bars: tuple[int, int] | None = None,
@@ -334,7 +385,7 @@ class Project:
         if live:
             from .live import LiveBridge, capture_live
             from .live.client import live_lock, update_song
-            with live_lock(f"ab {self.root.name}", progress=progress), LiveBridge(host, port) as b:
+            with live_lock(f"ab {self.root.name}", progress=progress, port=port), LiveBridge(host, port) as b:
                 last = None
                 for label, values in variants:
                     song = build(values)

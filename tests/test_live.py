@@ -262,3 +262,29 @@ def test_update_pushes_only_what_changed(tmp_path):
         assert now["Bass"] == ids["Bass"] and now["Kick"] != ids["Kick"] and len(now) == 2
         srv.song.tracks[0].name = "renamed by hand"
         assert "does not hold the last push" in update_song(s, b).mode
+
+
+def test_watch_hot_reloads_song_py(tmp_path):
+    from ableton_use.project import Project
+    src = '''
+from ableton_use import Song
+song = Song("Hot", bpm=126, key="A minor")
+kick = song.add_track("Kick", "kick", volume_db=VOL)
+hat = song.add_track("Hats", "hat", volume_db=-12)
+song.add_section("a", 4, kind="drop", parts={kick: song.pattern("four", kick, "x...x...x...x..."),
+                                             hat: song.pattern("off", hat, "..x...x...x...x.")})
+'''
+    (tmp_path / "song.py").write_text(src.replace("VOL", "-6"))
+    srv = FakeLiveServer()
+    said: list[str] = []
+    p = Project(tmp_path)
+    p.watch(bars=(1, 4), play=True, port=srv.port, say=said.append, rounds=0)
+    assert "full push" in said[0] and srv.song.is_playing and srv.song.loop
+    ids = {t.name: id(t) for t in srv.song.tracks}
+    (tmp_path / "song.py").write_text(src.replace("VOL", "-9"))
+    p.watch(port=srv.port, say=said.append, rounds=0)
+    assert "update — mixer on Kick" in said[-2] and srv.song.is_playing          # playback was not stopped
+    assert {t.name: id(t) for t in srv.song.tracks} == ids
+    (tmp_path / "song.py").write_text(src.replace("VOL", "oops("))
+    p.watch(port=srv.port, say=said.append, rounds=0)
+    assert "does not build" in said[-2] and {t.name: id(t) for t in srv.song.tracks} == ids

@@ -80,6 +80,12 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=9889)
 
+    s = sub.add_parser("watch", help="hot reload: every save of song.py is rebuilt and only what changed is redone in Live, while it plays")
+    s.add_argument("dir")
+    s.add_argument("--bars", type=_bars, help="loop this bar range in Live, e.g. 81-88")
+    s.add_argument("--play", action="store_true", help="start Live's playback")
+    s.add_argument("--port", type=int, default=9889)
+
     s = sub.add_parser("sample", help="import a one-shot or loop into <dir>/samples/ (loops are conformed to the song tempo)")
     s.add_argument("dir")
     s.add_argument("src")
@@ -283,6 +289,11 @@ def main(argv: list[str] | None = None) -> int:
     elif a.cmd == "push":
         rep = Project(a.dir).push(a.host, a.port, a.replace, not a.no_instruments, clean=a.clean, update=a.update, progress=lambda m: print("·", m, file=sys.stderr))
         print(rep.text())
+    elif a.cmd == "watch":
+        try:
+            Project(a.dir).watch(a.bars, a.play, port=a.port, say=lambda m: print(m, flush=True))
+        except KeyboardInterrupt:
+            print("stopped watching")
     elif a.cmd == "sample":
         if a.loop and not a.src_bpm:
             ap.error("--loop needs --src-bpm (the tempo the loop was recorded at)")
@@ -400,7 +411,7 @@ def main(argv: list[str] | None = None) -> int:
         for n in a.names:
             hit = next((d for k, d in cache.items() if k.lower() == n.lower()), None)
             if hit is None or a.refresh:
-                with live_lock("devices"), LiveBridge(port=a.port) as b:
+                with live_lock("devices", port=a.port), LiveBridge(port=a.port) as b:
                     hit = describe_device(b, n)
             print(device_text(hit) + "\n")
     elif a.cmd == "reference":

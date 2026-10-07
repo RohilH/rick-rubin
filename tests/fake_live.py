@@ -322,16 +322,17 @@ class FakeLiveServer:
         threading.Thread(target=self._run, daemon=True).start()
 
     def _run(self):
-        conn, _ = self.sock.accept()
-        buf = b""
-        while True:
-            chunk = conn.recv(65536)
-            if not chunk:
-                break
-            buf += chunk
-            while b"\n" in buf:
-                line, buf = buf.split(b"\n", 1)
-                req = json.loads(line)
-                resp = self.handlers.dispatch(req)
-                resp["id"] = req.get("id")
-                conn.sendall((json.dumps(resp) + "\n").encode())
+        while True:                                      # one client after another, like the remote script
+            conn, _ = self.sock.accept()
+            buf = b""
+            while True:
+                chunk = conn.recv(65536)
+                if not chunk:
+                    break
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    req = json.loads(line)
+                    resp = self.handlers.dispatch(req)
+                    resp["id"] = req.get("id")
+                    conn.sendall((json.dumps(resp) + "\n").encode())
