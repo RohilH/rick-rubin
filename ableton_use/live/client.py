@@ -7,6 +7,7 @@ import os
 import platform
 import shutil
 import socket
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,61 @@ def sample_unity_offset(track) -> float:
 
 class BridgeError(RuntimeError):
     pass
+
+
+def lock_path() -> Path:
+    import tempfile
+    return Path(tempfile.gettempdir()) / "ableton-use-live.lock"
+
+
+@contextmanager
+def live_lock(what: str = "", wait_s: float = 1800.0, progress=None):
+    """One push/capture at a time: Live has a single arrangement and a single transport, so two agents
+    (or two terminals) using it at once would record each other's audio. Waits for whoever holds it
+    (a holder whose process is gone is ignored); nested use within one process is free."""
+    import os
+    import time
+    path = lock_path()
+    me = os.getpid()
+
+    def holder():
+        try:
+            pid, _, label = path.read_text().partition(" ")
+            try:
+                os.kill(int(pid), 0)
+            except PermissionError:                         # alive, just not ours to signal
+                pass
+            return int(pid), label.strip()
+        except (OSError, ValueError):
+            return None
+
+    h = holder()
+    if h and h[0] == me:
+        yield
+        return
+    t_end = time.time() + wait_s
+    told = False
+    while True:
+        h = holder()
+        if h is None:
+            try:
+                path.unlink(missing_ok=True)
+                fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.write(fd, f"{me} {what}".encode())
+                os.close(fd)
+                break
+            except FileExistsError:
+                continue
+        if time.time() > t_end:
+            raise BridgeError(f"Live is in use by another ableton-use run ({h[1] or 'pid ' + str(h[0])}) and did not free up in {wait_s / 60:.0f} min")
+        if progress and not told:
+            progress(f"waiting: Live is in use by {h[1] or 'pid ' + str(h[0])}")
+            told = True
+        time.sleep(2.0)
+    try:
+        yield
+    finally:
+        path.unlink(missing_ok=True)
 
 
 class LiveBridge:
@@ -527,6 +583,70 @@ def capture_live(song: Song, bridge: LiveBridge, out_path: str | Path, bars: tup
     write_wav24(out_path, sr, x)
     return {"path": out_path, "source": src, "bars": (b0, b1), "tracks": tracks, "seconds": len(x) / sr,
             "peak_db": float(20 * np.log10(np.abs(x).max() + 1e-12))}
+
+
+# ============================================================================ what a Live device offers
+PROBE_TRACK = "ableton-use probe"
+
+
+def devices_cache() -> Path:
+    return Path(__file__).resolve().parent.parent.parent / ".cache" / "live-devices.json"
+
+
+def describe_device(bridge: LiveBridge, name: str) -> dict:
+    """Every parameter of a Live device with its range, as Live displays it: {"device", "parameters":
+    [{"name", "value", "min", "max", "choices"}]}. The device is loaded on a temporary track that is removed
+    again, so nothing in the set changes. Results are remembered in .cache/live-devices.json."""
+    state = bridge.call("get_state")
+    if any(t["name"] == PROBE_TRACK for t in state["tracks"]):
+        bridge.call("delete_tracks", names=[PROBE_TRACK])
+    err: Exception | None = None
+    for make in ("create_midi_track", "create_audio_track"):     # MIDI effects and instruments need a MIDI track
+        ti = bridge.call(make, name=PROBE_TRACK)
+        try:
+            bridge.call("insert_device", track=ti, name=name)
+            base = f"song.tracks[{ti}].devices"
+            devs = bridge.call("lom", path=base)
+            if not devs:
+                raise BridgeError(f"{name} did not load")
+            dp = f"{base}[{len(devs) - 1}]"
+            names = bridge.call("lom", path=dp + ".parameters")
+            cmds: list[tuple[str, dict]] = []
+            for i in range(len(names)):
+                pp = f"{dp}.parameters[{i}]"
+                cmds += [("lom", {"path": pp + "." + a}) for a in ("min", "max", "value", "is_quantized")]
+            got = [r.get("result") for r in bridge.batch(cmds)]
+            cmds = []
+            for i in range(len(names)):
+                pp = f"{dp}.parameters[{i}]"
+                lo, hi, val, quant = got[4 * i: 4 * i + 4]
+                cmds += [("lom", {"path": pp + ".str_for_value", "op": "call", "args": [v]}) for v in (lo, hi, val)]
+                cmds.append(("lom", {"path": pp + ".value_items"}) if quant else ("ping", {}))
+            shown = [r.get("result") for r in bridge.batch(cmds)]
+            params = []
+            for i, n in enumerate(names):
+                lo, hi, val, items = shown[4 * i: 4 * i + 4]
+                quant = got[4 * i + 3]
+                params.append({"name": n, "value": val, "min": lo, "max": hi, "choices": list(items) if quant and isinstance(items, list) else None})
+            out = {"device": bridge.call("lom", path=dp + ".name"), "class": bridge.call("lom", path=dp + ".class_display_name"), "parameters": params}
+            cache = json.loads(devices_cache().read_text()) if devices_cache().exists() else {}
+            cache[out["device"]] = out
+            devices_cache().parent.mkdir(parents=True, exist_ok=True)
+            devices_cache().write_text(json.dumps(cache, indent=1) + "\n")
+            return out
+        except BridgeError as e:
+            err = e
+        finally:
+            bridge.call("delete_tracks", names=[PROBE_TRACK])
+    raise BridgeError(f"could not load {name!r} in Live: {err}")
+
+
+def device_text(d: dict) -> str:
+    L = [f"{d['device']} — parameters as Live shows them (use these names and values in effects / master_effects / returns / midi_effects)"]
+    for p in d["parameters"]:
+        rng = " | ".join(p["choices"]) if p.get("choices") else f"{p['min']} .. {p['max']}"
+        L.append(f"  {p['name']:<22} now {p['value']:<14} {rng}")
+    return "\n".join(L)
 
 
 # ============================================================================ install

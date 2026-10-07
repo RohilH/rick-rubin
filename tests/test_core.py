@@ -193,3 +193,68 @@ def test_project_flow(tmp_path):
     p.remember(strategy="test", decisions="d")
     p.remember(strategy="again")
     assert p.memory().count("## Session") == 2
+
+
+# ---------------------------------------------------------------- option() choices, A/B, hit levels
+OPTION_SONG = '''
+from ableton_use import Song, option
+
+GHOST = option("ghost", 60)
+song = Song("Opt", bpm=126, key="G minor")
+hat = song.add_track("Hats", "hat", volume_db=-10)
+h = song.pattern("h", hat, f"1.1 F#1 0.2 v{GHOST}; 1.3 F#1 0.2 v110; 2.3 F#1 0.2 v110; 3.3 F#1 0.2 v110; 4.3 F#1 0.2 v110")
+song.add_section("a", 2, energy=5, parts={hat: h})
+'''
+
+
+def test_option_switches_and_rebuilds(tmp_path, monkeypatch):
+    from ableton_use import options
+    from ableton_use.project import Project
+    monkeypatch.delenv(options.ENV, raising=False)
+    (tmp_path / "song.py").write_text(OPTION_SONG)
+    p = Project(tmp_path)
+    assert p.load().meta["options"]["ghost"] == {"default": 60, "value": 60}
+    with options.using({"ghost": "20"}):
+        assert p.load().meta["options"]["ghost"]["value"] == 20          # stale song.json is rebuilt for the switched choice
+    assert p.load().meta["options"]["ghost"]["value"] == 60              # ... and back again without it
+    assert "ghost=60" in p.score()
+    with options.using({"gost": "20"}):
+        with pytest.raises(ValueError, match="no option called gost"):
+            p.build()
+
+
+def test_ab_and_hits(tmp_path, monkeypatch):
+    from ableton_use import options
+    from ableton_use.analysis import compare_table
+    from ableton_use.project import Project
+    monkeypatch.delenv(options.ENV, raising=False)
+    (tmp_path / "song.py").write_text(OPTION_SONG)
+    p = Project(tmp_path)
+    files = p.ab([("base", {}), ("loud", {"ghost": "127"})], bars=(1, 2), tracks=["Hats"])
+    assert [f.name for _, f in files] == ["base.wav", "loud.wav"]
+    table = compare_table(files)
+    assert "| LUFS |" in table and "loud" in table.splitlines()[0]
+    text = p.hits((1, 2), ["Hats"])
+    rows = [ln for ln in text.splitlines() if ln[:1].isdigit() and " dB " in ln and "hits" not in ln]
+    assert len(rows) == 2 and "vel" in text
+    assert "10 hits" in text                                             # 5 written hits per bar, no tails counted
+
+
+def test_live_lock_is_exclusive_and_reentrant(tmp_path, monkeypatch):
+    import tempfile
+
+    from ableton_use.live.client import BridgeError, live_lock, lock_path
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    with live_lock("a"):
+        assert lock_path().exists()
+        with live_lock("b"):                                             # same process: free
+            pass
+        assert lock_path().exists()
+    assert not lock_path().exists()
+    lock_path().write_text("1 someone else")                             # pid 1 is always alive
+    with pytest.raises(BridgeError, match="in use"):
+        with live_lock("c", wait_s=0.1):
+            pass
+    lock_path().write_text("999999999 a dead run")
+    with live_lock("d"):
+        pass

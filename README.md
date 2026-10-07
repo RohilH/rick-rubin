@@ -178,6 +178,7 @@ ableton_use/
   midifx.py       MIDI effects: real devices in Live, emulated offline where deterministic
   pictures.py     imager, spectrum analyzer, Serum patch panel, sample comparer
   reference.py    profile a mix and compare it with released reference tracks
+  options.py      option(): named choices in song.py, switched by `ab` / `--set` for A/B runs
   samples.py      sample import: pitch detection, tempo-conforming loops, 24-bit WAV io
   project.py      project folder, history/undo, project.md memory
 SKILL.md          agent instructions: principles, hard rules, process, house craft

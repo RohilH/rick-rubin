@@ -105,11 +105,22 @@ class Project:
         import runpy
         if not self.source_path.exists():
             raise FileNotFoundError(f"{self.source_path} not found — `ableton-use init` creates one")
+        from . import options
+        options.begin()
         with contextlib.chdir(self.root):               # sample paths in song.py are relative to the project
             ns = runpy.run_path(str(self.source_path), run_name="song")
         song = ns.get("song")
         if not isinstance(song, Song):
             raise ValueError(f"{self.source_path} must leave a Song in a variable called `song`")
+        if options.unknown():
+            raise ValueError(f"song.py has no option called {', '.join(options.unknown())} "
+                             f"(it declares: {', '.join(options.declared()) or 'none'})")
+        song.meta.pop("options", None)
+        song.meta.pop("options_set", None)
+        if options.declared():
+            song.meta["options"] = options.declared()
+        if options.active():
+            song.meta["options_set"] = options.active()
         song.base_dir = self.root
         return song
 
@@ -182,7 +193,12 @@ class Project:
         if self.source_path.exists() and (not self.song_path.exists()
                                           or self.source_path.stat().st_mtime > self.song_path.stat().st_mtime):
             return self.build()
-        return Song.load(self.song_path)
+        song = Song.load(self.song_path)
+        if self.source_path.exists():
+            from . import options
+            if song.meta.get("options_set", {}) != options.active():   # built with other choices switched than this run's
+                return self.build()
+        return song
 
     def save(self, song: Song, snapshot: bool = True) -> None:
         if snapshot and self.song_path.exists():
@@ -248,7 +264,8 @@ class Project:
 
     def push(self, host: str = "127.0.0.1", port: int = 9889, replace: bool = False, load_instruments: bool = True, progress=None, clean: bool = False):
         from .live import LiveBridge, push_song
-        with LiveBridge(host, port) as b:
+        from .live.client import live_lock
+        with live_lock(f"push {self.root.name}", progress=progress), LiveBridge(host, port) as b:
             return push_song(self.load(), b, replace=replace, load_instruments=load_instruments, progress=progress, clean=clean)
 
     def add_sample(self, src: str | Path, name: str, *, loop: bool = False, src_bpm: float | None = None,
@@ -276,8 +293,102 @@ class Project:
                 host: str = "127.0.0.1", port: int = 9889, progress=None) -> dict:
         """Record the pushed arrangement from Live's master into live.wav (or zoom/live_bars_...wav)."""
         from .live import LiveBridge, capture_live
-        with LiveBridge(host, port) as b:
+        from .live.client import live_lock
+        with live_lock(f"capture {self.root.name}", progress=progress), LiveBridge(host, port) as b:
             return capture_live(self.load(), b, self.zoom_path("live", bars, tracks), bars=bars, tracks=tracks, progress=progress)
+
+    def ab(self, variants: list[tuple[str, dict[str, str]]], bars: tuple[int, int] | None = None,
+           tracks: list[str] | None = None, live: bool = False, host: str = "127.0.0.1", port: int = 9889,
+           progress=None) -> list[tuple[str, Path]]:
+        """Render candidates of the song side by side. Each variant is (label, {option: value}) — the
+        `option()` choices in song.py to switch; {} is the song as it stands. Offline (the preview) by default;
+        live=True pushes each one to Live and records it, after which Live is left holding the song as it stands.
+        Files go to <project>/ab/<label>.wav; song.json is not touched."""
+        from . import options
+        from .samples import read_audio, write_wav24
+        say = progress or (lambda *_: None)
+        if not self.source_path.exists():
+            raise ValueError("ab needs a song.py with option() choices")
+        out: list[tuple[str, Path]] = []
+        (self.root / "ab").mkdir(exist_ok=True)
+        spbar = 240.0 / self.tempo()
+
+        def build(values):
+            with options.using(values):
+                song = self._run_source()
+            errs = song.validate()
+            if errs:
+                raise ValueError(f"{values}: song.py builds an invalid song:\n  " + "\n  ".join(errs))
+            return song
+
+        if live:
+            from .live import LiveBridge, capture_live, push_song
+            from .live.client import live_lock
+            with live_lock(f"ab {self.root.name}", progress=progress), LiveBridge(host, port) as b:
+                last = None
+                for label, values in variants:
+                    say(f"{label}: push")
+                    rep = push_song(build(values), b, replace=True, clean=True)
+                    for w in rep.warnings:
+                        say(f"{label}: ! {w}")
+                    last = values
+                    dst = self.root / "ab" / f"{label}.wav"
+                    capture_live(build(values), b, dst, bars=bars, tracks=tracks, progress=lambda m, label=label: say(f"{label}: {m}"))
+                    out.append((label, dst))
+                if last:                                   # leave Live holding the song as it stands
+                    say("restoring the song as it stands in Live")
+                    push_song(build({}), b, replace=True, clean=True)
+            return out
+        for label, values in variants:
+            say(f"{label}: render")
+            dst = self.root / "ab" / f"{label}.wav"
+            render_preview(build(values), dst, tracks=tracks)
+            if bars:
+                sr, x = read_audio(dst)
+                write_wav24(dst, sr, x[int((bars[0] - 1) * spbar * sr): int(bars[1] * spbar * sr)])
+            out.append((label, dst))
+        return out
+
+    def hits(self, bars: tuple[int, int] | None = None, tracks: list[str] | None = None, wav: str | Path | None = None,
+             live: bool = False, grid: int = 16, wav_start_bar: int | None = None, progress=None) -> str:
+        """Level of every grid step, bar by bar — are the accents and ghost notes that were written the ones
+        that come out? Source: `wav` (a file starting on the downbeat of `wav_start_bar`), else a Live capture of
+        `tracks` soloed (live=True), else the offline preview of those tracks. With one track, its written
+        velocities are printed under each bar."""
+        from .model import BEATS_PER_BAR
+        from .samples import read_audio
+        song = self.load()
+        b0, b1 = bars or (1, min(song.total_bars, 8))
+        if wav is not None:
+            path = Path(wav) if Path(wav).exists() else self.root / wav
+            start_bar = wav_start_bar or 1
+            src = path.name
+        elif live:
+            r = self.capture((b0, b1), tracks, progress=progress)
+            path, start_bar, src = r["path"], b0, "Live capture"
+        else:
+            path = self.zoom_path("preview", None, tracks)
+            render_preview(song, path, tracks=tracks)
+            start_bar, src = 1, "offline preview"
+        sr, x = read_audio(path)
+        spbar = 240.0 / song.bpm
+        a = int(max(0, b0 - start_bar) * spbar * sr)
+        seg = x[a: a + int((b1 - b0 + 1) * spbar * sr)]
+        levels = analysis.hit_levels(seg, sr, song.bpm, grid)
+        vel = None
+        if tracks and len(tracks) == 1:
+            vel = [[None] * grid for _ in range(b1 - b0 + 1)]
+            step = BEATS_PER_BAR / grid
+            for c in song.flatten(sounding=True)[0]:
+                if c.track != tracks[0]:
+                    continue
+                for n in c.notes:
+                    k = int(round((c.start + n.start) / step)) - (b0 - 1) * grid
+                    if 0 <= k < grid * len(vel):
+                        cur = vel[k // grid][k % grid]
+                        vel[k // grid][k % grid] = max(cur or 0, int(n.vel))
+        what = ", ".join(x_ for x_ in (f"bars {b0}-{b1}", "solo " + " ".join(tracks) if tracks else "full mix") if x_)
+        return f"# Hit levels — {what} ({src}), 1/{grid} steps, peak dBFS\n" + analysis.hits_text(levels, b0, vel)
 
     # memory
     def remember(self, strategy: str = "", decisions: str = "", reasoning: str = "", outstanding: str = "") -> None:

@@ -16,6 +16,8 @@ def _bars(s: str) -> tuple[int, int]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="ableton-use", description="Agentic house-music production rendered to Ableton Live.")
+    ap.add_argument("--set", action="append", default=[], metavar="NAME=VALUE", dest="options",
+                    help="run this command with an `option()` choice of song.py switched (repeatable), e.g. --set bass=reese")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("init", help="start a project: an empty song.py to write the song in")
@@ -102,6 +104,33 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--bars", type=_bars, help="with --tracks or the mix: only this bar range")
     s.add_argument("--mix", action="store_true", help="include the full mix (live.wav if captured, else the preview)")
 
+    s = sub.add_parser("ab", help="candidates side by side: build, render (or push to Live and record) each `option()` choice and compare the measurements")
+    s.add_argument("dir")
+    s.add_argument("variants", nargs="+", metavar="NAME=VALUE", help="one candidate each, e.g. hatvel=35 hatvel=60; several switches: bass=reese,hatvel=35; "
+                   "a label can be put in front: bright:stab=sq,cutoff=90")
+    zoom(s)
+    s.add_argument("--live", action="store_true", help="push each candidate to Live and record it (real time) instead of the offline preview")
+    s.add_argument("--no-base", action="store_true", help="leave out the song as it stands (it is the first column otherwise)")
+    s.add_argument("--hits", action="store_true", help="also print the per-step hit levels of each candidate")
+    s.add_argument("--port", type=int, default=9889)
+
+    s = sub.add_parser("compare", help="audio files side by side: loudness, crest, bands, width, transients (first file is the baseline)")
+    s.add_argument("dir")
+    s.add_argument("files", nargs="+")
+
+    s = sub.add_parser("hits", help="level of every 16th step, bar by bar, next to the written velocities — do the accents and ghosts come out as written?")
+    s.add_argument("dir")
+    s.add_argument("wav", nargs="?", help="an audio file (default: render the preview, or --live to record from Live)")
+    zoom(s)
+    s.add_argument("--live", action="store_true", help="record the bars from Live (soloing --tracks)")
+    s.add_argument("--grid", type=int, default=16)
+    s.add_argument("--start-bar", type=int, help="the bar the wav file starts on (default 1; zoom/live_bars_081-... files start on bar 81)")
+
+    s = sub.add_parser("devices", help="a Live device's parameters with their ranges and choices, read from Live (remembered afterwards)")
+    s.add_argument("names", nargs="*", help="device names, e.g. Compressor Saturator \"Channel EQ\"; none: list the ones already read")
+    s.add_argument("--refresh", action="store_true")
+    s.add_argument("--port", type=int, default=9889)
+
     s = sub.add_parser("reference", help="measure a mix against released tracks: loudness, punch, balance, width, pump, movement")
     s.add_argument("action", choices=["add", "list", "compare"])
     s.add_argument("paths", nargs="*", help="add: audio files of released tracks in the genre · compare: a project folder, "
@@ -178,6 +207,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--port", type=int, default=9889)
 
     a = ap.parse_args(argv)
+    if a.options:
+        import os
+
+        from . import options
+        os.environ[options.ENV] = json.dumps({**options.active(), **options.parse(a.options)})
 
     if a.cmd == "init":
         p = Project.init(a.dir, a.title, a.bpm, a.key)
@@ -314,6 +348,59 @@ def main(argv: list[str] | None = None) -> int:
         name = "spectrum_" + "+".join(lbl.split(" ")[0] for lbl, _ in sounds)[:80] + (f"_bars_{a.bars[0]:03d}-{a.bars[1]:03d}" if a.bars else "")
         title = "spectrum — " + ", ".join(lbl for lbl, _ in sounds) + (f" — bars {a.bars[0]}-{a.bars[1]}" if a.bars else "")
         print(spectrum_png(sounds, p.root / "views" / f"{name}.png", title, spans))
+    elif a.cmd == "ab":
+        import re
+
+        from . import options
+        from .analysis import compare_table, hit_levels, hits_text
+        from .samples import read_audio
+        p = Project(a.dir)
+        variants: list[tuple[str, dict[str, str]]] = [] if a.no_base else [("base", {})]
+        for v in a.variants:
+            label, colon, rest = v.partition(":")
+            if not colon:
+                label, rest = re.sub(r"[^A-Za-z0-9.+-]+", "-", v).strip("-"), v
+            variants.append((label, options.parse([rest])))
+        files = p.ab(variants, a.bars, a.tracks, a.live, port=a.port, progress=lambda m: print("·", m, file=sys.stderr))
+        song = p.load()
+        what = ", ".join(x for x in (f"bars {a.bars[0]}-{a.bars[1]}" if a.bars else "whole song", "solo " + " ".join(a.tracks) if a.tracks else "") if x)
+        print(f"# A/B — {what} ({'recorded from Live' if a.live else 'offline preview'})")
+        for label, vals in variants:
+            print(f"- {label}: " + (", ".join(f"{k}={v}" for k, v in vals.items()) or "the song as it stands"))
+        print()
+        print(compare_table([(lbl, f) for lbl, f in files]))
+        if a.hits:
+            for label, f in files:
+                sr, x = read_audio(f)
+                print(f"\n{label}")
+                print(hits_text(hit_levels(x, sr, song.bpm), a.bars[0] if a.bars else 1))
+        print("\nfiles: " + "  ".join(str(f.relative_to(p.root)) for _, f in files))
+        print("keep a winner by making it the default of its option() in song.py" + ("; Live holds the song as it stands again" if a.live else ""))
+    elif a.cmd == "compare":
+        from .analysis import compare_table
+        p = Project(a.dir)
+        files = [Path(f) if Path(f).exists() else p.root / f for f in a.files]
+        missing = [str(f) for f in files if not f.exists()]
+        if missing:
+            ap.error("not found: " + ", ".join(missing))
+        print(compare_table([(f.stem, f) for f in files]))
+    elif a.cmd == "hits":
+        print(Project(a.dir).hits(a.bars, a.tracks, a.wav, a.live, a.grid, a.start_bar, progress=lambda m: print("·", m, file=sys.stderr)))
+    elif a.cmd == "devices":
+        from .live import LiveBridge
+        from .live.client import describe_device, device_text, devices_cache, live_lock
+        cache = json.loads(devices_cache().read_text()) if devices_cache().exists() else {}
+        if not a.names:
+            for d in cache.values():
+                print(f"{d['device']}: " + ", ".join(q["name"] for q in d["parameters"]))
+            print(f"{len(cache)} devices read so far — `ableton-use devices <name>` reads one from Live (what Live has: `ableton-use browse audio_effects`)")
+            return 0
+        for n in a.names:
+            hit = next((d for k, d in cache.items() if k.lower() == n.lower()), None)
+            if hit is None or a.refresh:
+                with live_lock("devices"), LiveBridge(port=a.port) as b:
+                    hit = describe_device(b, n)
+            print(device_text(hit) + "\n")
     elif a.cmd == "reference":
         from . import reference as ref
         if a.action == "add":

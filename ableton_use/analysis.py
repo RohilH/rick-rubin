@@ -492,3 +492,92 @@ def stereo_report(wav_path: str | Path, song: Song | None = None, bars: tuple[in
     issues = stereo_issues(rows)
     L += ["", "## Checks"] + ([str(i) for i in issues] or ["clean"])
     return "\n".join(L) + "\n"
+
+
+# ============================================================================ candidates side by side
+def compare_table(files: list[tuple[str, str | Path]]) -> str:
+    """Audio files side by side — candidates of an A/B run, two mixes, a solo before and after.
+    Loudness, peak, crest, share of energy per band, stereo side % (whole and above 4 kHz) and
+    transient contrast; from the second column on, each value is followed by its change against the first."""
+    from scipy.signal import butter, sosfilt
+
+    from .samples import read_audio
+    cols = []
+    for label, path in files:
+        sr, x = read_audio(path)
+        if x.ndim == 1:
+            x = x.reshape(-1, 1)
+        mono = x.mean(axis=1).astype(np.float64)
+        pk = float(np.abs(x).max() + 1e-12)
+        rms = float(np.sqrt(np.mean(mono ** 2)) + 1e-12)
+        spec = np.abs(np.fft.rfft(mono * np.hanning(len(mono)))) ** 2
+        f = np.fft.rfftfreq(len(mono), 1 / sr)
+        tot = spec[(f >= 20) & (f < 20000)].sum() + 1e-12
+        st = stereo_stats(x, sr)
+        hi = sosfilt(butter(4, [2000, 8000], btype="band", fs=sr, output="sos"), mono)
+        k = max(1, int(0.005 * sr))
+        env = np.abs(hi[: len(hi) // k * k]).reshape(-1, k).max(axis=1) + 1e-9
+        contrast = float(20 * np.log10(np.percentile(env, 99) / np.percentile(env, 50)))
+        d = {"seconds": len(x) / sr, "LUFS": loudness_lufs(x, sr), "peak dBFS": 20 * np.log10(pk), "crest dB": 20 * np.log10(pk / rms),
+             **{f"{nm} %": 100 * spec[(f >= lo) & (f < hi_)].sum() / tot for nm, lo, hi_ in BANDS},
+             "side %": st.side_pct, "side % >4 kHz": st.bands["high"][0], "side % <150 Hz": st.bands["low"][0],
+             "correlation": st.correlation, "mono loss LU": st.mono_loss_lu, "transient contrast dB": contrast,
+             "clipped samples": float((np.abs(x) >= 0.999).sum())}
+        cols.append((label, d))
+    L = ["| measure | " + " | ".join(lbl for lbl, _ in cols) + " |", "|---|" + "---|" * len(cols)]
+    for key in cols[0][1]:
+        base = cols[0][1][key]
+        cells = []
+        for i, (_, d) in enumerate(cols):
+            v = d[key]
+            fmt = "{:.0f}" if key == "clipped samples" else "{:.2f}" if key == "correlation" else "{:.1f}"
+            cell = fmt.format(v) if np.isfinite(v) else "—"
+            if i and key != "seconds" and np.isfinite(v) and np.isfinite(base) and abs(v - base) >= 0.05:
+                cell += f" ({v - base:+.1f})"
+            cells.append(cell)
+        L.append(f"| {key} | " + " | ".join(cells) + " |")
+    return "\n".join(L)
+
+
+def hit_levels(x: np.ndarray, sr: int, bpm: float, grid: int = 16, floor_db: float = -60.0) -> list[list[float | None]]:
+    """Peak level (dBFS) of every grid step of an audio file that starts on a downbeat, bar by bar;
+    None where nothing starts on the step (silence, or only the tail of an earlier hit). A step's window opens 15 ms early (so a hit placed a little ahead of the
+    grid still counts for its own step) and closes where the next one opens. This is how to check that the
+    accents and ghost notes that were written are the ones that come out."""
+    m = np.abs(x).max(axis=1) if x.ndim > 1 else np.abs(x)
+    step = 240.0 / bpm / grid
+    pre = 0.015
+    out: list[list[float | None]] = []
+    n_steps = int(len(m) / sr / step + 0.01)
+    for i in range(n_steps):
+        a, b = max(0, int((i * step - pre) * sr)), int(((i + 1) * step - pre) * sr)
+        seg = m[a:b]
+        # a hit, not the tail of the previous one: it must rise above what was sounding just before the step
+        db = float(20 * np.log10(seg.max() + 1e-12)) if len(seg) else -200.0
+        before = m[max(0, a - int(0.012 * sr)): a]
+        onset = len(seg) > 0 and (len(before) == 0 or seg.max() > 1.5 * before.max())
+        if i % grid == 0:
+            out.append([])
+        out[-1].append(round(db, 1) if db > floor_db and onset else None)
+    return [bar for bar in out if len(bar) == grid]
+
+
+def hits_text(levels: list[list[float | None]], first_bar: int = 1, velocities: list[list[int | None]] | None = None) -> str:
+    """hit_levels as a table: one line per bar, one column per step ('.' = nothing), then the spread between
+    the loudest and quietest hit. With `velocities` (the written note velocities on the same grid) each bar
+    gets a second line, so what was written can be read against what comes out."""
+    grid = len(levels[0]) if levels else 16
+    per_beat = grid // 4
+    head = "bar    " + "".join(f"{(str(i // per_beat + 1) if i % per_beat == 0 else '·'):>5}" for i in range(grid))
+    L = [head]
+    allv = [v for bar in levels for v in bar if v is not None]
+    for bi, bar in enumerate(levels):
+        L.append(f"{first_bar + bi:<4} dB " + "".join(f"{v:5.0f}" if v is not None else "    ." for v in bar))
+        if velocities and bi < len(velocities):
+            L.append("    vel " + "".join(f"{v:5d}" if v is not None else "    ." for v in velocities[bi]))
+    if allv:
+        L.append(f"{len(allv)} hits · loudest {max(allv):.1f} dBFS · quietest {min(allv):.1f} dBFS · spread {max(allv) - min(allv):.1f} dB "
+                 f"(ghost notes more than ~18 dB under the accents are close to inaudible in a mix)")
+    else:
+        L.append("no hits found")
+    return "\n".join(L)

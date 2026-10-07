@@ -72,6 +72,11 @@ ableton-use sample <dir> <file> --name N --loop --src-bpm B [--bars N] [--align 
 ableton-use eval <dir>                        # lint + preview render + measurements -> eval.md (exit 1 on errors)
 ableton-use eval <dir> --bars 33-48 --tracks Bass Kick   # zoom: measure a bar range and/or a solo of some tracks
 ableton-use capture <dir> [--bars 33-48] [--tracks Bass Kick]   # record Live's real output (real time), measure it, draw it
+ableton-use ab <dir> hatvel=35 hatvel=60 [--bars 81-88] [--tracks Hats] [--live] [--hits]   # candidates side by side (see Exploring)
+ableton-use --set bass=reese <command> ...    # any one command with an option() choice switched
+ableton-use compare <dir> a.wav b.wav ...     # audio files side by side (first is the baseline)
+ableton-use hits <dir> [file] --bars 81-84 --tracks Hats [--live]   # level of every 16th next to the written velocities
+ableton-use devices Compressor Saturator ...  # a Live device's parameters, ranges and choices, read from Live
 ableton-use reference compare <dir>           # the capture against released tracks: loudness, density, balance, width, pump, movement
 ableton-use eval <dir> --live [--bars ...]    # measurements of the last full capture (live.wav)
 ableton-use view <dir> --bars 65-80 [--tracks Bass Kick]
@@ -146,6 +151,23 @@ Great tracks come from comparing options, not from accepting the first one. You 
 - **Parts.** Write two or three genuinely different basslines / hooks / hat grooves as separate variables, swap them into the same section, and compare — score them against the vocal's syllables and notes, kick collisions, register, density. Keep the winner, note what the others taught you, delete the losers from `song.py` once the log has them.
 - **Arrangement and mix.** Change one thing at a time, capture the affected bars, compare numbers.
 
+**Candidates are `option()` choices.** Do not copy `song.py`, comment blocks in and out, or script your own build-push-capture loops: name the thing you are unsure about and let `ab` run the candidates.
+
+```python
+from ableton_use import option
+HAT_GHOST = option("hatghost", 60)          # the default is the song; a number, True/False or text
+BASS = option("bass", "muted")              # if BASS == "reese": ... elif BASS == "organ": ...
+```
+
+```
+ableton-use ab <dir> hatghost=35 hatghost=80 --bars 81-84 --tracks Hats --hits     # offline, seconds
+ableton-use ab <dir> bass=reese bass=organ wide:tops=pan,verb=short --bars 81-96 --live   # pushed to Live and recorded, one by one
+```
+
+`ab` prints one column per candidate (the song as it stands first, then each change against it): loudness, peak, crest, energy per band, side % overall / above 4 kHz / below 150 Hz, mono loss, transient contrast, clipped samples; `--hits` adds the per-step levels. Files land in `ab/<label>.wav` for `reference compare`, `spectrum`, `width --png`. After a `--live` run Live holds the song as it stands again. Keep a winner by making it the option's default; `score.md` lists every option and its value. `--set name=value` in front of any command (`ableton-use --set bass=reese capture <dir> --bars 81-96`) runs just that command with the choice switched.
+
+**Did the groove survive?** `hits` prints the peak level of every 16th step of a soloed track, bar by bar, with the velocities you wrote underneath — from the preview, a file, or Live (`--live`). Simpler's velocity curve is steep: accents and ghosts that look 40 velocity steps apart can come out 25 dB apart, and a ghost more than ~18 dB under the accent is gone in a mix. Read `hits --live` once for every velocity-driven part.
+
 Stop exploring a question when one option is clearly right for this track and you can say why — not when the first one passes lint.
 
 ## One vocabulary for how things sound
@@ -210,6 +232,8 @@ Tables are exact and stay the primary view; these pictures are for when a shape 
 `preview.wav` is this library's own sketch render. `capture` is the real thing: it adds a temporary audio track set to **Resampling**, records the arrangement from Live's master in real time (the whole song, or just `--bars`; `--tracks` solos them), copies the take into the project (`live.wav`, or `zoom/live_bars_...wav`), removes the track and restores solo/metronome/loop. It then prints the same loudness table as `eval`, the stereo report, and a `view` drawn from Live's audio. Capture after every push you intend to present, and judge mix decisions — sidechain depth, compressor settings, master clipping, width — on it rather than on the preview. A zoomed capture of 8 bars takes ~15 s; use those while iterating and one full capture at the end.
 
 ## Effects and compressors
+
+`ableton-use devices <name> ...` loads a device in Live on a throwaway track and prints every parameter with its range, its menu choices and its default (remembered in `.cache/live-devices.json`, so it works without Live afterwards). Read it before writing an effect instead of guessing names.
 
 A track's `effects` is an ordered list of Live audio effects placed after the instrument. Every parameter is set by the value Live displays, in Live's own names and units:
 
