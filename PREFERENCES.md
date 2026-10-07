@@ -35,13 +35,19 @@ The offline preview is a sketch. Decisions about sound, balance, clipping, sidec
 are made on audio recorded from Live (`ableton-use capture`), zoomed to the bars and tracks in
 question while iterating, and on a full capture before presenting.
 
-## 4. Read before writing around a sample
+## 4. Correct is not finished
+
+A track that passes every check can still sound flat. Before presenting, compare a Live capture with released
+tracks (`ableton-use reference compare`) and close the gaps it shows: loudness and density (a real master chain),
+width in the top end, development from one phrase to the next, groove that survives Live's velocity curve.
+
+## 5. Read before writing around a sample
 
 Before building parts around a vocal or melodic loop: `transcribe` it (which syllable lands where,
 and how many ms off), read its `notes` (pitches **with octave**, cents, key fit), and check its
 `width`. Fix or replace a sample that is late, out of tune or out of key before composing on top of it.
 
-## 5. Say what happened
+## 6. Say what happened
 
 Report what was tried, what was kept, what was rejected and why, what was measured, and what is
 still weak. No claim that something works in Live unless it was pushed and read back or captured.

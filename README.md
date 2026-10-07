@@ -138,6 +138,9 @@ ableton-use serum show "<preset>"                    # a preset as a text patch 
 ableton-use serum render "<preset>" --note F1 --out x.wav   # play a preset through the real plug-in, offline
 ```
 
+`ableton-use reference compare <dir>` measures a Live capture against released tracks you add with `reference add`
+(loudness, density, balance, width, pump, movement) — the check for "correct but flat".
+
 These exist so an agent can read what a producer would hear or see on a meter or a plug-in window. `transcribe` needs
 `pip install "ableton-use[transcribe]"` and `serum` needs `pip install "ableton-use[serum]"`; its result is cached next to the sample and printed in `score.md`.
 
@@ -174,6 +177,7 @@ ableton_use/
   pitch.py        the notes inside a single-voice sample
   midifx.py       MIDI effects: real devices in Live, emulated offline where deterministic
   pictures.py     imager, spectrum analyzer, Serum patch panel, sample comparer
+  reference.py    profile a mix and compare it with released reference tracks
   samples.py      sample import: pitch detection, tempo-conforming loops, 24-bit WAV io
   project.py      project folder, history/undo, project.md memory
 SKILL.md          agent instructions: principles, hard rules, process, house craft

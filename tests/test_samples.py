@@ -806,3 +806,49 @@ def test_sample_tracks_play_velocity_100_at_file_level(sampled, tmp_path):
     _, st = read_audio(r.stems["Kick"])
     _, src = read_audio(song.resolve("samples/kick.wav"))
     assert abs(np.abs(st).max() / np.abs(src).max() - 1.0) < 0.05
+
+
+# ---------------------------------------------------------------- reference profiles
+def test_reference_profile_and_compare(tmp_path):
+    from ableton_use.reference import Profile, compare, estimate_bpm, profile
+    rng = np.random.default_rng(0)
+    bpm, secs = 125.0, 40
+    n = secs * SR
+    t = np.arange(n) / SR
+    beat = 60 / bpm
+
+    def groove(width=0.0, vary=False, hat_db=-20.0, limit=False):
+        L = np.zeros(n)
+        R = np.zeros(n)
+        k = np.arange(int(0.25 * SR)) / SR
+        kick = np.sin(2 * np.pi * 50 * k) * np.exp(-k * 18)
+        hat = rng.standard_normal(int(0.05 * SR)) * np.exp(-np.arange(int(0.05 * SR)) / 300)
+        for b in range(int(secs / beat) - 1):
+            i = int(b * beat * SR)
+            L[i:i + len(kick)] += kick
+            R[i:i + len(kick)] += kick
+            j = i + int(beat / 2 * SR)
+            g = 10 ** (hat_db / 20) * (1.0 + (0.8 * np.sin(b / 5.0) if vary else 0.0))
+            hl, hr = hat * g, (rng.standard_normal(len(hat)) * np.exp(-np.arange(len(hat)) / 300) * g if width else hat * g)
+            L[j:j + len(hat)] += hl
+            R[j:j + len(hat)] += hl * (1 - width) + hr * width
+        if vary:                                               # a filtered pad that opens and closes
+            pad = np.sin(2 * np.pi * 440 * t) * 0.15 * (0.5 + 0.5 * np.sin(2 * np.pi * t / 7.0))
+            L += pad
+            R += pad
+        x = np.stack([L, R], 1)
+        x = np.tanh(x * 4) * 0.9 if limit else x * 0.3
+        return x.astype(np.float32)
+
+    write_wav24(tmp_path / "flat.wav", SR, groove())
+    write_wav24(tmp_path / "alive.wav", SR, groove(width=0.9, vary=True, hat_db=-12, limit=True))
+    flat, alive = profile(tmp_path / "flat.wav"), profile(tmp_path / "alive.wav")
+    assert abs(estimate_bpm(groove().mean(axis=1), SR) - bpm) < 0.6 and abs(flat.bpm - bpm) < 0.6
+    assert alive.drop_lufs > flat.drop_lufs + 6 and alive.crest_db < flat.crest_db - 3          # louder and denser
+    assert flat.side_pct < 0.1 and alive.side_bands["high"] > 20 and alive.side_bands["low"] < 1  # wide top, centred low end
+    assert alive.movement > flat.movement + 0.3 and flat.repeat_pct > 80 and alive.repeat_pct < flat.repeat_pct
+    assert alive.bands_db["high"] > flat.bands_db["high"] + 3 and flat.pump_db < -6
+    text = compare(flat, [alive, Profile(**{**alive.__dict__, "name": "alive2", "drop_lufs": alive.drop_lufs + 1, "movement": alive.movement + 0.2})])
+    assert "| loudness of the drop |" in text and "BELOW all references" in text
+    out = text.split("## Outside the references' range")[1]
+    assert "loudness of the drop" in out and "movement in the drop" in out and "stereo: side energy" in out

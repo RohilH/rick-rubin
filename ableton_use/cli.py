@@ -102,6 +102,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--bars", type=_bars, help="with --tracks or the mix: only this bar range")
     s.add_argument("--mix", action="store_true", help="include the full mix (live.wav if captured, else the preview)")
 
+    s = sub.add_parser("reference", help="measure a mix against released tracks: loudness, punch, balance, width, pump, movement")
+    s.add_argument("action", choices=["add", "list", "compare"])
+    s.add_argument("paths", nargs="*", help="add: audio files of released tracks in the genre · compare: a project folder, "
+                                            "optionally followed by a wav (default: its live.wav, else preview.wav)")
+
     s = sub.add_parser("transcribe", help="syllables of a vocal sample with bar.beat.sixteenth positions and ms offsets (cached; shown in score.md)")
     s.add_argument("dir")
     s.add_argument("sample", help="project-relative path, e.g. samples/vocal.wav")
@@ -309,6 +314,34 @@ def main(argv: list[str] | None = None) -> int:
         name = "spectrum_" + "+".join(lbl.split(" ")[0] for lbl, _ in sounds)[:80] + (f"_bars_{a.bars[0]:03d}-{a.bars[1]:03d}" if a.bars else "")
         title = "spectrum — " + ", ".join(lbl for lbl, _ in sounds) + (f" — bars {a.bars[0]}-{a.bars[1]}" if a.bars else "")
         print(spectrum_png(sounds, p.root / "views" / f"{name}.png", title, spans))
+    elif a.cmd == "reference":
+        from . import reference as ref
+        if a.action == "add":
+            if not a.paths:
+                ap.error("reference add needs audio files")
+            added = ref.add_references(a.paths, progress=lambda m: print("·", m, file=sys.stderr))
+            print(ref.SUMMARY_HEAD + "\n" + "\n".join(ref.summary_row(x) for x in added))
+            print(f"{len(ref.load_shelf())} references on the shelf ({ref.shelf_path()}); only measurements are stored, not audio")
+        elif a.action == "list":
+            shelf = ref.load_shelf()
+            print(ref.SUMMARY_HEAD + "\n" + "\n".join(ref.summary_row(x) for x in shelf))
+            print(f"{len(shelf)} references")
+        else:
+            shelf = ref.load_shelf()
+            if not shelf:
+                ap.error("no references yet: `ableton-use reference add <released tracks in the genre>`")
+            if not a.paths:
+                ap.error("reference compare needs a project folder")
+            proj = Project(a.paths[0])
+            wav = Path(a.paths[1]) if len(a.paths) > 1 else (proj.live_path if proj.live_path.exists() else proj.preview_path)
+            if not wav.exists():
+                wav = proj.root / a.paths[1]
+            if wav == proj.preview_path:
+                print("(no Live capture: comparing the offline preview — its loudness, punch and width are not Live's)\n")
+            song = proj.load()
+            text = ref.compare(ref.profile(wav, f"{song.title} ({wav.name})", bpm=song.bpm), shelf)
+            (proj.root / "reference.md").write_text(text)
+            print(text)
     elif a.cmd == "transcribe":
         from .transcribe import table, transcribe
         p = Project(a.dir)

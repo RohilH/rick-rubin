@@ -72,6 +72,7 @@ ableton-use sample <dir> <file> --name N --loop --src-bpm B [--bars N] [--align 
 ableton-use eval <dir>                        # lint + preview render + measurements -> eval.md (exit 1 on errors)
 ableton-use eval <dir> --bars 33-48 --tracks Bass Kick   # zoom: measure a bar range and/or a solo of some tracks
 ableton-use capture <dir> [--bars 33-48] [--tracks Bass Kick]   # record Live's real output (real time), measure it, draw it
+ableton-use reference compare <dir>           # the capture against released tracks: loudness, density, balance, width, pump, movement
 ableton-use eval <dir> --live [--bars ...]    # measurements of the last full capture (live.wav)
 ableton-use view <dir> --bars 65-80 [--tracks Bass Kick]
 ableton-use preview <dir> [--stems]
@@ -166,6 +167,27 @@ Every sample you import and every Serum preset in the index is measured the same
 - **Serum presets.** `ableton-use serum index` plays every installed preset once — on the key that makes it *sound* around C2, so a bass patch set two octaves down is measured in the same register as everything else — and records the same measurements plus patch facts and the patch's own octave offset; it takes a few minutes the first time and is incremental afterwards. Then `serum search bass subby mono --sort sub`, `serum search pad wide slow-attack --not reverb`, `serum search pluck snappy bright --folder Leads`, `serum search --like "BS Gunman Reese"`. Words can be character, folder, tag, `mono`/`poly`, engine (`wavetable sample granular spectral sub noise`), FX names (`reverb delay distortion chorus ...`) or macro names; `--not WORD ...` excludes. `oct -2` in the label means the patch sounds two octaves under the key you play: write its notes two octaves higher than you want to hear (or reset its oscillator octave with `serum_params`). Six presets do not render within 30 s and are left out.
 
 The words are coarse on purpose: use them to narrow 700 options to 10, then compare those 10 with `audition`, `serum view` and in context.
+
+## Does it sound like a record? `reference`
+
+`check` and `eval` answer "is it correct?". A correct track can still sound flat. `reference` answers the other question by measuring your mix against released tracks in the genre, on the things a listener reacts to:
+
+```
+ableton-use reference add ~/Music/some-released-track.wav ...   # once; any format; only measurements are kept, shared by all projects
+ableton-use reference list
+ableton-use reference compare <dir>                              # the Live capture (live.wav) against the shelf -> reference.md
+```
+
+It measures, on the loudest 30 seconds: loudness and crest (density), tonal balance per band and tilt, stereo side energy overall and per band, low-end pump (off-beat vs kick), transient contrast and top-end activity; and for development: how much the spectrum changes from one 2-bar block to the next, the share of near-identical blocks, texture changes per minute and loudness range. Each line is placed against the references' min–median–max, and whatever falls outside is listed.
+
+Use it on a capture after the arrangement and balance are right, and treat every "outside the references" line as a question to answer — fix it, or write down why this track should differ. What it has shown so far on this library's own output, i.e. the ways an agent's track tends to come out flat:
+
+- **Unmastered.** A balanced mix lands around −15 LUFS with 15 dB of crest; released tech house measures about −7.5 LUFS with 8.5 dB. Next to a record it is 7 dB quieter and far less dense, which reads as dull and weak however good the parts are. Finish with a master chain (`song.master_effects`) — gentle saturation, bus compression, then a Limiter doing real work — and iterate on captures until loudness and crest sit inside the references' range without clipped samples. Density on individual sounds (Saturator, compression on drums and bass) counts for more than limiter gain.
+- **Mono top end.** References carry 4–29 % side energy above 4 kHz; a track built from centred one-shots has 2–3 %. Pan hats, percussion and tops apart, use stereo samples and loops for them, send them to a short reverb, widen with Utility `Stereo Width` — and keep everything below 150 Hz centred.
+- **Too little change.** If movement sits at the bottom of the references' range or blocks repeat, the drop is a loop. Add and remove layers every 8 bars, vary fills, automate filters, change a Serum macro between sections (a second track with other `serum_params` works today), and make later drops measurably different from the first.
+- **Velocity is steep.** At a high `Vol < Vel`, ghost notes disappear: at 80 % a velocity-23 hit is 30 dB under a velocity-116 one. Check the dB range your velocities produce (see "Levels mean the same everywhere") rather than assuming.
+
+The offline preview cannot stand in for this: its stems are mono and it has no master chain. Compare captures.
 
 ## Pictures of the things producers look at
 
@@ -281,7 +303,7 @@ Presets are not samples: nothing here loads a third-party synth preset. Use a on
 4. **Write.** Run `ableton-use check <dir>` after every edit (it catches misspelled names, wrong arguments, broken structure and music-lint errors before anything is rendered). Compose the parts in `song.py` — drums, bass, harmony, hook, arrangement, groove — by hand, for this brief. Re-read `score.md` after each round of changes; zoom with `--bars/--tracks` when the question is local.
 5. **Self-eval.** `eval`. Read every line. Lint errors are correctness bugs — fix them. Audio checks catch contrast (breakdown ≥3 LU under the drop), a flat energy curve, a swamped or missing low end, dull tops. `view` the transitions that matter (end of build → drop, breakdown entry) and check: the gap before the drop, the roll, sidechain pump visible on the waveform, the filter sweep. Fix → re-eval, max 3 passes.
 6. **Present.** Summarise the arrangement and what you changed and why. Offer the preview.wav as a sketch (not the final sound).
-7. **Push and capture.** `status`, then `push` (`--replace` on re-push), then `capture` and judge the mix on Live's own audio (clipping on the master, sidechain depth, balance, width). Read the push report: missing instruments and unrouted sidechains are listed as warnings — tell the user exactly what to fix by hand.
+7. **Push and capture.** `status`, then `push` (`--replace` on re-push), then `capture` and judge the mix on Live's own audio (clipping on the master, sidechain depth, balance, width). Then `reference compare`, a master chain, and another round until nothing is outside the references without a reason. Read the push report: missing instruments and unrouted sidechains are listed as warnings — tell the user exactly what to fix by hand.
 8. **Persist.** `remember` with strategy, decisions, reasoning log, outstanding items.
 
 ## House craft (what the genre does — knowledge, not parts to copy)
@@ -304,4 +326,5 @@ Presets are not samples: nothing here loads a third-party synth preset. Use a on
 - Drops without a preceding tension section; static 32-bar loops with no fills or entries.
 - Chords or pads below C2 fighting the bass; polyphonic bass.
 - Looping eval forever — 3 passes, then report.
-- Treating preview.wav loudness as a master. It's a sketch; compare sections with each other only.
+- Treating preview.wav as the sound. It is a sketch for comparing sections; loudness, density and width are judged on a Live capture with `reference compare`.
+- Stopping at "0 errors". Lint and eval do not know whether it sounds like a record; `reference compare` is the closer you get to that question.
