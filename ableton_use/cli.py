@@ -14,7 +14,7 @@ def _bars(s: str) -> tuple[int, int]:
     return int(a), int(b or a)
 
 
-def main(argv: list[str] | None = None) -> int:
+def _main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="ableton-use", description="Agentic house-music production rendered to Ableton Live.")
     ap.add_argument("--set", action="append", default=[], metavar="NAME=VALUE", dest="options",
                     help="run this command with an `option()` choice of song.py switched (repeatable), e.g. --set bass=reese")
@@ -593,6 +593,15 @@ def main(argv: list[str] | None = None) -> int:
         with LiveBridge(port=a.port) as b:
             print(json.dumps(b.call("ping")))
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    from .live.client import BridgeError
+    try:
+        return _main(argv)
+    except BridgeError as e:                      # Live said no, or is not there: a message, not a stack trace
+        print(f"error (Live): {e}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

@@ -650,15 +650,26 @@ def capture_live(song: Song, bridge: LiveBridge, out_path: str | Path, bars: tup
         # Arrangement record starts from Live's start marker, not from the playhead
         setv("song.start_time", float(start))
         time.sleep(0.15)
-        lom("song.record_mode", op="set", value=True)       # Live starts playing and recording from the start marker
-        for _ in range(20):
-            if lom("song.is_playing"):
+        # Live starts playing and recording from the start marker. Right after a push it can still be busy
+        # loading samples and devices and ignore the first request, so the start is tried a few times.
+        for attempt in range(4):
+            lom("song.record_mode", op="set", value=True)
+            for _ in range(20):
+                if lom("song.is_playing"):
+                    break
+                time.sleep(0.1)
+            else:
+                lom("song.continue_playing", op="call")
+            time.sleep(1.2)
+            if lom("song.current_song_time") - start >= 0.05:
                 break
-            time.sleep(0.1)
+            say("Live's transport has not started yet — trying again")
+            bridge.call("transport", action="stop")
+            lom("song.record_mode", op="set", value=False)
+            time.sleep(1.5 * (attempt + 1))
+            lom("song.start_time", op="set", value=float(start))
+            time.sleep(0.2)
         else:
-            lom("song.continue_playing", op="call")
-        time.sleep(1.2)
-        if lom("song.current_song_time") - start < 0.05:
             raise BridgeError("Live's transport is not moving, so nothing can be recorded. That is what Live does when it has no "
                               "audio output device: choose one in Live > Settings > Audio (Output Device), then run capture again.")
         secs = (end - start + tail_beats) * 60.0 / song.bpm
