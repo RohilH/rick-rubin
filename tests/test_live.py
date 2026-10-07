@@ -226,3 +226,39 @@ def test_returns_sends_and_master_chain(tmp_path):
     assert [d.name for d in srv2.song.return_tracks[0].devices] == ["Delay"]
     s.track("Kick").sends = {"C": -6}
     assert any("send C has no return" in e for e in s.validate())
+
+
+def test_update_pushes_only_what_changed(tmp_path):
+    from ableton_use.live.client import update_song
+    s = Song("Upd", bpm=126, key="A minor")
+    s.base_dir = tmp_path
+    kick = s.add_track("Kick", "kick", volume_db=-6)
+    bass = s.add_track("Bass", "bass", volume_db=-9,
+                       effects=[{"device": "Saturator", "params": {"Drive": 3}},
+                                {"device": "Compressor", "sidechain": "Kick", "params": {"Threshold": -30}}])
+    s.master_effects = [{"device": "Limiter", "params": {"Ceiling": -0.3}}]
+    s.pattern("four", kick, "x...x...x...x...")
+    s.pattern("line", bass, "1.3 A0 0.4; 2.3 A0 0.4")
+    s.add_section("a", 4, kind="drop", parts={"Kick": "four", "Bass": "line"})
+    srv = FakeLiveServer()
+    with LiveBridge(port=srv.port) as b:
+        assert "full push" in update_song(s, b).mode
+        ids = {t.name: id(t) for t in srv.song.tracks}
+        assert update_song(s, b).mode == "nothing changed since the last push"
+        bass.effects[1]["params"]["Threshold"] = -20                # a parameter: set in place
+        rep = update_song(s, b)
+        assert rep.mode == "update — device parameters on Bass" and rep.clips == 0
+        assert {t.name: id(t) for t in srv.song.tracks} == ids
+        assert any("Threshold -20" in e for e in rep.tracks["Bass"]["effects"])
+        bass.volume_db = -12                                        # a fader
+        assert update_song(s, b).mode == "update — mixer on Bass"
+        s.master_effects[0]["params"]["Ceiling"] = -1.0
+        assert update_song(s, b).mode == "update — returns/master"
+        s.patterns["four"] = s.pattern("four2", kick, "x...x...x...x.x.")   # notes: that track is rebuilt, its dependants re-keyed
+        s.sections[0].parts["Kick"].pattern = "four2"
+        rep = update_song(s, b)
+        assert rep.mode == "update — rebuilt Kick, device parameters on Bass" and rep.clips == 1
+        now = {t.name: id(t) for t in srv.song.tracks}
+        assert now["Bass"] == ids["Bass"] and now["Kick"] != ids["Kick"] and len(now) == 2
+        srv.song.tracks[0].name = "renamed by hand"
+        assert "does not hold the last push" in update_song(s, b).mode

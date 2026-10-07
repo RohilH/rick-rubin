@@ -28,3 +28,4 @@ creative freedom, and render it into Ableton Live.
 - Remote-script code must stay Python 3.7 compatible.
 - Tests: `.venv/bin/pytest -q`. The generator in `tests/fixture_songs.py` is test data only.
 - Serum 2 is hosted in-process (`ableton_use/serum.py`, via pedalboard): a `.SerumPreset` is converted to plug-in state (same XferJson/zstd/CBOR container; header hash = MD5 of the zstd block). Do not write files into `~/Library` from this project without David's say-so.
+- **Ableton is the one source of truth for sound** (David, 2026-10-06: "are we building two sources of truth? i would rather lean on ableton where our own implementation might differ"). Do not add offline imitations of Live devices or of Live's mixer to the preview. When judging sound is slow, make the Live path faster (incremental push, short captures) instead.

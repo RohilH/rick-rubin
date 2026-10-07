@@ -74,6 +74,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("dir")
     s.add_argument("--replace", action="store_true", help="delete same-named tracks first")
     s.add_argument("--clean", action="store_true", help="also remove the set's untouched empty tracks (Live Intro/Lite have a 16/8-track limit)")
+    s.add_argument("--update", action="store_true", help="redo only what changed since the last push from this project: a changed part rebuilds "
+                   "its track, a changed device parameter / fader / send is set in place (full replace if the set no longer matches)")
     s.add_argument("--no-instruments", action="store_true")
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=9889)
@@ -279,7 +281,7 @@ def main(argv: list[str] | None = None) -> int:
     elif a.cmd == "view":
         print(Project(a.dir).view(a.bars, a.tracks))
     elif a.cmd == "push":
-        rep = Project(a.dir).push(a.host, a.port, a.replace, not a.no_instruments, clean=a.clean, progress=lambda m: print("·", m, file=sys.stderr))
+        rep = Project(a.dir).push(a.host, a.port, a.replace, not a.no_instruments, clean=a.clean, update=a.update, progress=lambda m: print("·", m, file=sys.stderr))
         print(rep.text())
     elif a.cmd == "sample":
         if a.loop and not a.src_bpm:

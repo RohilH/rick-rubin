@@ -262,11 +262,21 @@ class Project:
     def midi(self) -> list[Path]:
         return export_midi(self.load(), self.root / "midi")
 
-    def push(self, host: str = "127.0.0.1", port: int = 9889, replace: bool = False, load_instruments: bool = True, progress=None, clean: bool = False):
+    def push(self, host: str = "127.0.0.1", port: int = 9889, replace: bool = False, load_instruments: bool = True, progress=None,
+             clean: bool = False, update: bool = False):
+        """Build the arrangement in Live. update=True redoes only what changed since the last push from this
+        project (falling back to a full replace when the set no longer matches it)."""
         from .live import LiveBridge, push_song
-        from .live.client import live_lock
+        from .live.client import _fingerprints, live_lock, push_record, update_song
+        song = self.load()
         with live_lock(f"push {self.root.name}", progress=progress), LiveBridge(host, port) as b:
-            return push_song(self.load(), b, replace=replace, load_instruments=load_instruments, progress=progress, clean=clean)
+            if update:
+                return update_song(song, b, progress=progress, load_instruments=load_instruments)
+            rep = push_song(song, b, replace=replace, load_instruments=load_instruments, progress=progress, clean=clean)
+            rec = push_record(song)
+            if rec:
+                rec.write_text(json.dumps(_fingerprints(song), indent=1) + "\n")
+            return rep
 
     def add_sample(self, src: str | Path, name: str, *, loop: bool = False, src_bpm: float | None = None,
                    bars: int | None = None, align: str = "start", melodic: bool = False, end_at: float | None = None):
@@ -322,22 +332,22 @@ class Project:
             return song
 
         if live:
-            from .live import LiveBridge, capture_live, push_song
-            from .live.client import live_lock
+            from .live import LiveBridge, capture_live
+            from .live.client import live_lock, update_song
             with live_lock(f"ab {self.root.name}", progress=progress), LiveBridge(host, port) as b:
                 last = None
                 for label, values in variants:
-                    say(f"{label}: push")
-                    rep = push_song(build(values), b, replace=True, clean=True)
+                    song = build(values)
+                    rep = update_song(song, b)              # only what differs from what Live holds is redone
+                    say(f"{label}: {rep.mode}")
                     for w in rep.warnings:
                         say(f"{label}: ! {w}")
                     last = values
                     dst = self.root / "ab" / f"{label}.wav"
-                    capture_live(build(values), b, dst, bars=bars, tracks=tracks, progress=lambda m, label=label: say(f"{label}: {m}"))
+                    capture_live(song, b, dst, bars=bars, tracks=tracks, progress=lambda m, label=label: say(f"{label}: {m}"))
                     out.append((label, dst))
                 if last:                                   # leave Live holding the song as it stands
-                    say("restoring the song as it stands in Live")
-                    push_song(build({}), b, replace=True, clean=True)
+                    say("Live: back to the song as it stands — " + update_song(build({}), b).mode)
             return out
         for label, values in variants:
             say(f"{label}: render")

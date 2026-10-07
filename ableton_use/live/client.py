@@ -153,10 +153,12 @@ class PushReport:
     clips: int = 0
     notes: int = 0
     warnings: list[str] = field(default_factory=list)
+    mode: str = ""
 
     def text(self) -> str:
         n_tracks = sum(1 for k in self.tracks if k != "master" and not k.startswith("return "))
-        L = [f"Pushed to Live {self.live_version or '?'}: {n_tracks} tracks, {self.clips} clips, {self.notes} notes"]
+        L = [f"Pushed to Live {self.live_version or '?'}: {n_tracks} tracks, {self.clips} clips, {self.notes} notes"
+             + (f"  [{self.mode}]" if self.mode else "")]
         for name, info in self.tracks.items():
             L.append(f"  - {name}: instrument={info.get('instrument')!s}" + (f", sidechain={info['sidechain']}" if info.get("sidechain") else ""))
             L += [f"      midi fx: {e}" for e in info.get("midi_effects", [])]
@@ -170,7 +172,9 @@ class PushReport:
 
 
 def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instruments: bool = True,
-              sidechain: bool = True, clip_batch: int = 8, progress=None, clean: bool = False) -> PushReport:
+              sidechain: bool = True, clip_batch: int = 8, progress=None, clean: bool = False,
+              only: set[str] | None = None, fx_only: set[str] | None = None, mix_only: set[str] | None = None,
+              chains: bool = True, locators: bool = True) -> PushReport:
     """Render a Song into Live's Arrangement View.
 
     One MIDI track per Song track, one arrangement clip per (section, track),
@@ -178,13 +182,23 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
     mixer volume/pan, filter automation as clip envelopes, and kick-keyed
     sidechain compressors. Re-pushing with replace=True deletes tracks with the
     same names first (the Song is the source of truth; Live is a render target).
+
+    `only` rebuilds just those tracks and leaves the rest of the set alone (see `update_song`): `fx_only`
+    are further tracks whose device parameters are set again, `mix_only` ones whose fader/pan/sends are,
+    `chains` / `locators` say whether returns + master and the section locators are redone.
     """
+    part = only is not None
+    touch_fx = (only or set()) | (fx_only or set())
+    touch_mix = (only or set()) | (mix_only or set())
     say = progress or (lambda *_: None)
     rep = PushReport()
     rep.live_version = bridge.call("ping").get("live_version")
     state = bridge.call("get_state")
     existing = {t["name"] for t in state["tracks"]}
     clash = existing & {t.name for t in song.tracks}
+    if part:
+        clash &= only or set()
+        replace, clean = True, False
     if clash:
         if not replace:
             raise BridgeError(f"Live set already has tracks {sorted(clash)}; re-run with replace=True to overwrite them")
@@ -211,6 +225,8 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
 
     index: dict[str, int] = {}
     for t in song.tracks:
+        if part and t.name not in (only or ()):
+            continue
         say(f"track {t.name}")
         i = bridge.call("create_audio_track" if (t.audio or t.serum) else "create_midi_track", name=t.name, color_index=t.color)
         index[t.name] = i
@@ -272,9 +288,16 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
             for name, i in index.items():
                 rep.tracks[name]["index"] = i
 
+    if part:
+        index = {t["name"]: t["index"] for t in bridge.call("get_state")["tracks"] if t["name"] in {x.name for x in song.tracks}}
+        for t in song.tracks:
+            if t.name in (mix_only or ()) and t.name in index:
+                bridge.call("set_track", index=index[t.name], volume_db=t.volume_db, pan=t.pan, mute=t.mute)
     cmds = []
     for t in song.tracks:
         mine = [c for c in clips if c.track == t.name]
+        if part and t.name not in (only or ()):
+            continue
         if t.serum and mine:
             # one unwarped clip for the whole song: the part as Serum plays it, with any filter/volume moves rendered in
             from ..serum import track_stem
@@ -285,7 +308,7 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
             rep.notes += sum(len(c.notes) for c in mine)
     for c in clips:
         trk = song.track(c.track)
-        if trk.serum:
+        if trk.serum or (part and c.track not in (only or ())):
             continue
         if c.audio:
             # Live drops envelopes when an audio clip is copied to the arrangement, so filter and volume moves
@@ -319,6 +342,9 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
     # effects after the clips, so they sit behind any Auto Filter the envelopes added
     kick = next((t.name for t in song.tracks if t.role == "kick"), None)
     for t in song.tracks:
+        if part and t.name not in touch_fx:
+            continue
+        rep.tracks.setdefault(t.name, {"index": index.get(t.name)})
         chain = [dict(e) for e in t.effects]
         if sidechain and t.sidechain and kick and not any(e.get("sidechain") for e in chain):
             chain.append(dict(DEFAULT_SIDECHAIN, sidechain=kick))        # `sidechain: true` shorthand
@@ -341,7 +367,7 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
             rep.warnings += [f"{t.name}: {dev}: {m}" for m in r.get("errors", [])]
 
     # returns, sends and the master chain
-    letters = sorted(song.returns)
+    letters = sorted(song.returns) if chains else []
     if letters:
         need = max("ABCDEFGHIJKL".index(x) for x in letters) + 1
         try:
@@ -349,7 +375,7 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
         except BridgeError as err:
             rep.warnings.append(f"returns: could not create return tracks ({err})")
     for where, label, chain in ([(f"return:{'ABCDEFGHIJKL'.index(x)}", f"return {x}", song.returns[x]) for x in letters]
-                                + ([("master", "master", song.master_effects)] if song.master_effects else [])):
+                                + ([("master", "master", song.master_effects)] if song.master_effects and chains else [])):
         try:
             bridge.call("set_chain", track=where, devices=[e["device"] for e in chain],
                         name=chain[0]["device"] if chain and where != "master" else None)
@@ -365,9 +391,12 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
             rep.tracks[label] = {"instrument": "—", "effects": shown_all}
         except BridgeError as err:
             rep.warnings.append(f"{label}: {err}")
-    if letters or any(t.sends for t in song.tracks):
+    if song.returns or any(t.sends for t in song.tracks):
         n_returns = len(bridge.call("lom", path="song.return_tracks"))
         for t in song.tracks:
+            if part and t.name not in touch_mix:
+                continue
+            rep.tracks.setdefault(t.name, {"index": index.get(t.name)})
             for k in range(n_returns):
                 letter = "ABCDEFGHIJKL"[k]
                 try:
@@ -377,7 +406,7 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
                 except BridgeError as err:
                     rep.warnings.append(f"{t.name}: send {letter} failed ({err})")
 
-    for m in markers:
+    for m in (markers if locators else []):
         for _ in range(5):
             bridge.call("transport", action="seek", beat=m.start)
             if bridge.call("add_locator", name=m.name, beat=m.start).get("created"):
@@ -386,6 +415,99 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
             rep.warnings.append(f"locator {m.name!r} at beat {m.start:g} was not created")
     bridge.call("transport", action="stop", beat=0)
     bridge.call("show_message", text=f"ableton-use: pushed '{song.title}' ({rep.clips} clips)")
+    return rep
+
+
+# ============================================================================ pushing only what changed
+def _fingerprints(song: Song) -> dict:
+    """What decides each part of the Live set, so a later push can tell what it has to redo."""
+    import hashlib
+    clips, markers = song.flatten()
+    sounding, _ = song.flatten(sounding=True)
+    kick = next((t.name for t in song.tracks if t.role == "kick"), None)
+
+    def h(obj) -> str:
+        return hashlib.sha1(json.dumps(obj, sort_keys=True, default=str).encode()).hexdigest()[:12]
+
+    def mtime(rel):
+        try:
+            return song.resolve(rel).stat().st_mtime
+        except OSError:
+            return None
+
+    tracks = {}
+    for t in song.tracks:
+        d = t.to_json()
+        mix = {k: d.pop(k, None) for k in ("volume_db", "pan", "mute", "sends")}
+        chain = [dict(e) for e in d.pop("effects", [])]
+        if t.sidechain and kick and not any(e.get("sidechain") for e in chain):
+            chain.append(dict(DEFAULT_SIDECHAIN, sidechain=kick))
+        src = sounding if t.serum else clips
+        mine = [[c.name, c.start, c.length, [n.to_json() for n in c.notes], c.envelopes, c.audio, c.segments, mtime(c.audio) if c.audio else None]
+                for c in src if c.track == t.name]
+        tracks[t.name] = {
+            "content": h([d, mine, mtime(t.sample) if t.sample else None, song.bpm, song.total_bars if t.serum else None]),
+            "shape": h([[e["device"], e.get("sidechain"), e.get("sidechain_tap"), sorted(e.get("params") or {})] for e in chain]),
+            "params": h(chain), "mix": h(mix), "keys": sorted({e["sidechain"] for e in chain if e.get("sidechain")}),
+        }
+    return {"title": song.title, "order": [t.name for t in song.tracks], "tracks": tracks,
+            "chains": h([song.returns, song.master_effects]), "markers": h([[m.name, m.start] for m in markers]), "bpm": song.bpm}
+
+
+def push_record(song: Song) -> Path | None:
+    return Path(song.base_dir) / ".live-push.json" if song.base_dir is not None else None
+
+
+def update_song(song: Song, bridge: LiveBridge, progress=None, **kw) -> PushReport:
+    """Bring the Live set in line with `song`, redoing only what changed since the last push from this
+    project: a changed part or instrument rebuilds that one track, a changed device parameter is set in
+    place, a fader, pan or send is moved, returns and master are redone only when they differ. Falls back
+    to a full replace when there is no record of the last push or the set no longer matches it (tracks
+    renamed, removed or added by hand). The report says which it was."""
+    say = progress or (lambda *_: None)
+    rec_path = push_record(song)
+    new = _fingerprints(song)
+    old = None
+    if rec_path and rec_path.exists():
+        try:
+            old = json.loads(rec_path.read_text())
+        except ValueError:
+            old = None
+    why = None
+    if old is None:
+        why = "no record of an earlier push"
+    else:
+        live = [t["name"] for t in bridge.call("get_state")["tracks"]]
+        if sorted(n for n in live if n in old["tracks"]) != sorted(old["tracks"]) or old.get("title") != new["title"]:
+            why = "the Live set does not hold the last push any more"
+        elif old.get("bpm") != new["bpm"] or set(old["tracks"]) - set(new["tracks"]):
+            why = "tempo or track list changed"
+    if why:
+        say(f"full push ({why})")
+        rep = push_song(song, bridge, replace=True, clean=True, progress=progress, **kw)
+        rep.mode = f"full push — {why}"
+    else:
+        assert old is not None
+        o, n = old["tracks"], new["tracks"]
+        only = {k for k in n if k not in o or o[k]["content"] != n[k]["content"] or o[k]["shape"] != n[k]["shape"]}
+        fx = {k for k in n if k not in only and (o[k]["params"] != n[k]["params"] or set(n[k]["keys"]) & only)}
+        mix = {k for k in n if k not in only and o[k]["mix"] != n[k]["mix"]}
+        chains = old["chains"] != new["chains"]
+        marks = old["markers"] != new["markers"]
+        if not (only or fx or mix or chains or marks):
+            rep = PushReport(live_version=bridge.call("ping").get("live_version"))
+            rep.mode = "nothing changed since the last push"
+        else:
+            say("update: " + "; ".join(x for x in (f"rebuild {sorted(only)}" if only else "", f"devices {sorted(fx)}" if fx else "",
+                                                   f"mixer {sorted(mix)}" if mix else "", "returns/master" if chains else "",
+                                                   "locators" if marks else "") if x))
+            rep = push_song(song, bridge, replace=True, progress=progress, only=only, fx_only=fx, mix_only=mix, chains=chains,
+                            locators=marks, **kw)
+            rep.mode = "update — " + ", ".join(x for x in (
+                f"rebuilt {', '.join(sorted(only))}" if only else "", f"device parameters on {', '.join(sorted(fx))}" if fx else "",
+                f"mixer on {', '.join(sorted(mix))}" if mix else "", "returns/master" if chains else "", "locators" if marks else "") if x)
+    if rec_path:
+        rec_path.write_text(json.dumps(new, indent=1) + "\n")
     return rep
 
 
