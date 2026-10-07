@@ -168,6 +168,9 @@ class PushReport:
             if info.get("sends"):
                 L.append("      sends: " + ", ".join(info["sends"]))
         L += [f"  ! {w}" for w in self.warnings]
+        if any("no sidechain source" in w and w.rstrip().endswith("among ['(none)']") for w in self.warnings):
+            L.append("  ! no track offers any routing: Live's audio engine is off, so the sidechains are NOT connected. Choose an Output "
+                     "Device in Live > Settings > Audio, then push again.")
         return "\n".join(L)
 
 
