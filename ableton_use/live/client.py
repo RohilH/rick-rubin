@@ -601,8 +601,31 @@ def _baked_stem(song: Song, stem: Path, regions: list[tuple[float, dict]]) -> Pa
 CAPTURE_TRACK = "ableton-use capture"
 
 
+class CaptureDisturbed(BridgeError):
+    """Someone touched Live during a take (transport, playhead, tempo, a solo/mute/fader): the take is not the song."""
+
+
 def capture_live(song: Song, bridge: LiveBridge, out_path: str | Path, bars: tuple[int, int] | None = None,
-                 tracks: list[str] | None = None, tail_beats: float = 2.0, progress=None) -> dict:
+                 tracks: list[str] | None = None, tail_beats: float = 2.0, progress=None, tries: int = 3) -> dict:
+    """`_capture_once`, done again when the take was disturbed — a person pressing stop or play, moving the
+    playhead, changing the tempo or touching a solo, mute, fader or pan while Live was recording. A disturbed
+    take is thrown away rather than measured."""
+    import time
+    say = progress or (lambda *_: None)
+    for attempt in range(tries):
+        try:
+            return _capture_once(song, bridge, out_path, bars, tracks, tail_beats, progress)
+        except CaptureDisturbed as e:
+            if attempt == tries - 1:
+                raise BridgeError(f"gave up after {tries} takes: each one was disturbed ({e}). Leave Live's transport and mixer "
+                                  "alone while a capture runs.") from e
+            say(f"take thrown away — {e}; recording it again in a moment")
+            time.sleep(3.0)
+    raise AssertionError("unreachable")
+
+
+def _capture_once(song: Song, bridge: LiveBridge, out_path: str | Path, bars: tuple[int, int] | None = None,
+                  tracks: list[str] | None = None, tail_beats: float = 2.0, progress=None) -> dict:
     """Record what Live itself plays — the pushed arrangement through Live's
     instruments, effects, sidechains and master — into a WAV, in real time.
 
@@ -639,7 +662,15 @@ def capture_live(song: Song, bridge: LiveBridge, out_path: str | Path, bars: tup
     ci = bridge.call("create_audio_track", name=CAPTURE_TRACK)
     tp = f"song.tracks[{ci}]"
     try:
-        lom(tp + ".input_routing_type", op="set", value="Resampling", choose=tp + ".available_input_routing_types")
+        try:
+            lom(tp + ".input_routing_type", op="set", value="Resampling", choose=tp + ".available_input_routing_types")
+        except BridgeError as e:
+            if "Resampling" in str(e):
+                raise BridgeError("Live's audio engine is off, so there is nothing to record from (tracks have no input/output routing). "
+                                  "This happens when the audio device Live was using goes away or the device list changes (a monitor, "
+                                  "headphones, a call app). Fix it in Live > Settings > Audio: choose an Output Device (or switch the "
+                                  "engine back on), then run the capture again.") from e
+            raise
         for i, n in enumerate(names):
             if lom(f"song.tracks[{i}].arm"):
                 setv(f"song.tracks[{i}].arm", False)
@@ -674,11 +705,47 @@ def capture_live(song: Song, bridge: LiveBridge, out_path: str | Path, bars: tup
                               "audio output device: choose one in Live > Settings > Audio (Output Device), then run capture again.")
         secs = (end - start + tail_beats) * 60.0 / song.bpm
         say(f"recording bars {b0}-{b1} from Live ({secs:.0f} s, real time)")
+        # what must not change while Live records: the mixer of every track, the master fader and the tempo
+        watch = ["song.tempo", "song.master_track.mixer_device.volume.value"]
+        for i in range(len(names)):
+            watch += [f"song.tracks[{i}].solo", f"song.tracks[{i}].mute", f"song.tracks[{i}].mixer_device.volume.value",
+                      f"song.tracks[{i}].mixer_device.panning.value"]
+
+        def mixer():
+            return [r.get("result") for r in bridge.batch([("lom", {"path": w}) for w in watch])]
+
+        def changed(now):
+            for w, a, b in zip(watch, before, now):
+                if a != b and not (isinstance(a, float) and isinstance(b, float) and abs(a - b) < 1e-4):
+                    k = w.split("[")[1].split("]")[0] if "[" in w else None
+                    return (names[int(k)] + " " if k is not None else "") + w.rsplit(".", 2)[-2 if w.endswith(".value") else -1]
+            return None
+
+        before = mixer()
         t_end = time.time() + secs + 20
-        while lom("song.current_song_time") < end + tail_beats:
-            if time.time() > t_end or not lom("song.is_playing"):
-                raise BridgeError("Live stopped or stalled during the capture")
+        wall0, pos0 = time.time(), lom("song.current_song_time")
+        prev, n_poll = pos0, 0
+        while True:
+            pos = lom("song.current_song_time")
+            if pos >= end + tail_beats:
+                break
+            if not lom("song.is_playing"):
+                raise CaptureDisturbed("Live's transport was stopped")
+            expected = pos0 + (time.time() - wall0) * song.bpm / 60.0
+            if pos < prev - 0.05 or abs(pos - expected) > 3.0:
+                raise CaptureDisturbed(f"the playhead jumped (at beat {pos:.1f}, expected about {expected:.1f})")
+            if time.time() > t_end:
+                raise BridgeError("Live stalled during the capture")
+            prev = pos
+            n_poll += 1
+            if n_poll % 4 == 0:
+                what = changed(mixer())
+                if what:
+                    raise CaptureDisturbed(f"{what} was changed")
             time.sleep(0.25)
+        what = changed(mixer())
+        if what:
+            raise CaptureDisturbed(f"{what} was changed")
         bridge.call("transport", action="stop")
         lom("song.record_mode", op="set", value=False)
         time.sleep(0.5)
