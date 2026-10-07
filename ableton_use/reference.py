@@ -167,8 +167,12 @@ def profile(path: str | Path, name: str | None = None, bpm: float | None = None)
         movement, repeat = 0.0, 100.0
     whole = blocks(mono)
     if len(whole) > 2:
-        dw = np.sqrt(np.mean(np.diff(whole, axis=0) ** 2, axis=1))                                         # includes level changes
-        novelty = float((dw > 3.0).sum() / (len(mono) / sr / 60.0))
+        step = np.diff(whole, axis=0)
+        dw = np.sqrt(np.mean(step ** 2, axis=1))                                                           # includes level changes
+        shape = step - step.mean(axis=1, keepdims=True)                                                    # the same with the level change taken out:
+        ds = np.sqrt(np.mean(shape ** 2, axis=1))                                                          # a layer swapped for another at equal loudness
+        swapped = (np.abs(shape) > 4.0).sum(axis=1) >= 2
+        novelty = float(((dw > 3.0) | (ds > 2.0) | swapped).sum() / (len(mono) / sr / 60.0))
     else:
         novelty = 0.0
 
@@ -239,6 +243,21 @@ def compare(mix: Profile, refs: list[Profile]) -> str:
     L += ["", "## Outside the references' range"]
     L += [f"- {label}: {v:.1f} {unit} here, {med:.1f} {unit} typical ({v - med:+.1f})" for label, v, med, unit in out_of_range] or ["nothing"]
     return "\n".join(L) + "\n"
+
+
+def compare_many(mixes: list[Profile], refs: list[Profile]) -> str:
+    """Several candidates against the references in one table: a column per candidate, '!' where a value is
+    outside the references' range."""
+    L = ["| measure | " + " | ".join(m.name for m in mixes) + " | references (min – median – max) |", "|---|" + "---|" * (len(mixes) + 1)]
+    for key, label, _, unit in METRICS:
+        r = np.array([_get(p, key) for p in refs])
+        lo, med, hi = r.min(), np.median(r), r.max()
+        cells = []
+        for m in mixes:
+            v = _get(m, key)
+            cells.append(f"{v:.1f}" + (" !" if v < lo or v > hi else ""))
+        L.append(f"| {label}{' (' + unit + ')' if unit else ''} | " + " | ".join(cells) + f" | {lo:.1f} – {med:.1f} – {hi:.1f} |")
+    return "\n".join(L)
 
 
 # ============================================================================ a shared shelf of reference profiles

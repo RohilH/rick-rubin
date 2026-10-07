@@ -4,7 +4,7 @@
 import math
 import traceback
 
-BRIDGE_VERSION = "0.7.0"
+BRIDGE_VERSION = "0.7.1"
 
 FILTER_PARAM_NAMES = ("Frequency", "Filter Freq", "Filter 1 Freq", "Filter Frequency", "Cutoff", "Filter Cutoff", "Freq")
 BROWSER_CATEGORIES = ("drums", "instruments", "sounds", "audio_effects", "user_library", "packs")
@@ -158,7 +158,12 @@ def norm_to_param(param, v):
 
 
 def _rname(x):
-    return getattr(x, "display_name", None) or (x.get("display_name") if isinstance(x, dict) else str(x))
+    n = getattr(x, "display_name", None)
+    if n is None and isinstance(x, dict):
+        n = x.get("display_name")
+    if n is None:
+        return str(x)
+    return n or "(none)"            # no audio engine: Live offers one routing type with an empty name
 
 
 class Handlers(object):

@@ -377,7 +377,13 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
     for where, label, chain in ([(f"return:{'ABCDEFGHIJKL'.index(x)}", f"return {x}", song.returns[x]) for x in letters]
                                 + ([("master", "master", song.master_effects)] if song.master_effects and chains else [])):
         try:
-            bridge.call("set_chain", track=where, devices=[e["device"] for e in chain],
+            want = [e["device"] for e in chain]
+            have = _chain_names(bridge, where)
+            if have != want[: len(have)]:
+                # devices can only be added at the end, so a chain that is not a prefix of the wanted one
+                # (other devices, or the right ones in another order) is cleared and built again in order
+                bridge.call("set_chain", track=where, devices=[])
+            bridge.call("set_chain", track=where, devices=want,
                         name=chain[0]["device"] if chain and where != "master" else None)
             seen: dict[str, int] = {}
             shown_all = []
@@ -419,6 +425,15 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
     bridge.call("transport", action="stop", beat=0)
     bridge.call("show_message", text=f"ableton-use: pushed '{song.title}' ({rep.clips} clips)")
     return rep
+
+
+def _chain_names(bridge: LiveBridge, where: str) -> list[str]:
+    """Device names on the master ('master') or a return ('return:N'), in order."""
+    path = "song.master_track.devices" if where == "master" else f"song.return_tracks[{int(where.split(':')[1])}].devices"
+    try:
+        return [str(x) for x in bridge.call("lom", path=path)]
+    except BridgeError:
+        return []
 
 
 # ============================================================================ pushing only what changed
@@ -496,6 +511,17 @@ def update_song(song: Song, bridge: LiveBridge, progress=None, **kw) -> PushRepo
         fx = {k for k in n if k not in only and (o[k]["params"] != n[k]["params"] or set(n[k]["keys"]) & only)}
         mix = {k for k in n if k not in only and o[k]["mix"] != n[k]["mix"]}
         chains = old["chains"] != new["chains"]
+        if not chains:                                       # someone may have changed the master or a return by hand
+            wanted = [("master", [e["device"] for e in song.master_effects])] + [
+                (f"return:{'ABCDEFGHIJKL'.index(x)}", [e["device"] for e in song.returns[x]]) for x in sorted(song.returns)]
+            chains = any(want and _chain_names(bridge, where) != want for where, want in wanted)
+        if only and only >= set(n):
+            say("full push (every track changed)")
+            rep = push_song(song, bridge, replace=True, clean=True, progress=progress, **kw)
+            rep.mode = "full push — every track changed"
+            if rec_path:
+                rec_path.write_text(json.dumps(new, indent=1) + "\n")
+            return rep
         marks = old["markers"] != new["markers"]
         if not (only or fx or mix or chains or marks):
             rep = PushReport(live_version=bridge.call("ping").get("live_version"))

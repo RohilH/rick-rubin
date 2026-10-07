@@ -120,6 +120,8 @@ def _main(argv: list[str] | None = None) -> int:
     s.add_argument("--live", action="store_true", help="push each candidate to Live and record it (real time) instead of the offline preview")
     s.add_argument("--no-base", action="store_true", help="leave out the song as it stands (it is the first column otherwise)")
     s.add_argument("--hits", action="store_true", help="also print the per-step hit levels of each candidate")
+    s.add_argument("--reference", action="store_true", help="also put each candidate against the reference tracks (movement, texture changes, "
+                   "loudness, width ...): arrangement candidates want this, over 16 bars or more")
     s.add_argument("--port", type=int, default=9889)
 
     s = sub.add_parser("compare", help="audio files side by side: loudness, crest, bands, width, transients (first file is the baseline)")
@@ -382,6 +384,15 @@ def _main(argv: list[str] | None = None) -> int:
             print(f"- {label}: " + (", ".join(f"{k}={v}" for k, v in vals.items()) or "the song as it stands"))
         print()
         print(compare_table([(lbl, f) for lbl, f in files]))
+        if a.reference:
+            from . import reference as ref
+            shelf = ref.load_shelf()
+            if not shelf:
+                print("\n(no references on the shelf: `ableton-use reference add <released tracks>`)")
+            else:
+                print("\nagainst the reference tracks ('!' = outside their range" + ("" if a.live else "; offline preview: only the arrangement lines "
+                      "— movement, repeats, texture changes — mean anything, the sound lines need --live") + ")")
+                print(ref.compare_many([ref.profile(f, lbl, bpm=song.bpm) for lbl, f in files], shelf))
         if a.hits:
             for label, f in files:
                 sr, x = read_audio(f)
@@ -440,7 +451,8 @@ def _main(argv: list[str] | None = None) -> int:
                 print("(no Live capture: comparing the offline preview — its loudness, punch and width are not Live's)\n")
             song = proj.load()
             text = ref.compare(ref.profile(wav, f"{song.title} ({wav.name})", bpm=song.bpm), shelf)
-            (proj.root / "reference.md").write_text(text)
+            if wav.resolve() == proj.live_path.resolve():       # reference.md is the reading of the full Live capture only
+                (proj.root / "reference.md").write_text(text)
             print(text)
     elif a.cmd == "transcribe":
         from .transcribe import table, transcribe

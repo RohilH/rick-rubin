@@ -157,7 +157,7 @@ Great tracks come from comparing options, not from accepting the first one. You 
 
 ```python
 from ableton_use import option
-HAT_GHOST = option("hatghost", 60)          # the default is the song; a number, True/False or text
+HAT_GHOST = option("hatghost", 60)          # the default is the song; a switched value takes the default's type, so give numbers as numbers (6.0, not "6")
 BASS = option("bass", "muted")              # if BASS == "reese": ... elif BASS == "organ": ...
 ```
 
@@ -166,7 +166,7 @@ ableton-use ab <dir> hatghost=35 hatghost=80 --bars 81-84 --tracks Hats --hits  
 ableton-use ab <dir> bass=reese bass=organ wide:tops=pan,verb=short --bars 81-96 --live   # pushed to Live and recorded, one by one
 ```
 
-`ab` prints one column per candidate (the song as it stands first, then each change against it): loudness, peak, crest, energy per band, side % overall / above 4 kHz / below 150 Hz, mono loss, transient contrast, clipped samples; `--hits` adds the per-step levels. Files land in `ab/<label>.wav` for `reference compare`, `spectrum`, `width --png`. After a `--live` run Live holds the song as it stands again. Keep a winner by making it the option's default; `score.md` lists every option and its value. `--set name=value` in front of any command (`ableton-use --set bass=reese capture <dir> --bars 81-96`) runs just that command with the choice switched.
+`ab` prints one column per candidate (the song as it stands first, then each change against it): loudness, peak, crest, energy per band, side % overall / above 4 kHz / below 150 Hz, mono loss, transient contrast, clipped samples; `--hits` adds the per-step levels, `--reference` puts every candidate against the reference tracks (movement, repeats and texture changes are how arrangement candidates differ — plain loudness will not show a layer swapped for another). Files land in `ab/<label>.wav` for `reference compare`, `spectrum`, `width --png`. After a `--live` run Live holds the song as it stands again. Keep a winner by making it the option's default; `score.md` lists every option and its value. `--set name=value` in front of any command (`ableton-use --set bass=reese capture <dir> --bars 81-96`) runs just that command with the choice switched.
 
 **Did the groove survive?** `hits` prints the peak level of every 16th step of a soloed track, bar by bar, with the velocities you wrote underneath — from the preview, a file, or Live (`--live`). Simpler's velocity curve is steep: accents and ghosts that look 40 velocity steps apart can come out 25 dB apart, and a ghost more than ~18 dB under the accent is gone in a mix. Read `hits --live` once for every velocity-driven part.
 
@@ -202,7 +202,7 @@ ableton-use reference list
 ableton-use reference compare <dir>                              # the Live capture (live.wav) against the shelf -> reference.md
 ```
 
-It measures, on the loudest 30 seconds: loudness and crest (density), tonal balance per band and tilt, stereo side energy overall and per band, low-end pump (off-beat vs kick), transient contrast and top-end activity; and for development: how much the spectrum changes from one 2-bar block to the next, the share of near-identical blocks, texture changes per minute and loudness range. Each line is placed against the references' min–median–max, and whatever falls outside is listed.
+It measures, on the loudest 30 seconds: loudness and crest (density), tonal balance per band and tilt, stereo side energy overall and per band, low-end pump (off-beat vs kick), transient contrast and top-end activity; and for development: how much the spectrum changes from one 2-bar block to the next, the share of near-identical blocks, texture changes per minute (2-bar blocks that differ clearly from the one before, in level or — with the level taken out — in which bands carry the energy, so a layer swapped for another at equal loudness counts) and loudness range. Each line is placed against the references' min–median–max, and whatever falls outside is listed.
 
 Use it on a capture after the arrangement and balance are right, and treat every "outside the references" line as a question to answer — fix it, or write down why this track should differ. What it has shown so far on this library's own output, i.e. the ways an agent's track tends to come out flat:
 
