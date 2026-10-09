@@ -263,12 +263,20 @@ class Project:
         return export_midi(self.load(), self.root / "midi")
 
     def push(self, host: str = "127.0.0.1", port: int = 9889, replace: bool = False, load_instruments: bool = True, progress=None,
-             clean: bool = False, update: bool = False):
-        """Build the arrangement in Live. update=True redoes only what changed since the last push from this
-        project (falling back to a full replace when the set no longer matches it)."""
+             clean: bool = False, update: bool = False, daw: str = "live", automation: bool = False):
+        """Build the arrangement in the DAW. daw="live" (Ableton, the default): update=True redoes only what changed
+        since the last push from this project (falling back to a full replace when the set no longer matches it).
+        daw="logic": the song is rebuilt as a Logic Pro project (every push is a full one; automation=True also
+        writes the sections' volume automation, in real time)."""
+        song = self.load()
+        if daw == "logic":
+            from .logic import LogicBridge
+            from .logic import push_song as push_logic
+            from .live.client import live_lock
+            with live_lock(f"push {self.root.name}", progress=progress, port=port), LogicBridge(progress=progress) as b:
+                return push_logic(song, b, replace=replace, load_instruments=load_instruments, progress=progress, automation=automation)
         from .live import LiveBridge, push_song
         from .live.client import _fingerprints, live_lock, push_record, update_song
-        song = self.load()
         with live_lock(f"push {self.root.name}", progress=progress, port=port), LiveBridge(host, port) as b:
             if update:
                 return update_song(song, b, progress=progress, load_instruments=load_instruments)
@@ -351,10 +359,15 @@ class Project:
         return wav, analysis.measure(wav, song, bars=bars)
 
     def capture(self, bars: tuple[int, int] | None = None, tracks: list[str] | None = None,
-                host: str = "127.0.0.1", port: int = 9889, progress=None) -> dict:
-        """Record the pushed arrangement from Live's master into live.wav (or zoom/live_bars_...wav)."""
-        from .live import LiveBridge, capture_live
+                host: str = "127.0.0.1", port: int = 9889, progress=None, daw: str = "live") -> dict:
+        """Record the pushed arrangement from the DAW's master into live.wav (or zoom/live_bars_...wav): Live
+        records in real time, Logic bounces offline."""
         from .live.client import live_lock
+        if daw == "logic":
+            from .logic import LogicBridge, capture_logic
+            with live_lock(f"capture {self.root.name}", progress=progress, port=port), LogicBridge(progress=progress) as b:
+                return capture_logic(self.load(), b, self.zoom_path("live", bars, tracks), bars=bars, tracks=tracks, progress=progress)
+        from .live import LiveBridge, capture_live
         with live_lock(f"capture {self.root.name}", progress=progress, port=port), LiveBridge(host, port) as b:
             return capture_live(self.load(), b, self.zoom_path("live", bars, tracks), bars=bars, tracks=tracks, progress=progress)
 

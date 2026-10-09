@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -18,6 +19,8 @@ def _main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="rick-rubin", description="Agentic house-music production rendered to Ableton Live.")
     ap.add_argument("--set", action="append", default=[], metavar="NAME=VALUE", dest="options",
                     help="run this command with an `option()` choice of song.py switched (repeatable), e.g. --set bass=reese")
+    ap.add_argument("--daw", choices=["live", "logic"], default=os.environ.get("RICK_RUBIN_DAW", "live"),
+                    help="which DAW push/capture/status talk to: Ableton Live (default) or Logic Pro (also: RICK_RUBIN_DAW=logic)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("init", help="start a project: an empty song.py to write the song in")
@@ -77,6 +80,7 @@ def _main(argv: list[str] | None = None) -> int:
     s.add_argument("--update", action="store_true", help="redo only what changed since the last push from this project: a changed part rebuilds "
                    "its track, a changed device parameter / fader / send is set in place (full replace if the set no longer matches)")
     s.add_argument("--no-instruments", action="store_true")
+    s.add_argument("--automation", action="store_true", help="Logic: also write the sections' volume automation (played in real time)")
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=9889)
 
@@ -99,7 +103,7 @@ def _main(argv: list[str] | None = None) -> int:
     s.add_argument("--end-at", type=float, help="seconds into the loop to cut at first; with --align end, puts that moment (a riser's peak) on the next downbeat")
     s.add_argument("--melodic", action="store_true", help="measure the one-shot's pitch (sample_root)")
 
-    s = sub.add_parser("width", help="stereo image report: correlation, side %, mono loss, per band and per section")
+    s = sub.add_parser("width", help="stereo image report: correlation, side %%, mono loss, per band and per section")
     s.add_argument("dir")
     s.add_argument("wav", nargs="?", help="file to analyse (default: live.wav if captured, else preview.wav); a sample path gets a whole-file report")
     s.add_argument("--bars", type=_bars, help="zoom in on a bar range of the mix")
@@ -218,8 +222,6 @@ def _main(argv: list[str] | None = None) -> int:
 
     a = ap.parse_args(argv)
     if a.options:
-        import os
-
         from . import options
         os.environ[options.ENV] = json.dumps({**options.active(), **options.parse(a.options)})
 
@@ -257,11 +259,11 @@ def _main(argv: list[str] | None = None) -> int:
     elif a.cmd == "capture":
         from .analysis import measure, measurement_table, stereo_report
         p = Project(a.dir)
-        r = p.capture(a.bars, a.tracks, port=a.port, progress=lambda m: print("·", m, file=sys.stderr))
+        r = p.capture(a.bars, a.tracks, port=a.port, progress=lambda m: print("·", m, file=sys.stderr), daw=a.daw)
         song = p.load()
         m = measure(r["path"], song, bars=a.bars, file_start_bar=r["bars"][0])
         what = ", ".join(x for x in (f"bars {r['bars'][0]}-{r['bars'][1]}", "solo " + " ".join(a.tracks) if a.tracks else "") if x)
-        print(f"# Live capture — {what}\n{r['path']}  ({r['seconds']:.1f} s, {m.integrated_lufs:.1f} LUFS, peak {m.peak_db:.1f} dBFS, "
+        print(f"# {"Logic bounce" if a.daw == "logic" else "Live capture"} — {what}\n{r['path']}  ({r['seconds']:.1f} s, {m.integrated_lufs:.1f} LUFS, peak {m.peak_db:.1f} dBFS, "
               f"{m.clipped_samples} clipped samples)\n")
         print("\n".join(measurement_table(m)))
         print("\n".join(str(i) for i in m.issues))
@@ -289,7 +291,8 @@ def _main(argv: list[str] | None = None) -> int:
     elif a.cmd == "view":
         print(Project(a.dir).view(a.bars, a.tracks))
     elif a.cmd == "push":
-        rep = Project(a.dir).push(a.host, a.port, a.replace, not a.no_instruments, clean=a.clean, update=a.update, progress=lambda m: print("·", m, file=sys.stderr))
+        rep = Project(a.dir).push(a.host, a.port, a.replace, not a.no_instruments, clean=a.clean, update=a.update, daw=a.daw,
+                                  automation=a.automation, progress=lambda m: print("·", m, file=sys.stderr))
         print(rep.text())
     elif a.cmd == "watch":
         try:
@@ -600,6 +603,10 @@ def _main(argv: list[str] | None = None) -> int:
         from .live import install_bridge
         t = install_bridge(a.dest)
         print(f"installed to {t}\nRestart Live, then Settings > Link, Tempo & MIDI > Control Surface: RickRubin")
+    elif a.cmd == "status" and a.daw == "logic":
+        from .logic import LogicBridge
+        with LogicBridge(progress=lambda m: print("·", m, file=sys.stderr)) as b:
+            print(json.dumps(b.ping()))
     elif a.cmd == "status":
         from .live import LiveBridge
         with LiveBridge(port=a.port) as b:
