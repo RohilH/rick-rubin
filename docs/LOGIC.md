@@ -76,6 +76,10 @@ Parameter names are Logic's: what the plug-in window shows ("Threshold", "Ratio"
 "Make Up", "Knee"), or the abbreviation the Mackie Control LCD uses ("Thrs", "Rel", "AutRel"). Units are
 the displayed ones (dB, ms, Hz, %, `4:1` ratios as 4). Options are given by name ("RMS", "On").
 
+Logic's Compressor adds make-up gain of its own ("Auto Gain", -12 dB by default), which Live's does not: a track
+ducked with `sidechain: true` comes out *louder* on average than it went in. Set the fader with that in mind, or
+put `"Auto Gain": "Off"` in an explicit Compressor's params.
+
 Logic patches come with their own inserts (a Channel EQ, a compressor, a limiter…). They stay — they are
 part of the sound Logic's patch designers made — and the report lists them as `patch fx`, so the agent
 knows what is on the strip before its own `effects`.
