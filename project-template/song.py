@@ -3,7 +3,7 @@
 The whole song lives in this file; every other command rebuilds from it.
 Notation and API: SKILL.md, "Writing a song". Nothing here is pre-written on purpose.
 """
-from ableton_use import Song
+from rick_rubin import Song
 
 song = Song("{title}", bpm={bpm}, key="{key}", swing=50)
 

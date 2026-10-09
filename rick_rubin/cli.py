@@ -1,4 +1,4 @@
-"""ableton-use command line. Every command takes a project folder."""
+"""rick-rubin command line. Every command takes a project folder."""
 from __future__ import annotations
 
 import argparse
@@ -15,7 +15,7 @@ def _bars(s: str) -> tuple[int, int]:
 
 
 def _main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="ableton-use", description="Agentic house-music production rendered to Ableton Live.")
+    ap = argparse.ArgumentParser(prog="rick-rubin", description="Agentic house-music production rendered to Ableton Live.")
     ap.add_argument("--set", action="append", default=[], metavar="NAME=VALUE", dest="options",
                     help="run this command with an `option()` choice of song.py switched (repeatable), e.g. --set bass=reese")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -210,7 +210,7 @@ def _main(argv: list[str] | None = None) -> int:
     for k in ("strategy", "decisions", "reasoning", "outstanding"):
         s.add_argument(f"--{k}", default="")
 
-    s = sub.add_parser("install-bridge", help="copy the AbletonUse remote script into Live's User Library")
+    s = sub.add_parser("install-bridge", help="copy the RickRubin remote script into Live's User Library")
     s.add_argument("--dest", help="Remote Scripts folder (default: your User Library)")
 
     s = sub.add_parser("status", help="check the Live bridge connection")
@@ -225,7 +225,7 @@ def _main(argv: list[str] | None = None) -> int:
 
     if a.cmd == "init":
         p = Project.init(a.dir, a.title, a.bpm, a.key)
-        print(f"created {p.source_path}\nWrite the song there (SKILL.md, 'Writing a song'), then: ableton-use score {a.dir}")
+        print(f"created {p.source_path}\nWrite the song there (SKILL.md, 'Writing a song'), then: rick-rubin score {a.dir}")
     elif a.cmd == "check":
         stages, errors = Project(a.dir).check(audio=a.audio)
         for name, ok, out in stages:
@@ -388,7 +388,7 @@ def _main(argv: list[str] | None = None) -> int:
             from . import reference as ref
             shelf = ref.load_shelf()
             if not shelf:
-                print("\n(no references on the shelf: `ableton-use reference add <released tracks>`)")
+                print("\n(no references on the shelf: `rick-rubin reference add <released tracks>`)")
             else:
                 print("\nagainst the reference tracks ('!' = outside their range" + ("" if a.live else "; offline preview: only the arrangement lines "
                       "— movement, repeats, texture changes — mean anything, the sound lines need --live") + ")")
@@ -417,7 +417,7 @@ def _main(argv: list[str] | None = None) -> int:
         if not a.names:
             for d in cache.values():
                 print(f"{d['device']}: " + ", ".join(q["name"] for q in d["parameters"]))
-            print(f"{len(cache)} devices read so far — `ableton-use devices <name>` reads one from Live (what Live has: `ableton-use browse audio_effects`)")
+            print(f"{len(cache)} devices read so far — `rick-rubin devices <name>` reads one from Live (what Live has: `rick-rubin browse audio_effects`)")
             return 0
         for n in a.names:
             hit = next((d for k, d in cache.items() if k.lower() == n.lower()), None)
@@ -440,7 +440,7 @@ def _main(argv: list[str] | None = None) -> int:
         else:
             shelf = ref.load_shelf()
             if not shelf:
-                ap.error("no references yet: `ableton-use reference add <released tracks in the genre>`")
+                ap.error("no references yet: `rick-rubin reference add <released tracks in the genre>`")
             if not a.paths:
                 ap.error("reference compare needs a project folder")
             proj = Project(a.paths[0])
@@ -520,7 +520,7 @@ def _main(argv: list[str] | None = None) -> int:
         src = p.root / a.sample
         words = load_words(src)
         if words is None:
-            ap.error(f"{a.sample} has no transcription yet: run `ableton-use transcribe {a.dir} {a.sample}` first")
+            ap.error(f"{a.sample} has no transcription yet: run `rick-rubin transcribe {a.dir} {a.sample}` first")
         moves = {int(k): v for k, v in (m.split("=", 1) for m in a.move)}
         dst = p.root / "samples" / f"{a.name}.wav"
         rows = retime_loop(src, dst, p.tempo(), words, a.by, a.grid, a.strength, moves)
@@ -599,7 +599,7 @@ def _main(argv: list[str] | None = None) -> int:
     elif a.cmd == "install-bridge":
         from .live import install_bridge
         t = install_bridge(a.dest)
-        print(f"installed to {t}\nRestart Live, then Settings > Link, Tempo & MIDI > Control Surface: AbletonUse")
+        print(f"installed to {t}\nRestart Live, then Settings > Link, Tempo & MIDI > Control Surface: RickRubin")
     elif a.cmd == "status":
         from .live import LiveBridge
         with LiveBridge(port=a.port) as b:

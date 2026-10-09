@@ -9,15 +9,15 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from fake_live import FakeLiveServer  # noqa: E402
 
-from ableton_use import Project, Song  # noqa: E402
+from rick_rubin import Project, Song  # noqa: E402
 from fixture_songs import generate  # noqa: E402
-from ableton_use import edits  # noqa: E402
-from ableton_use.analysis import lint  # noqa: E402
-from ableton_use.cli import main  # noqa: E402
-from ableton_use.live import LiveBridge, push_song  # noqa: E402
-from ableton_use.render.preview import render_preview  # noqa: E402
-from ableton_use.samples import SR, conform_loop, detect_pitch, import_sample, read_audio, write_wav24  # noqa: E402
-from ableton_use.score import pack  # noqa: E402
+from rick_rubin import edits  # noqa: E402
+from rick_rubin.analysis import lint  # noqa: E402
+from rick_rubin.cli import main  # noqa: E402
+from rick_rubin.live import LiveBridge, push_song  # noqa: E402
+from rick_rubin.render.preview import render_preview  # noqa: E402
+from rick_rubin.samples import SR, conform_loop, detect_pitch, import_sample, read_audio, write_wav24  # noqa: E402
+from rick_rubin.score import pack  # noqa: E402
 
 needs_ffmpeg = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg not installed")
 BPM = 130.0
@@ -271,7 +271,7 @@ def _sung(path, sylls, total_s=4.0):
 
 
 def test_syllables_and_attacks(tmp_path):
-    from ableton_use.transcribe import (beat_point, build_words, clean_words, envelope, load_words, save_words, sidecar,
+    from rick_rubin.transcribe import (beat_point, build_words, clean_words, envelope, load_words, save_words, sidecar,
                                         snap_onset, syllabify, table, words_text)
     cut = lambda w: [w[a:b] for a, _, b in syllabify(w)]  # noqa: E731
     assert cut("gonna") == ["gon", "na"] and cut("take") == ["take"] and cut("some") == ["some"] and cut("time") == ["time"]
@@ -304,7 +304,7 @@ def test_syllables_and_attacks(tmp_path):
 
 
 def test_retime_puts_attacks_on_the_grid(tmp_path):
-    from ableton_use.transcribe import beat_point, build_words, envelope, load_words, retime_loop, snap_onset
+    from rick_rubin.transcribe import beat_point, build_words, envelope, load_words, retime_loop, snap_onset
     # three words, each late by a different amount (120 BPM, 16th = 125 ms)
     wav = _sung(tmp_path / "v.wav", [(0.52, 0.02, 0.2), (1.02, 0.03, 0.3), (2.31, 0.0, 0.3)])
     _, x = read_audio(wav)
@@ -331,7 +331,7 @@ def test_retime_puts_attacks_on_the_grid(tmp_path):
 
 # ---------------------------------------------------------------- stereo image
 def test_stereo_stats_and_checks(tmp_path):
-    from ableton_use.analysis import stereo_issues, stereo_report, stereo_stats
+    from rick_rubin.analysis import stereo_issues, stereo_report, stereo_stats
     rng = np.random.default_rng(0)
     n = 3 * SR
     a, b = rng.standard_normal(n) * 0.1, rng.standard_normal(n) * 0.1
@@ -359,7 +359,7 @@ def test_stereo_stats_and_checks(tmp_path):
 
 # ---------------------------------------------------------------- zoom
 def test_zoom_on_bars_and_tracks(sampled, capsys):
-    from ableton_use.analysis import measure, section_windows
+    from rick_rubin.analysis import measure, section_windows
     p, _ = sampled
     song = p.load()
     # windows: sections cut to the bar range, timed for a file that starts at bar 21
@@ -389,7 +389,7 @@ def test_serum_preset_sheet_and_catalog(tmp_path):
     zstandard = pytest.importorskip("zstandard")
     import json
     import struct
-    from ableton_use import serum
+    from rick_rubin import serum
 
     def write(path, name, tags, tree, desc=""):
         meta = json.dumps({"fileType": "SerumPreset", "presetName": name, "presetAuthor": "me", "presetDescription": desc,
@@ -490,7 +490,7 @@ def test_instrument_params_reach_simpler(sampled):
 
 # ---------------------------------------------------------------- writing a song in Python
 SONG_PY = '''
-from ableton_use import Song
+from rick_rubin import Song
 
 song = Song("Hand Made", bpm=126, key="A minor", swing=56)
 kick = song.add_track("Kick", "kick", volume_db=-6)
@@ -517,7 +517,7 @@ song.arrange(intro, drop, intro, drop2, outro)
 
 
 def test_song_written_in_python(tmp_path, capsys):
-    from ableton_use.compose import bar_events
+    from rick_rubin.compose import bar_events
     assert main(["init", str(tmp_path / "trk"), "--title", "Hand Made", "--bpm", "126", "--key", "A minor"]) == 0
     p = Project(tmp_path / "trk")
     assert p.source_path.exists() and p.load().tracks == [] and p.tempo() == 126       # the skeleton builds: an empty song
@@ -559,8 +559,8 @@ def test_song_written_in_python(tmp_path, capsys):
 
 # ---------------------------------------------------------------- notes inside a sample
 def test_notes_inside_a_sample(tmp_path, capsys):
-    from ableton_use import Key
-    from ableton_use.pitch import _tidy, load_notes, notes_text, pitch_at, register, sample_notes, table
+    from rick_rubin import Key
+    from rick_rubin.pitch import _tidy, load_notes, notes_text, pitch_at, register, sample_notes, table
     # a sung line at 120 BPM: F3 for a beat, a breath, F3 again, then Ab3 20 cents flat, then E3 (not in F minor)
     def tone(midi, secs):
         f = 440 * 2 ** ((midi - 69) / 12)
@@ -589,7 +589,7 @@ def test_notes_inside_a_sample(tmp_path, capsys):
 
 # ---------------------------------------------------------------- exploring: scaffold + audition
 def test_init_copies_the_scaffold_and_audition_compares(tmp_path, capsys):
-    from ableton_use.samples import describe_sample
+    from rick_rubin.samples import describe_sample
     root = tmp_path / "new song"
     assert main(["init", str(root), "--title", "New Song", "--bpm", "126", "--key", "A minor"]) == 0
     assert {p.name for p in root.iterdir()} >= {"CLAUDE.md", "song.py", "project.md", "samples", ".gitignore"}
@@ -625,7 +625,7 @@ _SERUM_OK = Path("/Library/Audio/Plug-Ins/VST3/Serum2.vst3").exists()
 @pytest.mark.skipif(not _SERUM_OK, reason="Serum 2 VST3 not installed")
 def test_serum_track_is_rendered_through_the_plugin(tmp_path):
     pytest.importorskip("pedalboard")
-    from ableton_use import serum
+    from rick_rubin import serum
     presets = serum.catalog()
     if not presets:
         pytest.skip("no Serum presets installed")
@@ -734,7 +734,7 @@ song.add_section("outro", 16, kind="outro", energy=3, parts={kick: four})
 # ---------------------------------------------------------------- character vocabulary and the sample library
 def test_character_words_and_project_sample_search(tmp_path, capsys):
     import json
-    from ableton_use.samples import analyse_project_samples, character_words, describe_sample, search_rows, similar
+    from rick_rubin.samples import analyse_project_samples, character_words, describe_sample, search_rows, similar
     root = tmp_path / "lib"
     assert main(["init", str(root), "--title", "Lib", "--bpm", "126", "--key", "A minor"]) == 0
     raw = root / "samples" / "raw"
@@ -785,7 +785,7 @@ def test_several_parts_for_one_track_are_joined():
 
 
 def test_sample_tracks_play_velocity_100_at_file_level(sampled, tmp_path):
-    from ableton_use.model import sample_gain_db, simpler_velocity_db
+    from rick_rubin.model import sample_gain_db, simpler_velocity_db
     # the measured law: 0.4 dB per velocity step at 100 % sensitivity, 0 dB at velocity ~70
     assert abs(simpler_velocity_db(100, 35) - 4.16) < 0.02 and abs(simpler_velocity_db(64, 35) + 0.88) < 0.02
     assert abs(simpler_velocity_db(32, 100) + 15.3) < 0.1 and simpler_velocity_db(90, 0) == 0
@@ -810,7 +810,7 @@ def test_sample_tracks_play_velocity_100_at_file_level(sampled, tmp_path):
 
 # ---------------------------------------------------------------- reference profiles
 def test_reference_profile_and_compare(tmp_path):
-    from ableton_use.reference import Profile, compare, estimate_bpm, profile
+    from rick_rubin.reference import Profile, compare, estimate_bpm, profile
     rng = np.random.default_rng(0)
     bpm, secs = 125.0, 40
     n = secs * SR

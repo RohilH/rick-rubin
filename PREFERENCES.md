@@ -1,4 +1,4 @@
-# David's standing preferences for music made with ableton-use
+# David's standing preferences for music made with rick-rubin
 
 These apply to every song project. Each project's `CLAUDE.md` imports this file, so edit it here
 and every project follows.
@@ -15,12 +15,12 @@ Trying several approaches and iterating is how something becomes great. Taking t
 works is how it becomes flat. This applies to everything:
 
 - **Samples and loops.** Search widely and more than once, with different words. For each role,
-  shortlist several candidates, download them, and compare them by measurement (`ableton-use
+  shortlist several candidates, download them, and compare them by measurement (`rick-rubin
   audition`, `notes`, `width`, `transcribe`) and in context (zoomed `eval` / `capture` with the
   candidate swapped in). Keep going until one is clearly right for *this* track — not merely
   acceptable. Write down what was rejected and why.
 - **Instruments and presets.** Try more than one instrument or preset for each synth part
-  (`ableton-use browse`, `serum list`), and compare them on audio captured from Live.
+  (`rick-rubin browse`, `serum list`), and compare them on audio captured from Live.
 - **Drums, basslines, melodies, chords, arrangement.** Write alternative versions as variables in
   `song.py`, compare them in context, keep the best, and say what the others taught you. A part
   that was never compared against an alternative is a draft.
@@ -32,13 +32,13 @@ track, and report what was spent.
 ## 3. Judge on what Live plays
 
 The offline preview is a sketch. Decisions about sound, balance, clipping, sidechain depth and width
-are made on audio recorded from Live (`ableton-use capture`), zoomed to the bars and tracks in
+are made on audio recorded from Live (`rick-rubin capture`), zoomed to the bars and tracks in
 question while iterating, and on a full capture before presenting.
 
 ## 4. Correct is not finished
 
 A track that passes every check can still sound flat. Before presenting, compare a Live capture with released
-tracks (`ableton-use reference compare`) and close the gaps it shows: loudness and density (a real master chain),
+tracks (`rick-rubin reference compare`) and close the gaps it shows: loudness and density (a real master chain),
 width in the top end, development from one phrase to the next, groove that survives Live's velocity curve.
 
 ## 5. Read before writing around a sample

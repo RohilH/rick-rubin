@@ -79,14 +79,14 @@ def _resample(x: np.ndarray, sr_in: int, sr_out: int) -> np.ndarray:
 # ============================================================================ pitch
 def detect_pitch(path: str | Path, fmin: float = 25.0, fmax: float = 2000.0) -> float:
     """Fundamental of a one-shot as a fractional MIDI pitch (Ableton numbering: C3 = 60): the pitch of
-    its longest steady stretch, from the same tracker `ableton-use notes` uses (so the two always agree).
+    its longest steady stretch, from the same tracker `rick-rubin notes` uses (so the two always agree).
     Raises ValueError when the sample has no steady pitch (noise, a drum hit, a chord)."""
     from .pitch import segment_notes, track_pitch
     sr, x = read_audio(path)
     times, midi = track_pitch(x, sr, fmin=fmin, fmax=fmax)
     notes = segment_notes(times, midi, min_s=0.03)
     if not notes:
-        raise ValueError(f"{Path(path).name}: no steady pitch found — not a single-note sample? (check with `ableton-use notes`)")
+        raise ValueError(f"{Path(path).name}: no steady pitch found — not a single-note sample? (check with `rick-rubin notes`)")
     a, b, p = max(notes, key=lambda n: n[1] - n[0])
     sel = (times >= a) & (times <= b) & ~np.isnan(midi)
     return float(np.median(midi[sel])) if sel.any() else float(p)

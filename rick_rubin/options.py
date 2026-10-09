@@ -1,11 +1,11 @@
 """Named choices in song.py that can be switched from outside — for comparing candidates.
 
-    from ableton_use import option
+    from rick_rubin import option
     HAT_VEL = option("hatvel", 80)                 # the default is what the song uses
     BASS = option("bass", "muted")                 # ... if option("bass", ...) == "reese": ...
 
-`ableton-use ab <project> hatvel=35 hatvel=60 --bars 81-84 --tracks Hats` builds, renders (or pushes to Live
-and captures) each candidate and prints them side by side; `ableton-use --set hatvel=35 <command> ...`
+`rick-rubin ab <project> hatvel=35 hatvel=60 --bars 81-84 --tracks Hats` builds, renders (or pushes to Live
+and captures) each candidate and prints them side by side; `rick-rubin --set hatvel=35 <command> ...`
 runs any single command with a choice switched. Without either, every command uses the defaults.
 """
 from __future__ import annotations
@@ -15,7 +15,7 @@ import os
 from contextlib import contextmanager
 from typing import TypeVar
 
-ENV = "ABLETON_USE_OPTIONS"
+ENV = "RICK_RUBIN_OPTIONS"
 T = TypeVar("T")
 _declared: dict[str, dict] = {}
 

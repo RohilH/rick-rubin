@@ -1,9 +1,9 @@
 ---
-name: ableton-use
+name: rick-rubin
 description: Write house / EDM tracks as Python code — every note, rhythm, groove and section written by you — then read, measure and render them into Ableton Live (samples, instruments, effects, sidechain, automation) and check the result on audio recorded back from Live. No templates or generators. Ask, confirm the plan, write, self-eval, push, capture, persist.
 ---
 
-# ableton-use
+# rick-rubin
 
 ## Principle
 
@@ -25,15 +25,15 @@ description: Write house / EDM tracks as Python code — every note, rhythm, gro
 6. **Drops earn their impact:** every drop follows a build or breakdown and starts with the kick on bar 1. A beat of silence (`kick_gap`, the roll's silent last beat) before the drop is the classic move.
 7. **Pitch convention is Ableton's:** C3 = MIDI 60, C1 = 36 (kick), Drum Rack pads start at C1.
 8. **Edit `song.py`, then re-read `score.md`.** Never hand-edit `song.json` or flattened MIDI; they are build outputs.
-9. **Self-eval before showing or pushing:** `ableton-use eval <dir>` must have 0 errors. Cap at 3 eval passes — then report what's left instead of looping.
-10. **Push only after eval passes, and only with the bridge connected** (`ableton-use status`). Re-pushes use `--replace`.
+9. **Self-eval before showing or pushing:** `rick-rubin eval <dir>` must have 0 errors. Cap at 3 eval passes — then report what's left instead of looping.
+10. **Push only after eval passes, and only with the bridge connected** (`rick-rubin status`). Re-pushes use `--replace`.
 11. **Strategy confirmation before execution.**
-12. **All outputs in the project folder.** Never write inside the ableton-use repo.
+12. **All outputs in the project folder.** Never write inside the rick-rubin repo.
 13. **Measure sample pitch; never trust filenames.** Sample packs disagree on octave naming (a "C2" bass is often MIDI 36 = Ableton's C1) and are rarely dead in tune. Import melodic one-shots with `--melodic` and use the `sample_root` it prints.
 
 ## Setup
 
-First-time install lives in `install.md`. On cold start just verify: `ableton-use --help` runs (package installed), and — before any push — `ableton-use status` reaches Live. You drive everything through the `ableton-use` CLI (or `from ableton_use import Project` in a Python snippet) with your own shell and file tools; there is no separate agent runtime. Run `view` and Read the PNG it prints to look at it.
+First-time install lives in `install.md`. On cold start just verify: `rick-rubin --help` runs (package installed), and — before any push — `rick-rubin status` reaches Live. You drive everything through the `rick-rubin` CLI (or `from rick_rubin import Project` in a Python snippet) with your own shell and file tools; there is no separate agent runtime. Run `view` and Read the PNG it prints to look at it.
 
 ## Directory layout
 
@@ -55,39 +55,39 @@ First-time install lives in `install.md`. On cold start just verify: `ableton-us
 ## Commands
 
 ```
-ableton-use init <dir> --title "..." --bpm 126 --key "A minor"   # a song project from project-template/: CLAUDE.md, empty song.py, project.md, manifest
-ableton-use audition <dir> samples/raw/kick_*.wav [--png name]   # candidates side by side: punch, decay, spectrum, pitch+octave, width, character
-ableton-use samples <dir> [words] [--sort bright] [--like samples/x.wav]   # the project's sample library, searchable by measured character
-ableton-use serum search [words] [--folder Bass] [--sort sub] [--like "<preset>"]   # Serum presets by how they sound (run `serum index` once)
-ableton-use browse "sounds/Bass" [--search sub]     # what Live offers: instruments, presets, effects, plug-ins
-ableton-use check <dir> [--audio]             # ruff + mypy on song.py, build, music lint — run after every edit
-ableton-use build <dir>                       # run song.py -> song.json + score.md (every other command does this when song.py changed)
-ableton-use score <dir> [--bars 33-48] [--tracks Bass Kick]   # print/refresh score.md; with a zoom, print just that slice
-ableton-use transcribe <dir> samples/vocal.wav [--text "lyric"]   # syllables -> bar.beat.16th + ms off the grid
-ableton-use retime <dir> samples/vocal.wav --name vocal_q          # audio-quantize a loose vocal loop, word by word
-ableton-use notes <dir> samples/vocal.wav                          # the notes inside a sample: pitch+octave, cents, position
-ableton-use width <dir> [file]                # stereo image: correlation, side %, mono loss, per band and section
-ableton-use sample <dir> <file> --name N --oneshot [--melodic]                       # Simpler one-shot; --melodic measures its pitch
-ableton-use sample <dir> <file> --name N --loop --src-bpm B [--bars N] [--align end] [--end-at S] # audio loop, conformed to the song tempo
-ableton-use eval <dir>                        # lint + preview render + measurements -> eval.md (exit 1 on errors)
-ableton-use eval <dir> --bars 33-48 --tracks Bass Kick   # zoom: measure a bar range and/or a solo of some tracks
-ableton-use capture <dir> [--bars 33-48] [--tracks Bass Kick]   # record Live's real output (real time), measure it, draw it
-ableton-use ab <dir> hatvel=35 hatvel=60 [--bars 81-88] [--tracks Hats] [--live] [--hits]   # candidates side by side (see Exploring)
-ableton-use --set bass=reese <command> ...    # any one command with an option() choice switched
-ableton-use compare <dir> a.wav b.wav ...     # audio files side by side (first is the baseline)
-ableton-use hits <dir> [file] --bars 81-84 --tracks Hats [--live]   # level of every 16th next to the written velocities
-ableton-use devices Compressor Saturator ...  # a Live device's parameters, ranges and choices, read from Live
-ableton-use reference compare <dir>           # the capture against released tracks: loudness, density, balance, width, pump, movement
-ableton-use eval <dir> --live [--bars ...]    # measurements of the last full capture (live.wav)
-ableton-use view <dir> --bars 65-80 [--tracks Bass Kick]
-ableton-use preview <dir> [--stems]
-ableton-use midi <dir>
-ableton-use install-bridge                    # once; then pick "AbletonUse" control surface in Live
-ableton-use status                            # ping Live
-ableton-use push <dir> [--replace]            # build the arrangement in Live
-ableton-use watch <dir> [--bars 81-88] [--play]   # hot reload: every save of song.py lands in Live while it plays
-ableton-use push <dir> --update               # redo only what changed since the last push (a parameter: about a second)
-ableton-use remember <dir> --strategy ... --decisions ... --reasoning ... --outstanding ...
+rick-rubin init <dir> --title "..." --bpm 126 --key "A minor"   # a song project from project-template/: CLAUDE.md, empty song.py, project.md, manifest
+rick-rubin audition <dir> samples/raw/kick_*.wav [--png name]   # candidates side by side: punch, decay, spectrum, pitch+octave, width, character
+rick-rubin samples <dir> [words] [--sort bright] [--like samples/x.wav]   # the project's sample library, searchable by measured character
+rick-rubin serum search [words] [--folder Bass] [--sort sub] [--like "<preset>"]   # Serum presets by how they sound (run `serum index` once)
+rick-rubin browse "sounds/Bass" [--search sub]     # what Live offers: instruments, presets, effects, plug-ins
+rick-rubin check <dir> [--audio]             # ruff + mypy on song.py, build, music lint — run after every edit
+rick-rubin build <dir>                       # run song.py -> song.json + score.md (every other command does this when song.py changed)
+rick-rubin score <dir> [--bars 33-48] [--tracks Bass Kick]   # print/refresh score.md; with a zoom, print just that slice
+rick-rubin transcribe <dir> samples/vocal.wav [--text "lyric"]   # syllables -> bar.beat.16th + ms off the grid
+rick-rubin retime <dir> samples/vocal.wav --name vocal_q          # audio-quantize a loose vocal loop, word by word
+rick-rubin notes <dir> samples/vocal.wav                          # the notes inside a sample: pitch+octave, cents, position
+rick-rubin width <dir> [file]                # stereo image: correlation, side %, mono loss, per band and section
+rick-rubin sample <dir> <file> --name N --oneshot [--melodic]                       # Simpler one-shot; --melodic measures its pitch
+rick-rubin sample <dir> <file> --name N --loop --src-bpm B [--bars N] [--align end] [--end-at S] # audio loop, conformed to the song tempo
+rick-rubin eval <dir>                        # lint + preview render + measurements -> eval.md (exit 1 on errors)
+rick-rubin eval <dir> --bars 33-48 --tracks Bass Kick   # zoom: measure a bar range and/or a solo of some tracks
+rick-rubin capture <dir> [--bars 33-48] [--tracks Bass Kick]   # record Live's real output (real time), measure it, draw it
+rick-rubin ab <dir> hatvel=35 hatvel=60 [--bars 81-88] [--tracks Hats] [--live] [--hits]   # candidates side by side (see Exploring)
+rick-rubin --set bass=reese <command> ...    # any one command with an option() choice switched
+rick-rubin compare <dir> a.wav b.wav ...     # audio files side by side (first is the baseline)
+rick-rubin hits <dir> [file] --bars 81-84 --tracks Hats [--live]   # level of every 16th next to the written velocities
+rick-rubin devices Compressor Saturator ...  # a Live device's parameters, ranges and choices, read from Live
+rick-rubin reference compare <dir>           # the capture against released tracks: loudness, density, balance, width, pump, movement
+rick-rubin eval <dir> --live [--bars ...]    # measurements of the last full capture (live.wav)
+rick-rubin view <dir> --bars 65-80 [--tracks Bass Kick]
+rick-rubin preview <dir> [--stems]
+rick-rubin midi <dir>
+rick-rubin install-bridge                    # once; then pick "RickRubin" control surface in Live
+rick-rubin status                            # ping Live
+rick-rubin push <dir> [--replace]            # build the arrangement in Live
+rick-rubin watch <dir> [--bars 81-88] [--play]   # hot reload: every save of song.py lands in Live while it plays
+rick-rubin push <dir> --update               # redo only what changed since the last push (a parameter: about a second)
+rick-rubin remember <dir> --strategy ... --decisions ... --reasoning ... --outstanding ...
 ```
 
 ## Writing a song
@@ -95,7 +95,7 @@ ableton-use remember <dir> --strategy ... --decisions ... --reasoning ... --outs
 A song is a Python file, `song.py`, that leaves a `Song` in a variable called `song`. You write it with your normal file tools; every command rebuilds from it. It is ordinary Python — use loops, functions and your own helpers freely.
 
 ```python
-from ableton_use import Song
+from rick_rubin import Song
 
 song = Song("Night Bus", bpm=126, key="A minor", swing=56)
 
@@ -141,7 +141,7 @@ song.arrange(intro, drop, intro, drop2)      # listing a section twice plays it 
 - **Levels mean the same everywhere.** A sample track's velocity-100 note plays the file at its own level times the track fader — in Live (push sets Simpler's Volume to cancel its velocity boost) and in the preview — exactly like an audio-loop clip. Velocity then follows Simpler's own law, measured in Live: 0.14 dB per velocity step at the default 35 % `Vol < Vel` (velocity 64 is 5 dB under velocity 100), proportionally more at higher settings (at 80 %: 11.5 dB under). So ghost notes and accents measured offline are what Live plays. Serum tracks and loops are audio at file level.
 - **`instrument_params`** sets the track instrument's own parameters by displayed value — for Simpler e.g. `{"Ve Attack": 4, "Ve Release": 60, "Vol < Vel": 75}`. Attack time and velocity sensitivity are per track; per-hit feel comes from velocity and timing.
 - **Automation** values run 0..1 over the section: `[start, end]` or `[[fraction, value], ...]`. `filter` is a low-pass sweep (60 Hz–18 kHz), `volume` and `pan` are the mixer; `"Device:Parameter"` reaches anything else on MIDI tracks. On audio-loop tracks, `filter` and `volume` are rendered into the audio.
-- Projects that are only a `song.json` (no `song.py`) can still be changed with JSON ops through `ableton_use.edits`; a project with a `song.py` is always edited there.
+- Projects that are only a `song.json` (no `song.py`) can still be changed with JSON ops through `rick_rubin.edits`; a project with a `song.py` is always edited there.
 
 ## Exploring
 
@@ -156,17 +156,17 @@ Great tracks come from comparing options, not from accepting the first one. You 
 **Candidates are `option()` choices.** Do not copy `song.py`, comment blocks in and out, or script your own build-push-capture loops: name the thing you are unsure about and let `ab` run the candidates.
 
 ```python
-from ableton_use import option
+from rick_rubin import option
 HAT_GHOST = option("hatghost", 60)          # the default is the song; a switched value takes the default's type, so give numbers as numbers (6.0, not "6")
 BASS = option("bass", "muted")              # if BASS == "reese": ... elif BASS == "organ": ...
 ```
 
 ```
-ableton-use ab <dir> hatghost=35 hatghost=80 --bars 81-84 --tracks Hats --hits     # offline, seconds
-ableton-use ab <dir> bass=reese bass=organ wide:tops=pan,verb=short --bars 81-96 --live   # pushed to Live and recorded, one by one
+rick-rubin ab <dir> hatghost=35 hatghost=80 --bars 81-84 --tracks Hats --hits     # offline, seconds
+rick-rubin ab <dir> bass=reese bass=organ wide:tops=pan,verb=short --bars 81-96 --live   # pushed to Live and recorded, one by one
 ```
 
-`ab` prints one column per candidate (the song as it stands first, then each change against it): loudness, peak, crest, energy per band, side % overall / above 4 kHz / below 150 Hz, mono loss, transient contrast, clipped samples; `--hits` adds the per-step levels, `--reference` puts every candidate against the reference tracks (movement, repeats and texture changes are how arrangement candidates differ — plain loudness will not show a layer swapped for another). Files land in `ab/<label>.wav` for `reference compare`, `spectrum`, `width --png`. After a `--live` run Live holds the song as it stands again. Keep a winner by making it the option's default; `score.md` lists every option and its value. `--set name=value` in front of any command (`ableton-use --set bass=reese capture <dir> --bars 81-96`) runs just that command with the choice switched.
+`ab` prints one column per candidate (the song as it stands first, then each change against it): loudness, peak, crest, energy per band, side % overall / above 4 kHz / below 150 Hz, mono loss, transient contrast, clipped samples; `--hits` adds the per-step levels, `--reference` puts every candidate against the reference tracks (movement, repeats and texture changes are how arrangement candidates differ — plain loudness will not show a layer swapped for another). Files land in `ab/<label>.wav` for `reference compare`, `spectrum`, `width --png`. After a `--live` run Live holds the song as it stands again. Keep a winner by making it the option's default; `score.md` lists every option and its value. `--set name=value` in front of any command (`rick-rubin --set bass=reese capture <dir> --bars 81-96`) runs just that command with the choice switched.
 
 **Did the groove survive?** `hits` prints the peak level of every 16th step of a soloed track, bar by bar, with the velocities you wrote underneath — from the preview, a file, or Live (`--live`). Simpler's velocity curve is steep: accents and ghosts that look 40 velocity steps apart can come out 25 dB apart, and a ghost more than ~18 dB under the accent is gone in a mix. Read `hits --live` once for every velocity-driven part.
 
@@ -187,8 +187,8 @@ Every sample you import and every Serum preset in the index is measured the same
 | pitch | `pitched` · `unpitched` · `melodic` |
 | dynamics | `punchy` (crest > 14 dB) · `dense` (crest < 8 dB) |
 
-- **Samples.** `ableton-use sample ...` prints the measured row and character on import and records it in `samples/manifest.json` (`analysis`); anything dropped into `samples/raw/` is measured the first time you run `ableton-use samples <dir>`. Search and sort the whole project library: `samples <dir> snappy dark`, `samples <dir> --sort sub`, `samples <dir> pitched --not wide`, `samples <dir> --like samples/raw/kick_03.wav`. So when candidates come back from Splice: download, then read their character before you choose.
-- **Serum presets.** `ableton-use serum index` plays every installed preset once — on the key that makes it *sound* around C2, so a bass patch set two octaves down is measured in the same register as everything else — and records the same measurements plus patch facts and the patch's own octave offset; it takes a few minutes the first time and is incremental afterwards. Then `serum search bass subby mono --sort sub`, `serum search pad wide slow-attack --not reverb`, `serum search pluck snappy bright --folder Leads`, `serum search --like "BS Gunman Reese"`. Words can be character, folder, tag, `mono`/`poly`, engine (`wavetable sample granular spectral sub noise`), FX names (`reverb delay distortion chorus ...`) or macro names; `--not WORD ...` excludes. `oct -2` in the label means the patch sounds two octaves under the key you play: write its notes two octaves higher than you want to hear (or reset its oscillator octave with `serum_params`). Six presets do not render within 30 s and are left out.
+- **Samples.** `rick-rubin sample ...` prints the measured row and character on import and records it in `samples/manifest.json` (`analysis`); anything dropped into `samples/raw/` is measured the first time you run `rick-rubin samples <dir>`. Search and sort the whole project library: `samples <dir> snappy dark`, `samples <dir> --sort sub`, `samples <dir> pitched --not wide`, `samples <dir> --like samples/raw/kick_03.wav`. So when candidates come back from Splice: download, then read their character before you choose.
+- **Serum presets.** `rick-rubin serum index` plays every installed preset once — on the key that makes it *sound* around C2, so a bass patch set two octaves down is measured in the same register as everything else — and records the same measurements plus patch facts and the patch's own octave offset; it takes a few minutes the first time and is incremental afterwards. Then `serum search bass subby mono --sort sub`, `serum search pad wide slow-attack --not reverb`, `serum search pluck snappy bright --folder Leads`, `serum search --like "BS Gunman Reese"`. Words can be character, folder, tag, `mono`/`poly`, engine (`wavetable sample granular spectral sub noise`), FX names (`reverb delay distortion chorus ...`) or macro names; `--not WORD ...` excludes. `oct -2` in the label means the patch sounds two octaves under the key you play: write its notes two octaves higher than you want to hear (or reset its oscillator octave with `serum_params`). Six presets do not render within 30 s and are left out.
 
 The words are coarse on purpose: use them to narrow 700 options to 10, then compare those 10 with `audition`, `serum view` and in context.
 
@@ -197,9 +197,9 @@ The words are coarse on purpose: use them to narrow 700 options to 10, then comp
 `check` and `eval` answer "is it correct?". A correct track can still sound flat. `reference` answers the other question by measuring your mix against released tracks in the genre, on the things a listener reacts to:
 
 ```
-ableton-use reference add ~/Music/some-released-track.wav ...   # once; any format; only measurements are kept, shared by all projects
-ableton-use reference list
-ableton-use reference compare <dir>                              # the Live capture (live.wav) against the shelf -> reference.md
+rick-rubin reference add ~/Music/some-released-track.wav ...   # once; any format; only measurements are kept, shared by all projects
+rick-rubin reference list
+rick-rubin reference compare <dir>                              # the Live capture (live.wav) against the shelf -> reference.md
 ```
 
 It measures, on the loudest 30 seconds: loudness and crest (density), tonal balance per band and tilt, stereo side energy overall and per band, low-end pump (off-beat vs kick), transient contrast and top-end activity; and for development: how much the spectrum changes from one 2-bar block to the next, the share of near-identical blocks, texture changes per minute (2-bar blocks that differ clearly from the one before, in level or — with the level taken out — in which bands carry the energy, so a layer swapped for another at equal loudness counts) and loudness range. Each line is placed against the references' min–median–max, and whatever falls outside is listed.
@@ -217,11 +217,11 @@ The offline preview cannot stand in for this: its stems are mono and it has no m
 
 Tables are exact and stay the primary view; these pictures are for when a shape says more than numbers. Each command prints the PNG's path — Read it.
 
-- `ableton-use audition <dir> <files...> --png <name>` — **sample comparer**: every candidate's waveform on one time and level scale (length, punch, decay at a glance), their spectra overlaid, key numbers beside each.
-- `ableton-use spectrum <dir> [files...] [--tracks Kick Bass ...] [--bars A-B] [--mix]` — **spectrum analyzer**: overlaid spectra of files, of soloed tracks (at their real relative level), and/or the mix. Where two curves sit on top of each other they compete; decide EQ moves from it, then make them with Channel EQ / Auto Filter in `effects`.
-- `ableton-use width <dir> [file] [--bars A-B] --png` — **stereo imager**: vectorscope (a vertical line is mono, a round cloud is wide), correlation over time, width by band with wide-low-end and out-of-phase bands in red.
-- `ableton-use serum view "<preset>" --note F1 [--set macro_1=80] --out views/x.png` — **Serum patch panel**: the wavetable frame each oscillator plays, the envelopes, filters/voices/FX chain, macro values and what each moves, and a played note's level, waveform and spectrum.
-- `ableton-use view` — the arrangement: notes, audio clips, automation, the notes a vocal sings in a lane under its waveform, waveform and spectrogram of the mix.
+- `rick-rubin audition <dir> <files...> --png <name>` — **sample comparer**: every candidate's waveform on one time and level scale (length, punch, decay at a glance), their spectra overlaid, key numbers beside each.
+- `rick-rubin spectrum <dir> [files...] [--tracks Kick Bass ...] [--bars A-B] [--mix]` — **spectrum analyzer**: overlaid spectra of files, of soloed tracks (at their real relative level), and/or the mix. Where two curves sit on top of each other they compete; decide EQ moves from it, then make them with Channel EQ / Auto Filter in `effects`.
+- `rick-rubin width <dir> [file] [--bars A-B] --png` — **stereo imager**: vectorscope (a vertical line is mono, a round cloud is wide), correlation over time, width by band with wide-low-end and out-of-phase bands in red.
+- `rick-rubin serum view "<preset>" --note F1 [--set macro_1=80] --out views/x.png` — **Serum patch panel**: the wavetable frame each oscillator plays, the envelopes, filters/voices/FX chain, macro values and what each moves, and a played note's level, waveform and spectrum.
+- `rick-rubin view` — the arrangement: notes, audio clips, automation, the notes a vocal sings in a lane under its waveform, waveform and spectrogram of the mix.
 
 ## Zooming in
 
@@ -244,7 +244,7 @@ There is one mixer, and it is Ableton's. The offline preview plays the notes and
 
 ## Effects and compressors
 
-`ableton-use devices <name> ...` loads a device in Live on a throwaway track and prints every parameter with its range, its menu choices and its default (remembered in `.cache/live-devices.json`, so it works without Live afterwards). Read it before writing an effect instead of guessing names.
+`rick-rubin devices <name> ...` loads a device in Live on a throwaway track and prints every parameter with its range, its menu choices and its default (remembered in `.cache/live-devices.json`, so it works without Live afterwards). Read it before writing an effect instead of guessing names.
 
 A track's `effects` is an ordered list of Live audio effects placed after the instrument. Every parameter is set by the value Live displays, in Live's own names and units:
 
@@ -298,23 +298,23 @@ Workflow:
 
 1. **Find** candidates. With the Splice MCP: `describe_a_sound` (`type` loop | oneshot, BPM filters). Prefer loops within ~6% of the song tempo and in the song key or its relative; any key for drums.
 2. **Download** to `<project>/samples/raw/`. Splice download URLs expire in about two minutes — fetch immediately. A first download costs a credit (get the user's OK); re-downloads are free. Record name, asset id and pack in `samples/manifest.json`.
-3. **Import** with `ableton-use sample`. It prints the measured root or bar count and a ready-made edit op.
+3. **Import** with `rick-rubin sample`. It prints the measured root or bar count and a ready-made edit op.
 4. **Wire up** with `track` / `pattern` / `part` ops, then re-read `score.md`.
 5. **Eval.** The preview plays the real samples (repitched like Simpler), so loudness and balance numbers now reflect them. Lint `H14-samples` flags notes more than two octaves from a sample's root and loops cut mid-pass; `H4-key` flags loops in a foreign key.
 
-**Vocals: read the words, to the syllable.** `ableton-use transcribe <dir> samples/vocal.wav [--text "the lyric"]` finds the words (a local Whisper model, or the lyric you give it — better whenever you know it), pins every letter to the audio with a forced aligner, groups letters into syllables and snaps each syllable to the audio itself. For every syllable you get where its sound starts (`cut at`), where it reaches full level (`vowel at` — what a listener hears as on or off the beat), its `bar.beat.sixteenth` and how many ms it is off that 16th. `score.md` prints them under the loop (`-na` continues a word, `?` = doubtful alignment, offsets from 10 ms shown). Read it before writing anything around a vocal: put hooks and fills in the gaps, keep stabs off the stressed syllables. A word that sits exactly between two 16ths is named after the nearer one; look at the offset before trusting the name.
+**Vocals: read the words, to the syllable.** `rick-rubin transcribe <dir> samples/vocal.wav [--text "the lyric"]` finds the words (a local Whisper model, or the lyric you give it — better whenever you know it), pins every letter to the audio with a forced aligner, groups letters into syllables and snaps each syllable to the audio itself. For every syllable you get where its sound starts (`cut at`), where it reaches full level (`vowel at` — what a listener hears as on or off the beat), its `bar.beat.sixteenth` and how many ms it is off that 16th. `score.md` prints them under the loop (`-na` continues a word, `?` = doubtful alignment, offsets from 10 ms shown). Read it before writing anything around a vocal: put hooks and fills in the gaps, keep stabs off the stressed syllables. A word that sits exactly between two 16ths is named after the nearer one; look at the offset before trusting the name.
 
-**Loose vocal? `retime` it.** A whole loop that reads +30..+60 ms on most syllables is dragging; scattered signs mean a loose performance. `ableton-use retime <dir> samples/vocal.wav --name vocal_q [--by word|syllable] [--grid 16] [--strength 0.7] [--move 7=3.3.3]` cuts the loop at each word's start and slides it so its attack lands on the grid, writing a new loop of the same length (and its word timings). `--by word` keeps each word's inner flow and is the default; `--strength` below 1 leaves some of the feel; `--move N=bar.beat.sixteenth` places a piece yourself when the nearest 16th is the wrong one. Check the result by transcribing or viewing the new file, not by assuming.
+**Loose vocal? `retime` it.** A whole loop that reads +30..+60 ms on most syllables is dragging; scattered signs mean a loose performance. `rick-rubin retime <dir> samples/vocal.wav --name vocal_q [--by word|syllable] [--grid 16] [--strength 0.7] [--move 7=3.3.3]` cuts the loop at each word's start and slides it so its attack lands on the grid, writing a new loop of the same length (and its word timings). `--by word` keeps each word's inner flow and is the default; `--strength` below 1 leaves some of the feel; `--move N=bar.beat.sixteenth` places a piece yourself when the nearest 16th is the wrong one. Check the result by transcribing or viewing the new file, not by assuming.
 
-**Samples have notes: read them.** `ableton-use notes <dir> samples/vocal.wav` follows the pitch through a single-voice sample (vocal, bassline, lead; use `--fmin 30` for bass) and lists its notes: pitch **with octave** (Ableton naming, C3 = 60) and Hz, cents sharp/flat, grid position, length, the syllable sung on it, and `!` if it is outside the song's key. The first line gives the register — lowest to highest note and the centre. `score.md` prints the notes under the loop and `view` draws them on the waveform. Use it to choose chords and a bass that agree with what the vocal actually sings, to keep leads out of the vocal's octave, and to spot a loop that is sold as "F minor" but leans on other notes. It hears one voice at a time: chords or full loops will read as nonsense or as nothing.
+**Samples have notes: read them.** `rick-rubin notes <dir> samples/vocal.wav` follows the pitch through a single-voice sample (vocal, bassline, lead; use `--fmin 30` for bass) and lists its notes: pitch **with octave** (Ableton naming, C3 = 60) and Hz, cents sharp/flat, grid position, length, the syllable sung on it, and `!` if it is outside the song's key. The first line gives the register — lowest to highest note and the centre. `score.md` prints the notes under the loop and `view` draws them on the waveform. Use it to choose chords and a bass that agree with what the vocal actually sings, to keep leads out of the vocal's octave, and to spot a loop that is sold as "F minor" but leans on other notes. It hears one voice at a time: chords or full loops will read as nonsense or as nothing.
 
-**Stereo image: read the width.** `ableton-use width <dir> [file]` is a correlation meter and imager in table form: correlation (+1 mono, 0 very wide, negative = out of phase), side % (the share of energy that disappears in mono), L/R balance, loudness lost in mono, and side %/correlation in four bands — for the whole file and per section. Rules it checks: low end centred below 150 Hz, no negative correlation, under 3 LU lost in mono, no lean over 1.5 dB. Run it on samples before using them (wide risers and loops are common) and on audio captured from Live. The offline preview is built from mono stems, so its width only reflects panning.
+**Stereo image: read the width.** `rick-rubin width <dir> [file]` is a correlation meter and imager in table form: correlation (+1 mono, 0 very wide, negative = out of phase), side % (the share of energy that disappears in mono), L/R balance, loudness lost in mono, and side %/correlation in four bands — for the whole file and per section. Rules it checks: low end centred below 150 Hz, no negative correlation, under 3 LU lost in mono, no lean over 1.5 dB. Run it on samples before using them (wide risers and loops are common) and on audio captured from Live. The offline preview is built from mono stems, so its width only reflects panning.
 
 **Serum 2 is a full instrument here — find, read, hear, play.** The library hosts the real Serum 2 plug-in in-process, loads any preset into it from the preset file, sets any of its ~2600 parameters by name, and renders notes to audio offline. Nothing needs Live or Serum's window.
 
-- **Find:** `ableton-use serum list [--folder Bass] [--tag Mono] [--search "reese"]` — folders, tags and words from the name/description.
-- **Read:** `ableton-use serum show "<preset>"` — a patch sheet: oscillators and wavetables, filters, envelopes/LFOs, FX, what each of the eight macros is wired to. `ableton-use serum params "<preset>" --search macro` (or `filter_1`, `env_1`, `a_`…) lists parameter names, current values and ranges.
-- **Hear (by measurement):** `ableton-use serum render "<preset>" --note F0 --note F1 --secs 0.5 [--set macro_1=80] --out samples/raw/x.wav` renders it and prints its `audition` row (level, attack, decay, spectrum, pitch, width). Render several presets and `audition` them together; that is how you choose a patch. Mind the patch's own octave setting (the sheet shows it): play it in the register you will write in.
+- **Find:** `rick-rubin serum list [--folder Bass] [--tag Mono] [--search "reese"]` — folders, tags and words from the name/description.
+- **Read:** `rick-rubin serum show "<preset>"` — a patch sheet: oscillators and wavetables, filters, envelopes/LFOs, FX, what each of the eight macros is wired to. `rick-rubin serum params "<preset>" --search macro` (or `filter_1`, `env_1`, `a_`…) lists parameter names, current values and ranges.
+- **Hear (by measurement):** `rick-rubin serum render "<preset>" --note F0 --note F1 --secs 0.5 [--set macro_1=80] --out samples/raw/x.wav` renders it and prints its `audition` row (level, attack, decay, spectrum, pitch, width). Render several presets and `audition` them together; that is how you choose a patch. Mind the patch's own octave setting (the sheet shows it): play it in the register you will write in.
 - **Play:** give a track `serum="<preset>"` (and optionally `serum_params={"macro_1": 60, "filter_1_freq_hz": 900}`) and write its notes like any other part:
 
   ```python
@@ -335,7 +335,7 @@ Presets are not samples: nothing here loads a third-party synth preset. Use a on
 1. **Inventory.** If a project exists: read its `CLAUDE.md` and `project.md` (summarise the last session in one sentence), `song.py` and `score.md`. If not, ask what they want, then `init` — which copies the scaffold in `project-template/`.
 2. **Converse.** Ask questions shaped by the brief: reference tracks/artists, subgenre, BPM, key/mood, club vs radio length, vocal?, which instruments/plugins they own, what the drop should feel like. No fixed checklist.
 3. **Propose strategy** (4–8 sentences): tempo/key, arrangement with bar counts, groove, bass approach, harmony, hook, palette, what makes the drop land. **Wait for confirmation.**
-4. **Write.** Run `ableton-use check <dir>` after every edit (it catches misspelled names, wrong arguments, broken structure and music-lint errors before anything is rendered). Compose the parts in `song.py` — drums, bass, harmony, hook, arrangement, groove — by hand, for this brief. Re-read `score.md` after each round of changes; zoom with `--bars/--tracks` when the question is local.
+4. **Write.** Run `rick-rubin check <dir>` after every edit (it catches misspelled names, wrong arguments, broken structure and music-lint errors before anything is rendered). Compose the parts in `song.py` — drums, bass, harmony, hook, arrangement, groove — by hand, for this brief. Re-read `score.md` after each round of changes; zoom with `--bars/--tracks` when the question is local.
 5. **Self-eval.** `eval`. Read every line. Lint errors are correctness bugs — fix them. Audio checks catch contrast (breakdown ≥3 LU under the drop), a flat energy curve, a swamped or missing low end, dull tops. `view` the transitions that matter (end of build → drop, breakdown entry) and check: the gap before the drop, the roll, sidechain pump visible on the waveform, the filter sweep. Fix → re-eval, max 3 passes.
 6. **Present.** Summarise the arrangement and what you changed and why. Offer the preview.wav as a sketch (not the final sound).
 7. **Push and capture.** `status`, then `push` (`--replace` on re-push), then `capture` and judge the mix on Live's own audio (clipping on the master, sidechain depth, balance, width). Then `reference compare`, a master chain, and another round until nothing is outside the references without a reason. Read the push report: missing instruments and unrouted sidechains are listed as warnings — tell the user exactly what to fix by hand.

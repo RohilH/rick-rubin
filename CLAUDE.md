@@ -1,4 +1,4 @@
-# daw-use / ableton-use — project rules
+# rick-rubin — project rules
 
 @PREFERENCES.md
 
@@ -19,13 +19,13 @@ creative freedom, and render it into Ableton Live.
 
 ## Working notes
 
-- New songs start with `ableton-use init <dir> ...`, which copies `project-template/` (a scaffold with no musical content) and wires its `CLAUDE.md` to import `PREFERENCES.md`.
+- New songs start with `rick-rubin init <dir> ...`, which copies `project-template/` (a scaffold with no musical content) and wires its `CLAUDE.md` to import `PREFERENCES.md`.
 
 - `song.py` is the source of truth; `song.json`, `score.md`, previews and the Live set are build outputs.
 - The Live bridge listens on 127.0.0.1:9889. After changing `handlers.py`, run
-  `ableton-use install-bridge` and send the bridge a `reload` command; only `bridge.py` changes need
+  `rick-rubin install-bridge` and send the bridge a `reload` command; only `bridge.py` changes need
   the Control Surface re-selected.
 - Remote-script code must stay Python 3.7 compatible.
 - Tests: `.venv/bin/pytest -q`. The generator in `tests/fixture_songs.py` is test data only.
-- Serum 2 is hosted in-process (`ableton_use/serum.py`, via pedalboard): a `.SerumPreset` is converted to plug-in state (same XferJson/zstd/CBOR container; header hash = MD5 of the zstd block). Do not write files into `~/Library` from this project without David's say-so.
+- Serum 2 is hosted in-process (`rick_rubin/serum.py`, via pedalboard): a `.SerumPreset` is converted to plug-in state (same XferJson/zstd/CBOR container; header hash = MD5 of the zstd block). Do not write files into `~/Library` from this project without David's say-so.
 - **Ableton is the one source of truth for sound** (David, 2026-10-06: "are we building two sources of truth? i would rather lean on ableton where our own implementation might differ"). Do not add offline imitations of Live devices or of Live's mixer to the preview. When judging sound is slow, make the Live path faster (incremental push, short captures) instead.

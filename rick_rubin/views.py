@@ -34,7 +34,7 @@ def timeline_view(song: Song, out_path: str | Path, bars: tuple[int, int] | None
     from .pitch import load_notes
     n_audio = 2 if wav else 0
     spb = 60.0 / song.bpm
-    # an audio track whose loops have been through `ableton-use notes` gets its own lane of sung notes under the waveform
+    # an audio track whose loops have been through `rick-rubin notes` gets its own lane of sung notes under the waveform
     sung_lanes: dict[str, list[tuple[float, float, float, str]]] = {}        # track -> (start beat, length, pitch, name)
     for t in trks:
         if not t.audio:

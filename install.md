@@ -1,18 +1,18 @@
-# Installing ableton-use for a coding agent
+# Installing rick-rubin for a coding agent
 
-ableton-use has no agent harness of its own. Your coding agent (Claude Code, Codex, or any agent with shell access) is the harness. It reads `SKILL.md` and drives the `ableton-use` CLI and Python API.
+rick-rubin has no agent harness of its own. Your coding agent (Claude Code, Codex, or any agent with shell access) is the harness. It reads `SKILL.md` and drives the `rick-rubin` CLI and Python API.
 
 ## Setup prompt
 
 Paste this into your agent:
 
 ```
-Set up https://github.com/<you>/ableton-use for me.
+Set up https://github.com/<you>/rick-rubin for me.
 
 Read install.md first: install the package, register the skill with whichever
 agent you're running under, and install the Ableton bridge. Then read SKILL.md
 for daily usage. After install, don't generate anything on your own. Tell me
-it's ready, remind me to select the AbletonUse control surface in Live, and wait
+it's ready, remind me to select the RickRubin control surface in Live, and wait
 for a brief.
 ```
 
@@ -20,28 +20,28 @@ for a brief.
 
 1. **Clone and install** (Python 3.10+):
    ```bash
-   git clone <repo> ~/Developer/ableton-use
-   cd ~/Developer/ableton-use && pip install -e ".[all]"     # or: uv pip install -e ".[all]"
-   ableton-use --help                                        # smoke test
+   git clone <repo> ~/Developer/rick-rubin
+   cd ~/Developer/rick-rubin && pip install -e ".[all]"     # or: uv pip install -e ".[all]"
+   rick-rubin --help                                        # smoke test
    ```
 
 2. **Register the skill:**
    ```bash
-   ln -sfn ~/Developer/ableton-use ~/.claude/skills/ableton-use     # Claude Code
-   # ln -sfn ~/Developer/ableton-use ~/.codex/skills/ableton-use    # Codex
+   ln -sfn ~/Developer/rick-rubin ~/.claude/skills/rick-rubin     # Claude Code
+   # ln -sfn ~/Developer/rick-rubin ~/.codex/skills/rick-rubin    # Codex
    ```
 
 3. **Install the Live bridge** (a MIDI Remote Script):
    ```bash
-   ableton-use install-bridge          # copies AbletonUse/ into User Library/Remote Scripts
+   rick-rubin install-bridge          # copies RickRubin/ into User Library/Remote Scripts
    ```
-   The user then restarts Live and opens **Settings → Link, Tempo & MIDI**. Under **Control Surface**, they choose **AbletonUse**. Live's status bar shows "ableton-use bridge … listening on 127.0.0.1:9889".
+   The user then restarts Live and opens **Settings → Link, Tempo & MIDI**. Under **Control Surface**, they choose **RickRubin**. Live's status bar shows "rick-rubin bridge … listening on 127.0.0.1:9889".
 
 4. **Verify:**
    ```bash
-   ableton-use status                  # {"bridge": "0.5.0", "live_version": "12.x.y"}
+   rick-rubin status                  # {"bridge": "0.5.0", "live_version": "12.x.y"}
    ```
-   If this fails, check that the control surface is selected, then check Live's `Log.txt` for "ableton-use".
+   If this fails, check that the control surface is selected, then check Live's `Log.txt` for "rick-rubin".
 
 ## Requirements
 

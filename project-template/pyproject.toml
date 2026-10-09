@@ -1,4 +1,4 @@
-# Checks for this song project — run `ableton-use check .`
+# Checks for this song project — run `rick-rubin check .`
 [tool.ruff]
 line-length = 140
 target-version = "py310"

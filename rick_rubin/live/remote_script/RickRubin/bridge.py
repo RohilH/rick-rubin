@@ -19,7 +19,7 @@ PORT = 9889
 MAX_PER_TICK = 64
 
 
-class AbletonUse(ControlSurface):
+class RickRubin(ControlSurface):
     def __init__(self, c_instance):
         ControlSurface.__init__(self, c_instance)
         self._inbox = queue.Queue()
@@ -27,19 +27,19 @@ class AbletonUse(ControlSurface):
         self._handlers = None
         self._load_handlers()
         self._sock = None
-        self._thread = threading.Thread(target=self._serve, name="ableton-use-bridge")
+        self._thread = threading.Thread(target=self._serve, name="rick-rubin-bridge")
         self._thread.daemon = True
         self._thread.start()
-        self.show_message("ableton-use bridge %s listening on %s:%d" % (_handlers.BRIDGE_VERSION, HOST, PORT))
+        self.show_message("rick-rubin bridge %s listening on %s:%d" % (_handlers.BRIDGE_VERSION, HOST, PORT))
 
     def _load_handlers(self):
-        """(Re)read handlers.py from disk, so `ableton-use install-bridge` + the 'reload'
+        """(Re)read handlers.py from disk, so `rick-rubin install-bridge` + the 'reload'
         command picks up handler changes without restarting Live."""
         try:
             import importlib
             importlib.reload(_handlers)
         except Exception as e:  # noqa: BLE001
-            self._log("ableton-use: reload failed: %s" % e)
+            self._log("rick-rubin: reload failed: %s" % e)
             if self._handlers is not None:
                 raise
         self._handlers = _handlers.Handlers(self.song, Live.Application.get_application, Live, self._log)
@@ -59,7 +59,7 @@ class AbletonUse(ControlSurface):
             self._sock.listen(4)
             self._sock.settimeout(1.0)
         except Exception as e:  # noqa: BLE001
-            self._log("ableton-use: cannot bind %s:%d (%s)" % (HOST, PORT, e))
+            self._log("rick-rubin: cannot bind %s:%d (%s)" % (HOST, PORT, e))
             return
         while self._running:
             try:
@@ -99,7 +99,7 @@ class AbletonUse(ControlSurface):
                     resp["id"] = req.get("id") if isinstance(req, dict) else None
                     conn.sendall((json.dumps(resp) + "\n").encode("utf-8"))
         except Exception as e:  # noqa: BLE001
-            self._log("ableton-use client error: %s" % e)
+            self._log("rick-rubin client error: %s" % e)
         finally:
             try:
                 conn.close()

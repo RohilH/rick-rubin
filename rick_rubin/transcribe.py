@@ -22,7 +22,7 @@ the grid — an audio quantize for a loop whose performance is loose.
 Results are cached next to the sample as `<name>.words.json`; `score.md` prints
 them under the audio pattern that uses the file.
 
-Needs the optional dependencies: `pip install "ableton-use[transcribe]"`.
+Needs the optional dependencies: `pip install "rick-rubin[transcribe]"`.
 """
 from __future__ import annotations
 
@@ -152,7 +152,7 @@ def whisper_words(mono16: np.ndarray, model: str = "small.en", language: str | N
     try:
         from faster_whisper import WhisperModel
     except ImportError as e:  # pragma: no cover
-        raise RuntimeError('transcription needs: pip install "ableton-use[transcribe]" (or pass the lyric as text=)') from e
+        raise RuntimeError('transcription needs: pip install "rick-rubin[transcribe]" (or pass the lyric as text=)') from e
     wm = WhisperModel(model, device="cpu", compute_type="int8")
     segs, _ = wm.transcribe(mono16, word_timestamps=True, vad_filter=False, condition_on_previous_text=False,
                             beam_size=5, language=language)
@@ -173,7 +173,7 @@ def force_align(mono16: np.ndarray, words: list[str]) -> list[list[tuple[float, 
         import torch
         import torchaudio
     except ImportError as e:  # pragma: no cover
-        raise RuntimeError('alignment needs torch + torchaudio: pip install "ableton-use[transcribe]"') from e
+        raise RuntimeError('alignment needs torch + torchaudio: pip install "rick-rubin[transcribe]"') from e
     import warnings
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")

@@ -1,4 +1,4 @@
-"""Song model — the single source of truth (the 'EDL' of ableton-use).
+"""Song model — the single source of truth (the 'EDL' of rick-rubin).
 
 A Song is a set of Tracks, a library of short looping Patterns, and an ordered
 list of Sections that say which pattern each track plays. Rendering (MIDI, audio
@@ -277,7 +277,7 @@ class Track:
     delay_ms: float = 0.0
     # A Serum 2 preset (name, words from it, or a .SerumPreset path) to play this track's notes. The part is rendered
     # through the real plug-in offline and reaches Live as audio; serum_params sets Serum parameters by name
-    # ({"macro_1": 60, "filter_1_freq_hz": 900}) — see `ableton-use serum params`.
+    # ({"macro_1": 60, "filter_1_freq_hz": 900}) — see `rick-rubin serum params`.
     serum: str | None = None
     serum_params: dict = field(default_factory=dict)
     # Parameters of the track's instrument by displayed value, e.g. Simpler {"Ve Attack": 4, "Ve Release": 60, "Vol < Vel": 70}
@@ -650,7 +650,7 @@ class Song:
     # ---- serialization
     def to_json(self) -> dict:
         return {
-            "format": "ableton-use/song@1",
+            "format": "rick-rubin/song@1",
             "title": self.title, "bpm": self.bpm, "key": self.key, "swing": self.swing,
             "meta": self.meta,
             **({"returns": self.returns} if self.returns else {}),
@@ -765,7 +765,7 @@ class Song:
             if t.serum and (t.sample or t.audio):
                 errs.append(f"track {t.name}: a Serum track cannot also have sample= or audio=True")
             if t.sample and not t.is_drum and t.sample_root is None:
-                errs.append(f"track {t.name}: melodic sample needs sample_root (run `ableton-use sample ... --oneshot` to detect it)")
+                errs.append(f"track {t.name}: melodic sample needs sample_root (run `rick-rubin sample ... --oneshot` to detect it)")
             if t.sample and self.base_dir is not None and not self.resolve(t.sample).exists():
                 errs.append(f"track {t.name}: sample file not found: {t.sample}")
         for p in self.patterns.values():

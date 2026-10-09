@@ -9,7 +9,7 @@ UI that matter: oscillators and their wavetables, filters, envelopes, LFOs, FX
 rack, macros and the mod matrix. `catalog()` lists the installed presets so an
 agent can pick one by folder, tag or words in its name/description.
 
-Needs the optional dependency: `pip install "ableton-use[serum]"`.
+Needs the optional dependency: `pip install "rick-rubin[serum]"`.
 """
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ def read_preset(path: str | Path) -> tuple[dict, dict]:
         import cbor2
         import zstandard
     except ImportError as e:  # pragma: no cover
-        raise RuntimeError('reading Serum presets needs: pip install "ableton-use[serum]"') from e
+        raise RuntimeError('reading Serum presets needs: pip install "rick-rubin[serum]"') from e
     b = Path(path).read_bytes()
     if b[:9] != MAGIC:
         raise ValueError(f"{path}: not a Serum 2 preset")
@@ -303,7 +303,7 @@ class SerumHost:
         try:
             import pedalboard
         except ImportError as e:  # pragma: no cover
-            raise RuntimeError('playing Serum needs: pip install "ableton-use[serum]"') from e
+            raise RuntimeError('playing Serum needs: pip install "rick-rubin[serum]"') from e
         if not Path(vst3).exists():
             raise FileNotFoundError(f"Serum 2 VST3 not found at {vst3}")
         self.plugin = pedalboard.load_plugin(str(vst3), plugin_name="Serum 2")
@@ -574,7 +574,7 @@ def search(words: list[str] | None = None, folder: str | None = None, tag: str |
     from .samples import search_rows, similar
     idx = load_index()
     if idx is None:
-        raise FileNotFoundError("no Serum index yet — run `ableton-use serum index` once (a few minutes)")
+        raise FileNotFoundError("no Serum index yet — run `rick-rubin serum index` once (a few minutes)")
     rows = {k: d for k, d in idx.items() if "error" not in d and not d.get("silent")}
     if folder:
         rows = {k: d for k, d in rows.items() if folder.lower() in d["folder"].lower()}
@@ -587,6 +587,6 @@ def search(words: list[str] | None = None, folder: str | None = None, tag: str |
         target_path = str(find(like))
         target = idx.get(target_path)
         if target is None or "error" in target:
-            raise KeyError(f"{like!r} is not in the index (yet) — run `ableton-use serum index`, or it did not render")
+            raise KeyError(f"{like!r} is not in the index (yet) — run `rick-rubin serum index`, or it did not render")
         return [(k, d) for k, d, _ in similar({k: d for k, d in hits.items() if k != target_path}, target, limit)]
     return list(hits.items())[:limit]

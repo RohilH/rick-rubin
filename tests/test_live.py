@@ -9,10 +9,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 from fake_live import FakeLiveServer, Param, _vol_fmt  # noqa: E402
 from handlers import _hz, _num, filter_mapper, norm_to_param, set_param_display  # noqa: E402
 
-from ableton_use import Song  # noqa: E402
+from rick_rubin import Song  # noqa: E402
 from fixture_songs import generate  # noqa: E402
-from ableton_use.score import pack  # noqa: E402
-from ableton_use.live import BridgeError, LiveBridge, push_song  # noqa: E402
+from rick_rubin.score import pack  # noqa: E402
+from rick_rubin.live import BridgeError, LiveBridge, push_song  # noqa: E402
 
 
 def test_param_helpers():
@@ -133,9 +133,9 @@ def test_push_effects_chain_and_sidechain():
 
 
 def test_midi_effects_real_in_live_emulated_offline():
-    from ableton_use.analysis import lint
-    from ableton_use.midifx import apply, unemulated
-    from ableton_use.model import Note
+    from rick_rubin.analysis import lint
+    from rick_rubin.midifx import apply, unemulated
+    from rick_rubin.model import Note
     s = Song("Chordy", bpm=120, key="A minor")
     kick = s.add_track("Kick", "kick")
     keys = s.add_track("Keys", "chords", instrument="Operator", midi_effects=[
@@ -176,9 +176,9 @@ def test_midi_effects_real_in_live_emulated_offline():
 
 
 def test_returns_sends_and_master_chain(tmp_path):
-    from ableton_use.analysis import lint, stereo_stats
-    from ableton_use.render.preview import render_preview
-    from ableton_use.samples import read_audio
+    from rick_rubin.analysis import lint, stereo_stats
+    from rick_rubin.render.preview import render_preview
+    from rick_rubin.samples import read_audio
     s = Song("Space", bpm=120, key="A minor")
     kick = s.add_track("Kick", "kick", volume_db=-6)
     clap = s.add_track("Clap", "clap", volume_db=-10, sends={"A": -12, "B": -18})
@@ -229,7 +229,7 @@ def test_returns_sends_and_master_chain(tmp_path):
 
 
 def test_update_pushes_only_what_changed(tmp_path):
-    from ableton_use.live.client import update_song
+    from rick_rubin.live.client import update_song
     s = Song("Upd", bpm=126, key="A minor")
     s.base_dir = tmp_path
     kick = s.add_track("Kick", "kick", volume_db=-6)
@@ -265,9 +265,9 @@ def test_update_pushes_only_what_changed(tmp_path):
 
 
 def test_watch_hot_reloads_song_py(tmp_path):
-    from ableton_use.project import Project
+    from rick_rubin.project import Project
     src = '''
-from ableton_use import Song
+from rick_rubin import Song
 song = Song("Hot", bpm=126, key="A minor")
 kick = song.add_track("Kick", "kick", volume_db=VOL)
 hat = song.add_track("Hats", "hat", volume_db=-12)

@@ -1,4 +1,4 @@
-"""ableton-use — agentic house-music production that renders to Ableton Live.
+"""rick-rubin — agentic house-music production that renders to Ableton Live.
 
 The LLM never listens to the track. It reads it: a compact text score, a
 self-eval report with measured loudness and spectral balance per section, and

@@ -7,15 +7,15 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from ableton_use import Key, Project, Song  # noqa: E402
+from rick_rubin import Key, Project, Song  # noqa: E402
 from fixture_songs import generate  # noqa: E402
-from ableton_use import edits  # noqa: E402
-from ableton_use.analysis import lint, loudness_lufs, measure  # noqa: E402
-from ableton_use.model import Note, Pattern, Section, Part, Track, dumps_compact, fmt_pos, parse_pos, steps_to_notes  # noqa: E402
-from ableton_use.render.midi import export_midi, read_midi_notes  # noqa: E402
-from ableton_use.render.preview import render_preview  # noqa: E402
-from ableton_use.score import pack  # noqa: E402
-from ableton_use.theory import chord_name, note, name, voice_lead  # noqa: E402
+from rick_rubin import edits  # noqa: E402
+from rick_rubin.analysis import lint, loudness_lufs, measure  # noqa: E402
+from rick_rubin.model import Note, Pattern, Section, Part, Track, dumps_compact, fmt_pos, parse_pos, steps_to_notes  # noqa: E402
+from rick_rubin.render.midi import export_midi, read_midi_notes  # noqa: E402
+from rick_rubin.render.preview import render_preview  # noqa: E402
+from rick_rubin.score import pack  # noqa: E402
+from rick_rubin.theory import chord_name, note, name, voice_lead  # noqa: E402
 
 
 # ---------------------------------------------------------------- theory
@@ -77,7 +77,7 @@ def test_flatten_parts_fills_and_swing():
     s.add_pattern(Pattern("h", 1, steps_to_notes("xxxxxxxxxxxxxxxx", 42)))
     s.add_pattern(Pattern("c", 1, steps_to_notes("....x.......x...", 39)))
     s.add_pattern(Pattern("f", 1, steps_to_notes("xxxxxxxxxxxxxxxx", 39)))
-    s.sections = [Section("a", "groove", 8, parts={"Hats": Part("h", 4)}, fills={"Clap": __import__("ableton_use").Fill("f", 4)})]
+    s.sections = [Section("a", "groove", 8, parts={"Hats": Part("h", 4)}, fills={"Clap": __import__("rick_rubin").Fill("f", 4)})]
     clips, _ = s.flatten()
     hats = next(c for c in clips if c.track == "Hats")
     assert hats.start == 16 and hats.length == 16           # starts at bar 5
@@ -197,7 +197,7 @@ def test_project_flow(tmp_path):
 
 # ---------------------------------------------------------------- option() choices, A/B, hit levels
 OPTION_SONG = '''
-from ableton_use import Song, option
+from rick_rubin import Song, option
 
 GHOST = option("ghost", 60)
 song = Song("Opt", bpm=126, key="G minor")
@@ -208,8 +208,8 @@ song.add_section("a", 2, energy=5, parts={hat: h})
 
 
 def test_option_switches_and_rebuilds(tmp_path, monkeypatch):
-    from ableton_use import options
-    from ableton_use.project import Project
+    from rick_rubin import options
+    from rick_rubin.project import Project
     monkeypatch.delenv(options.ENV, raising=False)
     (tmp_path / "song.py").write_text(OPTION_SONG)
     p = Project(tmp_path)
@@ -224,9 +224,9 @@ def test_option_switches_and_rebuilds(tmp_path, monkeypatch):
 
 
 def test_ab_and_hits(tmp_path, monkeypatch):
-    from ableton_use import options
-    from ableton_use.analysis import compare_table
-    from ableton_use.project import Project
+    from rick_rubin import options
+    from rick_rubin.analysis import compare_table
+    from rick_rubin.project import Project
     monkeypatch.delenv(options.ENV, raising=False)
     (tmp_path / "song.py").write_text(OPTION_SONG)
     p = Project(tmp_path)
@@ -243,7 +243,7 @@ def test_ab_and_hits(tmp_path, monkeypatch):
 def test_live_lock_is_exclusive_and_reentrant(tmp_path, monkeypatch):
     import tempfile
 
-    from ableton_use.live.client import BridgeError, live_lock, lock_path
+    from rick_rubin.live.client import BridgeError, live_lock, lock_path
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     with live_lock("a"):
         assert lock_path().exists()

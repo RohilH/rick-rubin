@@ -21,7 +21,7 @@ usability or mix correctness.
 
 - **AbletonOSC** (ideoforms) exposes much of the Live Object Model over OSC, including tracks,
   session clips, notes and devices. It creates clips in *session* slots and has no arrangement-clip
-  creation. That is why ableton-use ships its own small remote script with a JSON-over-TCP protocol,
+  creation. That is why rick-rubin ships its own small remote script with a JSON-over-TCP protocol,
   following the pattern used by MCP bridges such as ableton-mcp/LiveMCP.
 - **The Live Object Model provides the pieces the push needs:**
   - `Track.create_midi_clip(start_time, length)` creates an arrangement clip.

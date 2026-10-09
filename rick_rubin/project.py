@@ -1,7 +1,7 @@
 """Project folder = one track's working directory (cf. video-use's <videos_dir>/edit/).
 
 <project>/
-├── song.py          ← source of truth: the song, written in Python (ableton_use.Song API)
+├── song.py          ← source of truth: the song, written in Python (rick_rubin.Song API)
 ├── song.json        ← built from song.py (what every other tool reads)
 ├── score.md         ← packed score, the LLM's primary reading view (regenerated on every save)
 ├── eval.md          ← latest self-eval report
@@ -76,7 +76,7 @@ class Project:
         repo = Path(__file__).resolve().parent.parent
         tpl = repo / "project-template"
         prefs = repo / "PREFERENCES.md"
-        fill = {"title": title, "bpm": f"{bpm:g}", "key": key, "repo": str(repo), "prefs": str(prefs), "cli": "ableton-use"}
+        fill = {"title": title, "bpm": f"{bpm:g}", "key": key, "repo": str(repo), "prefs": str(prefs), "cli": "rick-rubin"}
         (p.root / "samples" / "raw").mkdir(parents=True, exist_ok=True)
         if not tpl.is_dir():                                # installed without the repo around it: bare minimum
             p.source_path.write_text(SONG_PY.format(**fill))
@@ -104,7 +104,7 @@ class Project:
         import contextlib
         import runpy
         if not self.source_path.exists():
-            raise FileNotFoundError(f"{self.source_path} not found — `ableton-use init` creates one")
+            raise FileNotFoundError(f"{self.source_path} not found — `rick-rubin init` creates one")
         from . import options
         options.begin()
         with contextlib.chdir(self.root):               # sample paths in song.py are relative to the project
@@ -162,7 +162,7 @@ class Project:
                                ("mypy", ["--no-error-summary", "--follow-imports=silent", src.name])):
                 exe = bindir / tool if (bindir / tool).exists() else _sh.which(tool)
                 if not exe:
-                    stages.append((tool, True, f"not installed — pip install \"ableton-use[check]\""))
+                    stages.append((tool, True, f"not installed — pip install \"rick-rubin[check]\""))
                     continue
                 r = subprocess.run([str(exe), *args], cwd=self.root, capture_output=True, text=True, env=env)
                 out = (r.stdout + r.stderr).strip()
@@ -477,7 +477,7 @@ SONG_PY = '''"""{title}
 The whole song lives in this file. Every other command (score, eval, view, push, capture...)
 rebuilds from it. Notation and API: SKILL.md, "Writing a song".
 """
-from ableton_use import Song
+from rick_rubin import Song
 
 song = Song("{title}", bpm={bpm}, key="{key}", swing=50)
 

@@ -1,6 +1,6 @@
 # {title}
 
-A song project for ableton-use. {bpm} BPM, {key}.
+A song project for rick-rubin. {bpm} BPM, {key}.
 
 @{prefs}
 

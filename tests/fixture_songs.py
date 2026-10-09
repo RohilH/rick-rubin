@@ -7,9 +7,9 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, field
 
-from ableton_use.model import (BEATS_PER_BAR, DRUM_MAP, STEP, Note, Part, Fill, Pattern, Section, Song, Track,
+from rick_rubin.model import (BEATS_PER_BAR, DRUM_MAP, STEP, Note, Part, Fill, Pattern, Section, Song, Track,
                     steps_to_notes)
-from ableton_use.theory import Key, voice_lead
+from rick_rubin.theory import Key, voice_lead
 
 # ============================================================================ profiles
 @dataclass
@@ -333,7 +333,7 @@ def generate(subgenre: str = "classic", key: str | None = None, bpm: float | Non
     k = Key.parse(key) if key else Key(rng.choice([9, 5, 7, 2, 0]), prof.scale)  # A F G D C
     degrees = progression or rng.choice(prof.progressions)
     song = Song(title=title or f"{subgenre} house {seed}", bpm=bpm or prof.bpm, key=str(k), swing=prof.swing,
-                meta={"generator": "ableton_use.house.generate", "subgenre": subgenre, "template": template,
+                meta={"generator": "rick_rubin.house.generate", "subgenre": subgenre, "template": template,
                       "seed": seed, "progression": degrees})
 
     sections_spec = TEMPLATES[template]

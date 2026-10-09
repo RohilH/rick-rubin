@@ -1,4 +1,4 @@
-# Command handlers for the ableton-use bridge. Pure Python, duck-typed against
+# Command handlers for the rick-rubin bridge. Pure Python, duck-typed against
 # the Live Object Model so it can be unit-tested with a fake Live outside Ableton.
 # Keep this file compatible with Python 3.7 (Live 11) — no walrus, no match.
 import math
@@ -184,7 +184,7 @@ class Handlers(object):
         try:
             return {"ok": True, "result": fn(**args)}
         except Exception as e:  # noqa: BLE001
-            self._log("ableton-use error in %s: %s" % (cmd, traceback.format_exc()))
+            self._log("rick-rubin error in %s: %s" % (cmd, traceback.format_exc()))
             return {"ok": False, "error": "%s: %s" % (type(e).__name__, e)}
 
     @property

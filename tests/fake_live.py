@@ -9,7 +9,7 @@ import sys
 import threading
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ableton_use" / "live" / "remote_script" / "AbletonUse"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "rick_rubin" / "live" / "remote_script" / "RickRubin"))
 from handlers import Handlers  # noqa: E402
 
 

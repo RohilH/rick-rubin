@@ -7,3 +7,5 @@ __pycache__/
 .DS_Store
 *.mp3
 .cache/
+tracks/
+*.bundle

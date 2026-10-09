@@ -164,7 +164,7 @@ def pack(song: Song, include_patterns: bool = True, bars: tuple[int, int] | None
     L.append(f"{song.bpm:g} BPM · {song.key} · swing {song.swing:g}% · {song.total_bars} bars · {_mmss(song.duration_s)}"
              + (f" · {song.meta.get('subgenre')} / {song.meta.get('template')}" if song.meta.get("subgenre") else ""))
     if song.meta.get("options"):
-        L.append("options (song.py `option()`; switch with `ableton-use ab` or `--set`): " + ", ".join(
+        L.append("options (song.py `option()`; switch with `rick-rubin ab` or `--set`): " + ", ".join(
             f"{k}={v['value']}" + ("" if v["value"] == v["default"] else f" (default {v['default']})") for k, v in song.meta["options"].items()))
     L.append("")
     L.append("## Tracks")

@@ -1,4 +1,4 @@
-"""Client for the ableton-use bridge + the `push_song` renderer (Song -> Live arrangement)."""
+"""Client for the rick-rubin bridge + the `push_song` renderer (Song -> Live arrangement)."""
 from __future__ import annotations
 
 import itertools
@@ -21,7 +21,7 @@ DEFAULT_PORT = 9889
 DEFAULT_SIDECHAIN = {"device": "Compressor", "params": {"Threshold": -28, "Ratio": 4, "Attack": 0.5, "Release": 120}}
 # where instrument names are looked up, in order: Live's own, then the user's saved presets, then VST/AU plug-ins
 INSTRUMENT_CATEGORIES = ["drums", "instruments", "sounds", "user_library", "plugins"]
-REMOTE_SCRIPT_DIR = Path(__file__).parent / "remote_script" / "AbletonUse"
+REMOTE_SCRIPT_DIR = Path(__file__).parent / "remote_script" / "RickRubin"
 
 
 def sample_unity_offset(track) -> float:
@@ -36,7 +36,7 @@ class BridgeError(RuntimeError):
 
 def lock_path(port: int = DEFAULT_PORT) -> Path:
     import tempfile
-    return Path(tempfile.gettempdir()) / ("ableton-use-live.lock" if port == DEFAULT_PORT else f"ableton-use-live-{port}.lock")
+    return Path(tempfile.gettempdir()) / ("rick-rubin-live.lock" if port == DEFAULT_PORT else f"rick-rubin-live-{port}.lock")
 
 
 @contextmanager
@@ -78,7 +78,7 @@ def live_lock(what: str = "", wait_s: float = 1800.0, progress=None, port: int =
             except FileExistsError:
                 continue
         if time.time() > t_end:
-            raise BridgeError(f"Live is in use by another ableton-use run ({h[1] or 'pid ' + str(h[0])}) and did not free up in {wait_s / 60:.0f} min")
+            raise BridgeError(f"Live is in use by another rick-rubin run ({h[1] or 'pid ' + str(h[0])}) and did not free up in {wait_s / 60:.0f} min")
         if progress and not told:
             progress(f"waiting: Live is in use by {h[1] or 'pid ' + str(h[0])}")
             told = True
@@ -90,7 +90,7 @@ def live_lock(what: str = "", wait_s: float = 1800.0, progress=None, port: int =
 
 
 class LiveBridge:
-    """Newline-delimited JSON over TCP to the AbletonUse remote script."""
+    """Newline-delimited JSON over TCP to the RickRubin remote script."""
 
     def __init__(self, host: str = "127.0.0.1", port: int = DEFAULT_PORT, timeout: float = 120.0):
         self.host, self.port, self.timeout = host, port, timeout
@@ -103,8 +103,8 @@ class LiveBridge:
             self._sock = socket.create_connection((self.host, self.port), timeout=5)
         except OSError as e:
             raise BridgeError(
-                f"cannot reach the ableton-use bridge at {self.host}:{self.port} ({e}). Is Live running with the "
-                "'AbletonUse' control surface selected? Run `ableton-use install-bridge` first.") from e
+                f"cannot reach the rick-rubin bridge at {self.host}:{self.port} ({e}). Is Live running with the "
+                "'RickRubin' control surface selected? Run `rick-rubin install-bridge` first.") from e
         self._sock.settimeout(self.timeout)
         return self
 
@@ -423,10 +423,10 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
         else:
             rep.warnings.append(f"locator {m.name!r} at beat {m.start:g} was not created")
     if part and bridge.call("lom", path="song.is_playing"):
-        bridge.call("show_message", text=f"ableton-use: updated '{song.title}'")    # hot reload: leave the transport running
+        bridge.call("show_message", text=f"rick-rubin: updated '{song.title}'")    # hot reload: leave the transport running
         return rep
     bridge.call("transport", action="stop", beat=0)
-    bridge.call("show_message", text=f"ableton-use: pushed '{song.title}' ({rep.clips} clips)")
+    bridge.call("show_message", text=f"rick-rubin: pushed '{song.title}' ({rep.clips} clips)")
     return rep
 
 
@@ -627,7 +627,7 @@ def _baked_stem(song: Song, stem: Path, regions: list[tuple[float, dict]]) -> Pa
 
 
 # ============================================================================ capture
-CAPTURE_TRACK = "ableton-use capture"
+CAPTURE_TRACK = "rick-rubin capture"
 
 
 class CaptureDisturbed(BridgeError):
@@ -818,7 +818,7 @@ def _capture_once(song: Song, bridge: LiveBridge, out_path: str | Path, bars: tu
 
 
 # ============================================================================ what a Live device offers
-PROBE_TRACK = "ableton-use probe"
+PROBE_TRACK = "rick-rubin probe"
 
 
 def devices_cache() -> Path:
@@ -893,10 +893,10 @@ def user_library_candidates() -> list[Path]:
 
 
 def install_bridge(dest: str | Path | None = None) -> Path:
-    """Copy the AbletonUse remote script into Live's User Library."""
+    """Copy the RickRubin remote script into Live's User Library."""
     target_root = Path(dest) if dest else user_library_candidates()[0]
     target_root.mkdir(parents=True, exist_ok=True)
-    target = target_root / "AbletonUse"
+    target = target_root / "RickRubin"
     if target.exists():
         shutil.rmtree(target)
     shutil.copytree(REMOTE_SCRIPT_DIR, target, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
