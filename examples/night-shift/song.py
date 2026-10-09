@@ -33,7 +33,7 @@ bass = song.add_track("Bass", "bass", volume_db=-7, sidechain=True,
 # Stab: Retro Synth's own voice, short; one compressor keyed from the kick does both the glue and the pump.
 stab = song.add_track("Stab", "stab", instrument="Retro Synth", volume_db=-3, pan=-0.1, sends={"A": -12},
                       effects=[{"device": "Compressor", "sidechain": "Kick",
-                                "params": {"Threshold": -18, "Ratio": 3, "Attack": 10, "Release": 90, "Make Up": 6}}])
+                                "params": {"Threshold": -18, "Ratio": 3, "Attack": 10, "Release": 90, "Make Up": 6, "Auto Gain": "Off"}}])
 # Pad: the role's default pad, wide and far back.
 pad = song.add_track("Pad", "pad", volume_db=0, sends={"A": -9}, sidechain=True)
 

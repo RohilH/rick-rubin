@@ -28,8 +28,10 @@ from .bridge import LOGIC_INSTRUMENTS, LogicBridge, LogicError
 from .smf import export_logic_midi
 
 # Logic's names for the shorthand `sidechain: true` compressor (Live: Threshold/Ratio/Attack/Release)
+# Logic's Compressor adds make-up gain by itself ("Auto Gain" -12 dB) — Live's does not, so it is switched off here
 LOGIC_SIDECHAIN = {"device": "Compressor", "params": {"Threshold": DEFAULT_SIDECHAIN["params"]["Threshold"], "Ratio": DEFAULT_SIDECHAIN["params"]["Ratio"],
-                                                       "Attack": DEFAULT_SIDECHAIN["params"]["Attack"], "Release": DEFAULT_SIDECHAIN["params"]["Release"]}}
+                                                       "Attack": DEFAULT_SIDECHAIN["params"]["Attack"], "Release": DEFAULT_SIDECHAIN["params"]["Release"],
+                                                       "Auto Gain": "Off"}}
 BUS_LETTERS = "ABCDEFGHIJKL"
 
 

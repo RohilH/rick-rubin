@@ -1212,7 +1212,11 @@ class LogicBridge:
                 seen.append(cur)
                 nxt = self._step_until_change(col, 1, stable_read)
                 if nxt == cur:
-                    break                                    # end stop
+                    # two-state parameters (On/Off) do not step: pressing the V-Pot toggles them
+                    self._press(M.VPOT_PUSH + col, settle=0.4)
+                    nxt = stable_read()
+                    if nxt == cur:
+                        break                                # end stop
                 cur = nxt
                 if hit(cur):
                     return cur
