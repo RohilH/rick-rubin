@@ -36,3 +36,13 @@ answered in the second drop by a climb Ab–Bb–C.
 
 **Outstanding:** judge the sound on Logic's bounce (`--daw logic capture`), not the preview; the stab and pad
 patches are Logic's defaults and may want a Library patch once heard.
+
+## Session 2 — 2026-10-09, afternoon
+
+**Measured on Logic's bounce (soloed, drop 1, bars 25-32):** kick -17 LUFS, bass -28, stab -42, pad -54, hats -49. Two
+causes: Drum Synth is pitched by the note it receives (key tracking on), so the kick on C1 was a sub-kick and the hats on
+F#1 were dull and quiet — the bridge now sends every hit of a single-voice drum instrument on C3; and the offline preview's
+levels say nothing about Logic's patches (Retro Synth's and the pad's default voices are quiet). Faders rebalanced on the
+Logic bounce, not the preview: kick -9, clap -7, hats -8, open hat -11, rim -10, shaker -16, bass -8, stab -3 with 6 dB of
+make-up on its compressor, pad 0, limiter gain +3. Drum Synth voices: Punch Kick, Human Clap, Sharp Hat (hats and shaker,
+different decay and tone), Smooth (open hat), a Percussion voice for the rim.

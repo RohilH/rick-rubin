@@ -64,6 +64,7 @@ calls on it, mirroring `live/client.py`.
 | `instrument="Deep House Kit"` (not an instrument name) | the first Library patch the search finds |
 | `instrument_params` | the instrument's parameters by displayed value, set in the surface's Instrument Edit view (e.g. Drum Synth: `{"Sound Category": "Kicks", "Sound Model": "Punch Kick", "Decay": 42}`) |
 | pattern / section parts | one region per track per section with the notes (swing and groove baked in, as for Live) |
+| drum track on a single-voice instrument (Drum Synth, Quick Sampler, `sample=`) | every hit sent on C3, like Live's Simpler one-shots (those instruments pitch by note) |
 | `effects` | Logic plug-ins by name in the insert slots, in order, after the patch's own inserts; `params` set by displayed value |
 | `sidechain: true` | a Compressor keyed from the Kick (side chain input = the Kick's channel strip) |
 | `returns` A, B … and `sends` | Bus 1, 2 … with an Aux each, the return's plug-ins on the Aux, sends in dB |

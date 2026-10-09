@@ -15,30 +15,30 @@ song = Song("Night Shift", bpm=126, key="F minor", swing=56)
 # Drums: one Logic Drum Synth per voice, each on its own track so the mixer, sends and automation can treat
 # them apart, as a house producer would. Drum Synth is a single-voice analogue-style drum: its Sound Category
 # and Sound Model pick the voice, Decay / Tone / Pitch shape it (names as Logic's edit view shows them).
-kick = song.add_track("Kick", "kick", volume_db=-4, instrument="Drum Synth",
+kick = song.add_track("Kick", "kick", volume_db=-9, instrument="Drum Synth",
                       instrument_params={"Sound Category": "Kicks", "Sound Model": "Punch Kick", "Decay": 42, "Tone": 20})
-clap = song.add_track("Clap", "clap", volume_db=-9, sends={"A": -16}, instrument="Drum Synth",
+clap = song.add_track("Clap", "clap", volume_db=-7, sends={"A": -16}, instrument="Drum Synth",
                       instrument_params={"Sound Category": "Snares and Claps", "Sound Model": "Human Clap", "Decay": 40})
-hats = song.add_track("Hats", "hat", volume_db=-14, pan=0.15, swing=True, instrument="Drum Synth",
+hats = song.add_track("Hats", "hat", volume_db=-8, pan=0.15, swing=True, instrument="Drum Synth",
                       instrument_params={"Sound Category": "Hats and Cymbals", "Sound Model": "Sharp Hat", "Decay": 18})
-ohat = song.add_track("Open Hat", "openhat", volume_db=-17, pan=-0.1, swing=True, instrument="Drum Synth",
+ohat = song.add_track("Open Hat", "openhat", volume_db=-11, pan=-0.1, swing=True, instrument="Drum Synth",
                       instrument_params={"Sound Category": "Hats and Cymbals", "Sound Model": "Smooth", "Decay": 55})
-rim = song.add_track("Rim", "perc", volume_db=-15, pan=-0.3, swing=True, sends={"A": -20}, instrument="Drum Synth",
+rim = song.add_track("Rim", "perc", volume_db=-10, pan=-0.3, swing=True, sends={"A": -20}, instrument="Drum Synth",
                      instrument_params={"Sound Category": "Percussion", "Decay": 25})
-shaker = song.add_track("Shaker", "shaker", volume_db=-21, pan=0.3, swing=True, instrument="Drum Synth",
+shaker = song.add_track("Shaker", "shaker", volume_db=-16, pan=0.3, swing=True, instrument="Drum Synth",
                         instrument_params={"Sound Category": "Hats and Cymbals", "Sound Model": "Sharp Hat", "Decay": 10, "Tone": 70})
 # Bass: the role's default Logic patch (a synth bass) ducked against the kick — the tech house pump.
 bass = song.add_track("Bass", "bass", volume_db=-7, sidechain=True,
                       effects=[{"device": "Channel EQ"}])
 # Stab: Retro Synth's own voice, short; one compressor keyed from the kick does both the glue and the pump.
-stab = song.add_track("Stab", "stab", instrument="Retro Synth", volume_db=-12, pan=-0.1, sends={"A": -12},
+stab = song.add_track("Stab", "stab", instrument="Retro Synth", volume_db=-3, pan=-0.1, sends={"A": -12},
                       effects=[{"device": "Compressor", "sidechain": "Kick",
-                                "params": {"Threshold": -18, "Ratio": 3, "Attack": 10, "Release": 90}}])
+                                "params": {"Threshold": -18, "Ratio": 3, "Attack": 10, "Release": 90, "Make Up": 6}}])
 # Pad: the role's default pad, wide and far back.
-pad = song.add_track("Pad", "pad", volume_db=-17, sends={"A": -9}, sidechain=True)
+pad = song.add_track("Pad", "pad", volume_db=0, sends={"A": -9}, sidechain=True)
 
 song.add_return("A", [{"device": "ChromaVerb", "params": {"Dry": 0, "Wet": 100, "Decay": 1800}}])
-song.master_effects = [{"device": "Limiter", "params": {"Gain": 1.5}}]
+song.master_effects = [{"device": "Limiter", "params": {"Gain": 3}}]
 
 # ---------------------------------------------------------------- drums
 four = song.pattern("four", kick, "x...x...x...x...")

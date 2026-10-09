@@ -84,7 +84,13 @@ def channel_for(track: Track, i: int) -> int:
     return others[i % len(others)]
 
 
+# instruments that play one drum voice whatever the note, pitched by it: they get every hit on C3 like Live's Simpler
+SINGLE_VOICE_INSTRUMENTS = ("drum synth", "quick sampler", "sampler", "sample alchemy", "alchemy")
+
+
 def drum_pitch(track: Track) -> int:
+    if track.sample or (track.instrument and track.instrument[0].strip().lower() in SINGLE_VOICE_INSTRUMENTS):
+        return 60
     return DRUM_MAP.get(track.role, 60)
 
 
@@ -120,7 +126,7 @@ def export_logic_midi(song: Song, path: str | Path) -> dict:
                 if c.track != t.name:
                     continue
                 for n in c.notes:
-                    pitch = drum_pitch(t) if (t.sample and t.is_drum) else n.pitch
+                    pitch = drum_pitch(t) if (t.is_drum and (t.sample or (t.instrument and t.instrument[0].strip().lower() in SINGLE_VOICE_INSTRUMENTS))) else n.pitch
                     on = int(round((c.start + n.start) * PPQ))
                     off = max(on + 1, int(round((c.start + n.start + n.dur) * PPQ)))
                     ev.append((on, 3, bytes([0x90 | ch, pitch & 0x7F, max(1, min(127, int(n.vel)))])))
