@@ -567,13 +567,16 @@ class Mixer:
             main = self.app.main_window(self.project)
             if main is None:
                 raise AXError("no project window to open a Mixer for")
-            if find(main, lambda e: role(e) == "AXLayoutArea" and desc(e) == "Mixer", 7) is not None:
+            def pane(win):
+                # the Mixer shown as a pane of the main window (the Inspector's channel strips are a 'Mixer' area too, but empty)
+                area = find(win, lambda e: role(e) == "AXLayoutArea" and desc(e) == "Mixer" and len(children(e)) > 1, 7) if win is not None else None
+                return win if area is not None else None
+            if pane(main) is not None:
                 return main
             self.app.make_key(main)
             if not self.app.menu("Window", "Open Mixer"):
                 raise AXError("could not open the Mixer window")
-            w = wait_for(lambda: self.app.mixer_window(self.project)
-                         or (find(self.app.main_window(self.project), lambda e: role(e) == "AXLayoutArea" and desc(e) == "Mixer", 7) and self.app.main_window(self.project)), 6.0)
+            w = wait_for(lambda: self.app.mixer_window(self.project) or pane(self.app.main_window(self.project)), 6.0)
             if w is None:
                 raise AXError("the Mixer window did not appear")
         return w
@@ -590,8 +593,11 @@ class Mixer:
     def strips(self) -> list:
         w = self.window()
         self.ensure_tracks_view(w)
-        area = find(w, lambda e: role(e) == "AXLayoutArea" and desc(e) == "Mixer", 6)
-        return [c for c in children(area)] if area is not None else []
+
+        def read():
+            area = find(w, lambda e: role(e) == "AXLayoutArea" and desc(e) == "Mixer" and len(children(e)) > 0, 7)
+            return [c for c in children(area)] if area is not None else []
+        return wait_for(read, 4.0, 0.2) or []
 
     @staticmethod
     def control(strip, text: str):

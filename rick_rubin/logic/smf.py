@@ -66,7 +66,8 @@ def cc7_for_db(db: float) -> int:
     return int(round(max(0, CC7_UNITY + db * 4.5)))
 
 
-DRUM_PROGRAM = 25                     # on channel 10 Logic 11.2 answers this with its Drum Synth kit (0 is an acoustic SoCal kit)
+DRUM_PROGRAM = 0                      # on channel 10 Logic 11.2 answers this with its SoCal kit (Drum Kit Designer), a plain software
+                                      # instrument track; the electronic programs (16, 24, 25) give single Drum Machine Designer pads
 
 
 def program_for(track: Track) -> int | None:

@@ -116,9 +116,9 @@ class LogicBridge:
         if not logic_running():
             self.say("launching Logic Pro")
             subprocess.run(["open", "-a", LOGIC_APP], check=False)
-            if AX.wait_for(logic_running, 60.0, 0.5) is None:
-                raise LogicError("Logic Pro did not start")
-            time.sleep(4.0)
+            if AX.wait_for(logic_running, 150.0, 1.0) is None:
+                raise LogicError("Logic Pro did not start (it takes a minute or two on a cold start)")
+            time.sleep(6.0)
         try:
             self.app = AX.LogicApp()
         except AX.AXError as e:
@@ -577,6 +577,13 @@ class LogicBridge:
         K.key(self.app.pid, "return")
         return True
 
+    @staticmethod
+    def _presel_text(row: str, col: int) -> str:
+        """The preselected name Logic writes over the LCD row from V-Pot `col`'s column rightwards (up to two spaces)."""
+        text = row.ljust(56)[col * 7:]
+        cut = text.find("  ")
+        return (text if cut < 0 else text[:cut]).strip()
+
     def _plugin_name(self, text: str) -> str:
         return text.split(" (")[0].strip().lower()
 
@@ -623,11 +630,17 @@ class LogicBridge:
             self._tick(vpot, target_i - 3, spacing=0.03)      # fast, unverified: dropped detents only leave us short
             self._need_mcu().settle(0.15, 1.0)
             cur = read()
-            if not any(match(n) for n in known[max(0, target_i - 12): target_i + 1]) or cur not in known:
-                pass
-            if cur in known and known.index(cur) > target_i:   # overshot: come back
-                for _ in range(known.index(cur) - target_i + 1):
-                    cur = self._step_until_change(vpot, -1, read)
+            if cur not in known or known.index(cur) > target_i:
+                # overshot (or landed on something the catalog has not seen): walk back until the target or the start
+                for _ in range(max_steps):
+                    if match(cur) or cur.startswith("--"):
+                        break
+                    nxt = self._step_until_change(vpot, -1, read)
+                    if nxt == cur:
+                        break
+                    cur = nxt
+                    if cur in known and known.index(cur) <= target_i:
+                        break
             order = known[: known.index(cur) + 1] if cur in known else ["--"]
         for _ in range(max_steps):
             if match(cur):
@@ -655,21 +668,20 @@ class LogicBridge:
         if slot >= 8:
             raise LogicError(f"no free insert slot within the first 8 on {self.strip_info(ref).name!r}")
         self.close_plugin_windows()
-        self.mcu_select(ref if index is None else index, view)
+        self.mcu_select(self._strip_index(ref) if index is None else index)
         self.mcu_view(M.PLUGIN)
         row0, row1 = self._lcd()
-        if "Ins1Pl" not in row0 + row1:
+        if not re.search(r"Ins[1-7]Pl Ins[2-8]Pl", row0 + row1):
             raise LogicError(f"the surface is not in the Plug-in Channel view (LCD {row0!r} / {row1!r})")
         u = self._need_mcu()
 
         def read():
             self._stable_lcd(0.2, 1.0)
-            return u.state.line(1)[slot * 7: slot * 7 + 28].split("  ")[0].strip()
+            return self._presel_text(u.state.line(1), slot)
         want = name.strip().lower()
         self._scroll_list(slot, read, lambda t: self._plugin_name(t) == want or (len(want) > 3 and self._plugin_name(t).startswith(want)), f"plug-in {name!r}")
         self._press(M.VPOT_PUSH + slot, settle=0.8)                        # inserts it (and opens its window)
         time.sleep(0.5)
-        self.leave_global_view()
         got = AX.wait_for(lambda: (lambda cur: cur if len(cur) > len(before) else None)(self.strip_info(ref).inserts), 6.0, 0.25)
         if not got:
             raise LogicError(f"{name!r} was preselected but Logic did not insert it")
@@ -680,19 +692,24 @@ class LogicBridge:
         """Put software instrument `name` ("Retro Synth", "Alchemy", "Serum 2"...) in the instrument slot of track
         strip `ref`, through the Mackie Control's Instrument view (the strip's V-Pot scrolls the instrument list)."""
         before = self.strip_info(ref).instrument
-        idx = ref if index is None else index
+        idx = self._strip_index(ref) if index is None else index
         self.close_plugin_windows()
-        self.mcu_select(idx, "tracks")
-        self._press(M.INSTRUMENT)
-        row0, row1 = self._lcd()
-        if row0.startswith("Track ") or '"' in row0:                        # channel view: back to the Mixer view
-            self._press(M.INSTRUMENT)
+        self.mcu_select(idx)
+        # the Track button's Channel view: V-Pot 1 volume, 2 pan, 3 instrument (its preselection text has the
+        # room of the whole right half of the LCD), 4-5 inserts 1-2, 6-8 sends
+        for _ in range(3):
+            self._press(M.TRACK, settle=0.5)
+            self._stable_lcd(0.4, 2.0)
+            if self._lcd()[0].startswith("Volume Pan"):
+                break
+        else:
+            raise LogicError(f"the surface is not in the Track Channel view (LCD {self._lcd()[0]!r})")
         u = self._need_mcu()
-        col = idx % 8
+        col = 2
 
         def read():
             self._stable_lcd(0.2, 1.0)
-            return u.state.line(1)[col * 7: col * 7 + 35].split("  ")[0].strip()
+            return self._presel_text(u.state.line(1), col)
         want = name.strip().lower()
 
         def match(t: str) -> bool:
@@ -702,14 +719,22 @@ class LogicBridge:
             return low.startswith(want) and "mono" not in low and "multi" not in low and "legacy" not in low
         self._scroll_list(col, read, match, f"instrument {name!r}", kind="instruments")
         self._press(M.VPOT_PUSH + col, settle=1.0)
-        got = AX.wait_for(lambda: (lambda cur: cur if cur and cur != before else None)(self.strip_info(ref).instrument), 8.0, 0.25)
+        time.sleep(1.0)
         self.close_plugin_windows()
-        if not got:
-            cur = self.strip_info(ref).instrument
-            if cur and (want.startswith(str(cur).lower()[:4]) or str(cur).lower().startswith(want[:4])):
-                return cur
-            raise LogicError(f"{name!r} was preselected but Logic did not load it")
-        return got
+        # back in the Track Channel view the 'Inst' cell names the loaded instrument (abbreviated); the Mixer's
+        # strip calls some instruments 'input', so it is the LCD that confirms
+        for _ in range(3):
+            self._stable_lcd(0.4, 2.0)
+            if self._lcd()[0].startswith("Volume Pan"):
+                break
+            self._press(M.TRACK, settle=0.5)
+        cell = u.state.cells(1)[2] if self._lcd()[0].startswith("Volume Pan") else ""
+        shown = self.strip_info(ref).instrument
+        if cell and (abbrev_matches(cell, name.replace(" ", "")) or name.lower().startswith(cell.lower()[:4])):
+            return f"{name} ({cell})"
+        if shown and shown != before and shown != "input":
+            return shown
+        raise LogicError(f"{name!r} was preselected but Logic did not load it (surface shows {cell!r}, Mixer {shown!r})")
 
     def load_patch(self, track_index: int, query: str) -> dict:
         """Load the first Library patch matching `query` on the track (Logic's Library search; results in order)."""
@@ -806,31 +831,83 @@ class LogicBridge:
             u.send(mido.Message("control_change", channel=0, control=0x10 + vpot, value=d | 1))
             time.sleep(spacing)
 
+    def _strip_index(self, ref) -> int:
+        """Position of strip `ref` (int or name) in the Mixer's Tracks view — which is also its channel on the
+        surface's Arrange view: tracks, then the Aux strips, Stereo Out, Master."""
+        if isinstance(ref, int):
+            return ref
+        names = [i.name for i in self.strips()]
+        if ref not in names:
+            raise LogicError(f"no channel strip called {ref!r} (have {names})")
+        return names.index(ref)
+
+    def _bank_start(self, index: int) -> int:
+        """Where the surface's bank begins for channel `index`: banks move by 8, but Logic clamps the last one so
+        that all 8 faders are in use."""
+        n = len(self.strips())
+        return min((index // 8) * 8, max(0, n - 8))
+
     def mcu_select(self, index: int, view: str = "tracks") -> None:
-        """Select channel strip `index` on the surface: the Arrange view shows the tracks, 'aux' / 'outputs'
-        switch the Global View to those strips (index counts within that view)."""
+        """Select channel strip `index` (its position in the Mixer's Tracks view) on the surface."""
         u = self._need_mcu()
-        if view == "tracks":
-            if u.state.leds.get(M.GLOBAL_VIEW) or self._view != "tracks":
-                self._press(M.GLOBAL_VIEW)                   # back to the Arrange view (and the Mixer's Tracks view)
-                if u.state.leds.get(M.GLOBAL_VIEW):
-                    self._press(M.GLOBAL_VIEW)
-        else:
-            self._press(M.VIEW_AUX if view == "aux" else M.VIEW_OUTPUTS)
-        self._view = view
-        for _ in range(8):                                  # to the first bank
-            u.press(M.BANK_LEFT, 0.01)
-        u.settle(0.1, 1.0)
-        for _ in range(index // 8):
-            u.press(M.BANK_RIGHT, 0.01)
-        u.settle(0.1, 1.0)
-        self._press(M.SELECT + index % 8)
+        _ = view
+        if u.state.leds.get(M.GLOBAL_VIEW):
+            self._press(M.GLOBAL_VIEW)                        # always the Arrange view: every strip is a channel there
+        self._view = "tracks"
+        infos = self.strips()
+        n = len(infos)
+        start = self._bank_start(index)
+        ch = index - start
+        if not 0 <= ch < 8:
+            raise LogicError(f"strip {index + 1} is not on the surface's bank (start {start + 1}, {n} strips)")
+        n_tracks = len(self.tracks())
+        for attempt in range(3):
+            for _ in range(max(1, -(-n // 8))):
+                self._press(M.BANK_LEFT, 0.05)
+            for _ in range(index // 8):
+                self._press(M.BANK_RIGHT, 0.05)
+            self._press(M.SELECT + ch, settle=0.4)
+            # check: a track's header takes the focus in the Tracks area; other strips echo their name on the LCD
+            if index < n_tracks:
+                focused = self._focused_track()
+                if focused == index:
+                    break
+                self.say(f"mcu: select hit track {focused} instead of {index}, trying again")
+            else:
+                echo = u.state.cells(1)[ch] if ch < 8 else ""
+                want = infos[index].name.replace(" ", "")
+                if not echo or abbrev_matches(echo, want) or want.lower().startswith(echo.lower()[:4]):
+                    break
+                self.say(f"mcu: select echoed {echo!r} instead of {infos[index].name!r}, trying again")
+        self._selected = index
+
+    def _focused_track(self) -> int | None:
+        for i, h in enumerate(self.app.track_headers(self.main)):
+            f = next((k for k in AX.children(h) if AX.desc(k) == "Has Focus"), None)
+            if f is not None and AX.is_on(f):
+                return i
+        return None
+
+    def _mixer_names_view(self, button: int) -> list[str]:
+        """Press an assignment button until the LCD's upper row shows the channel names (the Mixer view of that
+        assignment); returns the names. From an Edit or Channel view one or two presses are needed."""
+        known = [i.name for i in self.strips()]
+        for _ in range(4):
+            cells = [c for c in self._need_mcu().state.cells(0) if c]
+            hits = sum(1 for c in cells if any(abbrev_matches(c, k.replace(" ", "")) or k.startswith(c) for k in known))
+            if hits >= min(2, len(known)):
+                return cells
+            self._press(button, settle=0.5)
+            self._stable_lcd(0.4, 2.0)
+        return [c for c in self._need_mcu().state.cells(0) if c]
 
     def mcu_view(self, button: int, channel_view: bool = True) -> None:
         """Enter an assignment view; press again for the Channel view (the selected strip's parameters).
         Each press toggles Mixer view <-> Channel view, so the LCD is read (once stable) after every press."""
         def chan(row0, row1):
-            return bool(re.search(r'^(Track|Aux|Output|Stereo)\b.*"', row0)) or "Ins1Pl" in row0 + row1 or bool(re.search(r"Sen\d", row0 + row1))
+            both = row0 + row1
+            return bool(re.search(r'^(Track|Aux|Output|Stereo)\b.*"', row0)) or bool(re.search(r"Ins[1-7]Pl Ins[2-8]Pl", both)) \
+                or bool(re.search(r"Sen\d", both))
         for _ in range(3):
             self._press(button, settle=0.5)
             self._stable_lcd(0.4, 2.0)
@@ -879,7 +956,6 @@ class LogicBridge:
         if AX.disp_number(level_text()) is None:
             raise LogicError(f"the send level is not shown (LCD {u.state.line(0)!r} / {u.state.line(1)!r})")
         got = self._converge(level_pot, db, level_text, unit_hint="dB")
-        self.leave_global_view()
         return got
 
     def _step_until_change(self, vpot: int, direction: int, read: Callable[[], str], tries: int = 4) -> str:
@@ -944,6 +1020,8 @@ class LogicBridge:
                 best = (abs(new - target), text, new)
             elif per_tick is not None and abs(new - target) >= abs(err) and abs(n) == 1:
                 break                                       # a single detent overshoots: the best is as close as it gets
+            elif abs(new - target) >= abs(err) and abs(n) > 1:
+                per_tick = None                             # the step size changed along the way (log scales): re-measure
             cur = new
         if best[2] != cur and per_tick:
             back = int(round((best[2] - cur) / per_tick))
@@ -960,14 +1038,14 @@ class LogicBridge:
         parameter names or the LCD abbreviations."""
         self._need_mcu()
         rep = ParamReport()
-        self.mcu_select(track_index, view)
+        self.mcu_select(self._strip_index(track_index) if isinstance(track_index, str) else track_index)
         self.mcu_view(M.PLUGIN)
         row0, row1 = self._lcd()
-        if "Ins1Pl" not in row1 and "Ins1Pl" not in row0:
+        if not re.search(r"Ins[1-7]Pl Ins[2-8]Pl", row0 + row1):
             raise LogicError(f"the Mackie Control is not in the Plug-in Channel view (LCD: {row0!r} / {row1!r})")
         self._press(M.VPOT_PUSH + (slot - 1), settle=0.8)       # open the plug-in's edit view (and its window)
         row0, row1 = self._lcd()
-        if "Ins1Pl" in row0 + row1:
+        if re.search(r"Ins[1-7]Pl Ins[2-8]Pl", row0 + row1):
             raise LogicError(f"insert slot {slot} did not open an edit view (LCD: {row0!r} / {row1!r})")
         self._value_mode()
         plugin = self._edit_view_plugin()
@@ -985,7 +1063,35 @@ class LogicBridge:
             except LogicError as e:
                 rep.errors.append(f"{name}: {e}")
         self.close_plugin_windows()
-        self.leave_global_view()
+        return rep
+
+    def set_instrument_params(self, track_index: int, params: dict, instrument: str = "") -> ParamReport:
+        """Set parameters of a track's software instrument by displayed value, in the Instrument Edit view."""
+        self._need_mcu()
+        rep = ParamReport()
+        self.mcu_select(track_index)
+        for _ in range(3):
+            self._press(M.INSTRUMENT, settle=0.5)
+            self._stable_lcd(0.4, 2.0)
+            row0, row1 = self._lcd()
+            names_view = any(abbrev_matches(c, k.replace(" ", "")) for c in self._need_mcu().state.cells(0) if c for k in self.tracks()[:8])
+            if not names_view and not row0.startswith("Volume Pan"):
+                break
+        self._value_mode()
+        for name, val in params.items():
+            try:
+                try:
+                    col = self._find_param(name, instrument)
+                except LogicError:
+                    self._press(M.NAME_VALUE, 0.3)
+                    self._press(M.NAME_VALUE, 0.3)
+                    time.sleep(1.0)
+                    col = self._find_param(name, instrument)
+                rep.set[name] = self._set_param_column(col, val)
+                time.sleep(1.5)
+            except LogicError as e:
+                rep.errors.append(f"{name}: {e}")
+        self.close_plugin_windows()
         return rep
 
     def _edit_view_plugin(self) -> str:
@@ -1000,10 +1106,19 @@ class LogicBridge:
         self._press(M.NAME_VALUE)
         return m.group(1).split(" (")[0] if m else ""
 
+    def _in_name_mode(self) -> bool:
+        row0, _ = self._lcd()
+        return bool(re.match(r'^(Track|Aux|Output|Stereo|Master|Bus)\b', row0)) and '"' in row0
+
     def _value_mode(self) -> None:
         """Value mode: parameter names in the upper row, values in the lower."""
-        row0, row1 = self._lcd()
-        if row0.startswith(("Track", "Aux", "Output", "Stereo", "Master")) and '"' in row0:
+        if self._in_name_mode():
+            self._press(M.NAME_VALUE)
+
+    def _name_mode(self) -> None:
+        """Name mode: the header ('Track 3 "Bass" Ins.2 "Compressor" Page 1/3') above, the eight parameter names
+        below — the only row where all eight names are readable (in Value mode the page label hides the last two)."""
+        if not self._in_name_mode():
             self._press(M.NAME_VALUE)
 
     def _stable_lcd(self, quiet: float = 0.9, timeout: float = 3.0) -> None:
@@ -1017,31 +1132,34 @@ class LogicBridge:
             time.sleep(0.05)
 
     def _names(self) -> list[str]:
-        """The parameter-name cells, read twice a second apart so a long name Logic shows for a moment after a
-        V-Pot move ('Threshold' spilling into the next cell) is not mistaken for the abbreviations."""
+        """The eight parameter-name cells (Name mode's lower row), read twice a second apart so a long name Logic
+        shows for a moment after a V-Pot move ('Threshold' spilling into the next cell) is not mistaken for them."""
         u = self._need_mcu()
+        self._name_mode()
         t_end = time.time() + 5.0
         prev = None
         while time.time() < t_end:
             self._stable_lcd(0.6, 2.0)
-            cells = u.state.cells(0)
+            cells = u.state.cells(1)
             if cells == prev:
                 return cells
             prev = cells
             time.sleep(0.8)
-        return u.state.cells(0)
+        return u.state.cells(1)
 
     def _values(self) -> list[str]:
         st = self._need_mcu().state
+        self._value_mode()
         return [c.strip() for c in st.columns(1)]
 
     def _find_param(self, name: str, plugin: str) -> int:
         """Page through the edit view until a column's name stands for `name`; returns the column (0-7)."""
         table = LCD_NAMES.get(plugin, {})
         wanted = [table[k] for k in table if k.lower() == name.lower()] + [name]
+        self._name_mode()
         for _ in range(12):                                   # back to the first page
             self._stable_lcd()
-            if "Page 1/" in "".join(self._lcd()):
+            if "Page 1/" in "".join(self._lcd()) or "/" not in self._lcd()[0]:
                 break
             self._press(M.CURSOR_LEFT, 0.15)
         seen_pages = set()
@@ -1071,8 +1189,9 @@ class LogicBridge:
             want = ("On" if val else "Off") if isinstance(val, bool) else str(val).strip()
             cur = read()
             seen = []
-            for _ in range(40):
-                if cur.lower() == want.lower() or (len(want) >= 3 and cur.lower().startswith(want.lower()[:len(cur)])):
+            for _ in range(60):
+                if cur.lower() == want.lower() or (len(want) >= 3 and cur.lower().startswith(want.lower()[:len(cur)])) \
+                        or abbrev_matches(cur, want):
                     return cur
                 if cur in seen:
                     break
@@ -1082,7 +1201,8 @@ class LogicBridge:
                 cur = read()
             raise LogicError(f"no option {want!r} (options seen: {seen})")
         target = AX.disp_number(val) if isinstance(val, str) else float(val)
-        return self._converge(col, float(target), read)
+        shown = self._converge(col, float(target), read)
+        return shown + "B" if shown.endswith(" d") else shown          # the 7-character cell cuts 'dB' short
 
     # ------------------------------------------------------------------ bounce
     def bounce(self, out_path: str | Path, start_bar: int, end_bar: int, bit_depth: str = "24", sample_rate: str | None = None,

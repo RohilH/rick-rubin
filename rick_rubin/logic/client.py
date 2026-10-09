@@ -106,8 +106,8 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
         info["instrument"] = f"{before.instrument} (Logic patch for role {t.role!r})" if before.instrument else "?"
         if before.inserts:
             info["patch_fx"] = list(before.inserts)
+        loaded = None
         if load_instruments and t.instrument and not t.sample and not t.serum:
-            loaded = None
             for q in t.instrument:
                 try:
                     if is_logic_instrument(q):
@@ -127,6 +127,13 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
                 info["instrument"] = loaded
             else:
                 rep.warnings.append(f"{t.name}: none of {t.instrument} was found in Logic — the role's patch stays")
+        if t.instrument_params and not t.sample and not t.serum:
+            try:
+                pr = bridge.set_instrument_params(index[t.name], t.instrument_params, (loaded or "").split(" (")[0] if load_instruments else "")
+                info["instrument_params"] = ", ".join(f"{k} {v}" for k, v in pr.set.items())
+                rep.warnings += [f"{t.name}: instrument: {m}" for m in pr.errors]
+            except LogicError as err:
+                rep.warnings.append(f"{t.name}: instrument parameters not set ({err})")
         if t.sample:
             rep.warnings.append(f"{t.name}: sample tracks (Simpler one-shots) are not yet built in Logic; the role's patch plays the notes")
         if t.serum:
@@ -242,11 +249,11 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
             shown_all = []
             for e in song.returns[x]:
                 try:
-                    got = bridge.insert_plugin(strip, e["device"], view="aux", index=_aux_index(bridge, aux.name))
+                    got = bridge.insert_plugin(strip, e["device"])
                     slot = len(bridge.strip_info(strip).inserts)
                     shown = ""
                     if e.get("params"):
-                        pr = bridge.set_plugin_params(_aux_index(bridge, aux.name), slot, e["params"], view="aux")
+                        pr = bridge.set_plugin_params(aux.name, slot, e["params"])
                         shown = ", ".join(f"{k} {v}" for k, v in pr.set.items())
                         rep.warnings += [f"return {x}: {e['device']}: {m}" for m in pr.errors]
                     shown_all.append(got + (f" ({shown})" if shown else ""))
@@ -263,11 +270,11 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
             strip = out.name
             shown_all = []
             for e in song.master_effects:
-                got = bridge.insert_plugin(strip, e["device"], view="outputs", index=0)
+                got = bridge.insert_plugin(strip, e["device"])
                 slot = len(bridge.strip_info(strip).inserts)
                 shown = ""
                 if e.get("params"):
-                    pr = bridge.set_plugin_params(0, slot, e["params"], view="outputs")
+                    pr = bridge.set_plugin_params(out.name, slot, e["params"])
                     shown = ", ".join(f"{k} {v}" for k, v in pr.set.items())
                     rep.warnings += [f"master: {e['device']}: {m}" for m in pr.errors]
                 shown_all.append(got + (f" ({shown})" if shown else ""))

@@ -172,8 +172,7 @@ class FakeLogicBridge:
         return {"query": query, "loaded": True, "instrument": "Alchemy", "inserts": s.inserts}
 
     def set_plugin_params(self, track_index, slot, params, view="tracks"):
-        pool = [s for s in self._strips if s.kind == ("aux" if view == "aux" else "output" if view == "outputs" else "track")]
-        s = pool[track_index]
+        s = self._strip(track_index)
         rep = ParamReport()
         for k, v in params.items():
             if k == "Nope":
@@ -181,6 +180,13 @@ class FakeLogicBridge:
             else:
                 rep.set[k] = f"{v}"
         s.params.setdefault(slot, {}).update(rep.set)
+        return rep
+
+    def set_instrument_params(self, track_index, params, instrument=""):
+        rep = ParamReport()
+        for k, v in params.items():
+            rep.set[k] = f"{v}"
+        self._strip(track_index).params.setdefault(0, {}).update(rep.set)
         return rep
 
     def set_side_chain(self, ref, plugin, source, nth=0):
