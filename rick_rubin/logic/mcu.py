@@ -23,7 +23,7 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Callable
+from collections.abc import Callable
 
 PORT_NAME = "rick-rubin MCU"
 MCU_ID = [0x00, 0x00, 0x66, 0x14]
@@ -116,7 +116,7 @@ class MackieControl:
         self.listeners: list[Callable[[object], None]] = []
 
     # ------------------------------------------------------------------ port
-    def open(self) -> "MackieControl":
+    def open(self) -> MackieControl:
         import mido
         self._out = mido.open_output(self.name, virtual=True)
         self._in = mido.open_input(self.name, virtual=True, callback=self._on_message)

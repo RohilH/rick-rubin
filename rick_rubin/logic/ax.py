@@ -23,8 +23,9 @@ from __future__ import annotations
 import math
 import re
 import time
-from dataclasses import dataclass, field
-from typing import Any, Callable
+from dataclasses import dataclass
+from typing import Any
+from collections.abc import Callable
 
 try:
     from ApplicationServices import (AXUIElementCopyActionNames, AXUIElementCopyAttributeNames, AXUIElementCopyAttributeValue,
@@ -287,7 +288,7 @@ class LogicApp:
             raise AXError("Logic has no menu bar (not running?)")
         for part in path:
             want = part.rstrip("…").rstrip(".")
-            nxt = find(el, lambda e: role(e) in ("AXMenuBarItem", "AXMenuItem") and (
+            nxt = find(el, lambda e, want=want, part=part: role(e) in ("AXMenuBarItem", "AXMenuItem") and (
                 title(e).rstrip("…").rstrip(".") == want or str(attr(e, "AXIdentifier") or "") == part), 3 if not part.endswith(":") else 6)
             if nxt is None:
                 raise AXError(f"no menu item {' > '.join(path)!r} (stopped at {part!r})")

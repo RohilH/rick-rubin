@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from ..live.client import DEFAULT_SIDECHAIN, PushReport
-from ..model import Song, Track
+from ..model import Song
 from .bridge import LOGIC_INSTRUMENTS, LogicBridge, LogicError
 from .smf import export_logic_midi
 

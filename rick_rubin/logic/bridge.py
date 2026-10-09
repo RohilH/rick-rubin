@@ -18,13 +18,12 @@ turns one into bridge commands for Ableton.
 from __future__ import annotations
 
 import json
-import os
 import re
 import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from collections.abc import Callable
 
 from ..live.client import BridgeError
 from . import ax as AX
@@ -113,7 +112,7 @@ class LogicBridge:
         self._view = "tracks"
 
     # ------------------------------------------------------------------ lifecycle
-    def connect(self) -> "LogicBridge":
+    def connect(self) -> LogicBridge:
         if not logic_running():
             self.say("launching Logic Pro")
             subprocess.run(["open", "-a", LOGIC_APP], check=False)
@@ -383,7 +382,7 @@ class LogicBridge:
             if not cols:
                 raise LogicError("the file panel shows no columns")
             col = cols[min(depth, len(cols) - 1)]
-            items = AX.wait_for(lambda: [(g, n) for g, n in self._column_items(col) if n], 3.0) or []
+            items = AX.wait_for(lambda col=col: [(g, n) for g, n in self._column_items(col) if n], 3.0) or []
             hit = next((g for g, n in items if n == want), None)
             if hit is None:
                 names = [n for _, n in items]
@@ -1120,7 +1119,7 @@ class LogicBridge:
                 except AX.AXError as e:
                     self.say(f"bounce option {v!r}: {e}")
             for t, on in (("Add to Project", False), ("Add to Music", False), ("Include Audio Tail", tail), ("Include Tempo Information", False)):
-                cb = AX.find(dlg, lambda e: AX.role(e) == "AXCheckBox" and AX.title(e) == t, 4)
+                cb = AX.find(dlg, lambda e, t=t: AX.role(e) == "AXCheckBox" and AX.title(e) == t, 4)
                 if cb is not None:
                     AX.set_checkbox(cb, on)
             groups = [g for g in AX.children(dlg) if AX.role(g) == "AXGroup" and AX.desc(g).startswith("\t")]
