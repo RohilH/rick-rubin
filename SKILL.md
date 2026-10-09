@@ -256,10 +256,10 @@ measurements. What changes for you:
   "Attack": 0.5, "Release": 120}}`, `"Channel EQ"`, `"AutoFilter"`, `"Limiter"`, `"ChromaVerb"`, `"Tape Delay"`.
   Units are the displayed ones. `sidechain: true` is a Compressor keyed from the Kick, as in Live.
 - Returns become Bus 1, 2… with an Aux each; sends are in dB; `master_effects` go on Stereo Out.
-- Every push is a full push (no `--update`, no `watch`); it takes one to four minutes. Section `volume`
-  automation is written only with `--automation` (real time); `filter` automation is not written.
-- Not built yet in Logic: sample one-shot tracks, audio-loop tracks, Serum stems, MIDI effects. Their tracks
-  exist and play the role's patch; the report lists each one.
+- Every push is a full push (no `--update`, no `watch`); it takes one to four minutes. Section `volume` and
+  `filter` automation is written only with `--automation` (it plays the automated bars in real time).
+- Not built yet in Logic: sample one-shot tracks, Serum stems, MIDI effects. Their tracks exist and play the
+  role's patch; the report lists each one. Audio loops are imported onto an audio track.
 - Do not click in Logic during a push: it applies strip edits to every selected track, and the control
   surface state must not change. Keep projects in a visible folder (file panels cannot reach hidden ones).
 

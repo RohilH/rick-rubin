@@ -131,12 +131,27 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
         if t.midi_effects:
             rep.warnings.append(f"{t.name}: MIDI effects are not built in Logic (notes are sent as written)")
         rep.tracks[t.name] = info
-    for t in song.tracks:
-        if t.audio:
-            rep.warnings.append(f"{t.name}: audio-loop tracks are not yet placed in Logic")
+    # audio-loop tracks: an audio track appended after the MIDI tracks, each loop segment imported at its bar
+    audio_tracks = [t for t in song.tracks if t.audio]
+    for t in audio_tracks:
+        try:
+            ti = bridge.add_audio_track()
+            index[t.name] = ti
+            placed = 0
+            for c in clips_for(song, t.name):
+                for s0, ln, off in c.segments:
+                    from ..live.client import _segment_file
+                    path = _segment_file(song, c.audio, off, ln, {k: v for k, v in c.envelopes.items() if k in ("filter", "cutoff", "volume")})
+                    beat = c.start + s0
+                    bridge.import_audio(ti, path, int(beat // 4) + 1, int(beat % 4) + 1)
+                    placed += 1
+            rep.tracks[t.name] = {"index": ti, "instrument": f"audio track ({placed} regions)"}
+            rep.warnings += [f"{t.name}: Logic shows the track as {bridge.tracks()[ti]!r}"] if bridge.tracks()[ti] != t.name else []
+        except LogicError as err:
+            rep.warnings.append(f"{t.name}: audio loops not placed ({err})")
 
     # mixer
-    for t in midi_tracks:
+    for t in [x for x in song.tracks if x.name in index]:
         strip = strip_of(t.name)
         try:
             v = bridge.set_volume(strip, t.volume_db)
@@ -149,10 +164,14 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
 
     # effects: the written chain after the patch's own inserts; `sidechain: true` adds a compressor keyed from the kick
     kick = next((t.name for t in song.tracks if t.role == "kick"), None)
+    clips_all, _ = song.flatten()
+    filtered = {c.track for c in clips_all if any(k in ("filter", "cutoff") for k in c.envelopes)}
     for t in midi_tracks:
         chain = [dict(e) for e in t.effects]
         if sidechain and t.sidechain and kick and not any(e.get("sidechain") for e in chain):
             chain.append(dict(LOGIC_SIDECHAIN, sidechain=kick))
+        if t.name in filtered and not any(e["device"].lower() == "autofilter" for e in chain):
+            chain.append({"device": "AutoFilter", "params": {}})          # the device the filter automation rides on
         if not chain:
             continue
         say(f"effects on {t.name}")
@@ -263,7 +282,8 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
         except LogicError as err:
             rep.warnings.append(f"automation: {err}")
     elif any(c.envelopes for c in clips):
-        rep.warnings.append("section automation is not written by default in Logic (it plays in real time): push with --automation")
+        rep.warnings.append("section automation (volume, filter) is not written by default in Logic because it plays the automated bars "
+                            "in real time: push with --automation")
 
     saved = None
     if save:
@@ -281,6 +301,10 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
                         "aux": aux_made, "time": time.time()})
     rep.mode = (rep.mode + "; " if rep.mode else "") + (f"saved as {saved.name}" if saved else "not saved")
     return rep
+
+
+def clips_for(song: Song, track: str):
+    return [c for c in song.flatten()[0] if c.track == track]
 
 
 def _nth(inserts: list[str], name: str, slot: int) -> int:
@@ -311,10 +335,16 @@ def _save_record(song: Song, data: dict) -> None:
 
 
 # ============================================================================ automation (real time)
-def write_automation(song: Song, bridge: LogicBridge, index: dict[str, int], progress=None, params: tuple[str, ...] = ("volume",)) -> int:
+def cutoff_hz(v: float) -> float:
+    """The preview's filter curve: 0..1 -> 60 Hz .. 18 kHz, exponential."""
+    return 60.0 * (18000.0 / 60.0) ** max(0.0, min(1.0, v))
+
+
+def write_automation(song: Song, bridge: LogicBridge, index: dict[str, int], progress=None,
+                     params: tuple[str, ...] = ("volume", "filter", "cutoff")) -> int:
     """Write the sections' automation into Logic by playing the automated bars with the track in Latch mode and
-    moving its fader through the control surface. Only 'volume' envelopes are written this way for now; a
-    'filter' envelope needs an AutoFilter on the track and is reported."""
+    moving the control surface: the fader for 'volume', the AutoFilter's Cutoff for 'filter'/'cutoff' (the push
+    inserted an AutoFilter on those tracks). Real time: each automated clip is played once per parameter."""
     say = progress or (lambda *_: None)
     clips, _ = song.flatten()
     done = 0
@@ -325,7 +355,15 @@ def write_automation(song: Song, bridge: LogicBridge, index: dict[str, int], pro
             if prm not in params:
                 say(f"{c.track}: {prm} automation in {c.name} is not written (only {', '.join(params)})")
                 continue
-            done += bridge.write_fader_automation(index[c.track], c.start, c.length, pts, song.bpm, say)
+            if prm == "volume":
+                done += bridge.write_fader_automation(index[c.track], c.start, c.length, pts, song.bpm, say)
+            else:
+                inserts = bridge.strip_info(index[c.track]).inserts
+                slot = next((i + 1 for i, n in enumerate(inserts) if n.lower() == "autofilter"), None)
+                if slot is None:
+                    say(f"{c.track}: no AutoFilter on the strip, {prm} automation in {c.name} not written")
+                    continue
+                done += bridge.write_param_automation(index[c.track], slot, "Cutoff", c.start, c.length, pts, song.bpm, cutoff_hz, say, "AutoFilter")
     return done
 
 

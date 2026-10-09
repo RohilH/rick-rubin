@@ -296,7 +296,7 @@ def _main(argv: list[str] | None = None) -> int:
         print(rep.text())
     elif a.cmd == "watch":
         try:
-            Project(a.dir).watch(a.bars, a.play, port=a.port, say=lambda m: print(m, flush=True))
+            Project(a.dir).watch(a.bars, a.play, port=a.port, say=lambda m: print(m, flush=True), daw=a.daw)
         except KeyboardInterrupt:
             print("stopped watching")
     elif a.cmd == "sample":
@@ -379,10 +379,10 @@ def _main(argv: list[str] | None = None) -> int:
             if not colon:
                 label, rest = re.sub(r"[^A-Za-z0-9.+-]+", "-", v).strip("-"), v
             variants.append((label, options.parse([rest])))
-        files = p.ab(variants, a.bars, a.tracks, a.live, port=a.port, progress=lambda m: print("·", m, file=sys.stderr))
+        files = p.ab(variants, a.bars, a.tracks, a.live, port=a.port, progress=lambda m: print("·", m, file=sys.stderr), daw=a.daw)
         song = p.load()
         what = ", ".join(x for x in (f"bars {a.bars[0]}-{a.bars[1]}" if a.bars else "whole song", "solo " + " ".join(a.tracks) if a.tracks else "") if x)
-        print(f"# A/B — {what} ({'recorded from Live' if a.live else 'offline preview'})")
+        print(f"# A/B — {what} ({('bounced from Logic' if a.daw == 'logic' else 'recorded from Live') if a.live else 'offline preview'})")
         for label, vals in variants:
             print(f"- {label}: " + (", ".join(f"{k}={v}" for k, v in vals.items()) or "the song as it stands"))
         print()

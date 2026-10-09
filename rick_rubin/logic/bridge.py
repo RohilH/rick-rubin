@@ -1251,6 +1251,77 @@ class LogicBridge:
             self.set_automation_mode(track_index, "read")
         return 1
 
+    def write_param_automation(self, track_index: int, slot: int, param: str, start_beat: float, length: float, points: list,
+                               bpm: float, to_value, say=None, plugin: str = "") -> int:
+        """Play bars `start_beat`..+`length` once with the track in Latch and turn the V-Pot of `param` (an insert's
+        parameter in the Plug-in Edit view) so its displayed value follows `points` [(beat in clip, 0..1)] mapped by
+        `to_value(v) -> displayed units`. Logic records the moves as that parameter's automation."""
+        say = say or (lambda *_: None)
+        u = self._need_mcu()
+        pts = sorted((float(b), float(v)) for b, v in points)
+        if len(pts) < 2:
+            return 0
+
+        def frac_at(t: float) -> float:
+            if t <= pts[0][0]:
+                return pts[0][1]
+            for (t0, v0), (t1, v1) in zip(pts, pts[1:]):
+                if t0 <= t <= t1:
+                    return v0 if t1 == t0 else v0 + (v1 - v0) * (t - t0) / (t1 - t0)
+            return pts[-1][1]
+        self.stop()
+        bar0 = int(start_beat // 4) + 1
+        self.set_playhead(max(1, bar0 - 1))
+        self.mcu_select(track_index)
+        self.mcu_view(M.PLUGIN)
+        self._press(M.VPOT_PUSH + (slot - 1), settle=0.8)
+        self._value_mode()
+        col = self._find_param(param, plugin or self._edit_view_plugin())
+
+        def read():
+            return self._values()[col]
+        # park the parameter on its starting value before the pass
+        self._converge(col, float(to_value(frac_at(0.0))), read)
+        self._press(M.LATCH, 0.2)
+        say(f"writing {param} automation on track {track_index + 1} from bar {bar0} ({length / 4:g} bars, real time)")
+        self.play()
+        t_end = time.time() + (length + 8) * 60.0 / bpm + 10
+        per_tick: float | None = None
+        last_val = AX.disp_number(read())
+        try:
+            while time.time() < t_end:
+                pos = self.position_beats()
+                if pos is None:
+                    time.sleep(0.02)
+                    continue
+                rel = pos - start_beat
+                if rel > length + 0.5:
+                    break
+                target = float(to_value(frac_at(max(0.0, rel + 0.15))))     # aim a little ahead: the detents take time
+                cur = AX.disp_number(read())
+                if cur is None or cur in (float("inf"), float("-inf")):
+                    time.sleep(0.05)
+                    continue
+                err = target - cur
+                if per_tick is None or per_tick == 0:
+                    n = 1 if err > 0 else -1 if err < 0 else 0
+                else:
+                    n = max(-12, min(12, int(round(err / per_tick))))
+                if n:
+                    self._tick(col, n, spacing=0.006)
+                    time.sleep(0.08)
+                    new = AX.disp_number(read())
+                    if new is not None and last_val is not None and new != cur and abs(n) <= 12:
+                        per_tick = (new - cur) / n
+                    last_val = new
+                else:
+                    time.sleep(0.05)
+        finally:
+            self.stop()
+            self._press(M.READ_OFF, 0.2)
+            self.leave_global_view()
+        return 1
+
     @staticmethod
     def _mido():
         import mido

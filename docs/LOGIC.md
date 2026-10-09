@@ -67,7 +67,7 @@ calls on it, mirroring `live/client.py`.
 | `sidechain: true` | a Compressor keyed from the Kick (side chain input = the Kick's channel strip) |
 | `returns` A, B … and `sends` | Bus 1, 2 … with an Aux each, the return's plug-ins on the Aux, sends in dB |
 | `master_effects` | plug-ins on Stereo Out |
-| section automation `volume` | written as track automation in real time with `--automation` (the automated bars are played once per track) |
+| section automation `volume`, `filter` | written as track automation in real time with `--automation` (the automated bars are played once per parameter): the fader for volume, the Cutoff of an AutoFilter the push inserts for filter |
 | | the project is saved as `<project>/logic/<title>.logicx` |
 
 Parameter names are Logic's: what the plug-in window shows ("Threshold", "Ratio", "Attack", "Release",
@@ -87,17 +87,17 @@ Section, offline, 24-bit WAV, the bar range you give (tracks soloed when asked),
 ## What differs from Live, and what is missing
 
 - Every push is a full push: the project is rebuilt from the MIDI file. `--update` and `watch` are Live
-  only; `ab --live` is not wired to Logic yet.
+  only. `ab --live` pushes and bounces each candidate.
 - A re-push closes the project it saved earlier (same title) without saving; any other open project is
   left alone and Logic keeps both open. If Logic asks about an unsaved project that is not ours, the bridge
   answers "Don't Close".
-- Sample one-shot tracks (`sample=`) and audio-loop tracks (`audio=True`) are not built yet: Logic's
-  Quick Sampler and audio import need file dialogs, which the bridge can drive (see `import_audio` and
-  `add_audio_track`), but the flow is not finished. Their tracks exist; the one-shot tracks play the
-  role's patch. Serum stems are not placed; use `instrument="Serum 2"` to play the part live.
+- Audio-loop tracks (`audio=True`) get an audio track after the MIDI tracks with each loop segment imported at
+  its bar (File > Import > Audio File, driven through the panel's column browser). Sample one-shot tracks
+  (`sample=`) are not built yet: their tracks exist and play the role's patch. Serum stems are not placed;
+  use `instrument="Serum 2"` to play the part live.
 - MIDI effects are not built; notes are sent as written.
-- `filter` automation is reported but not written: it would need an AutoFilter per track and the same
-  real-time pass as volume. Volume automation needs `--automation` because it plays the song.
+- Automation needs `--automation` because it plays the automated bars: a 16-bar volume ride at 126 BPM takes
+  30 seconds. Filter automation rides the Cutoff of an AutoFilter the push inserts on the track.
 - A push takes one to four minutes, most of it scrolling Logic's plug-in list on the control surface
   (ChromaVerb is item 115 of 127) and converging parameters at a few detents per second.
 

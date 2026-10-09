@@ -287,7 +287,7 @@ class Project:
             return rep
 
     def watch(self, bars: tuple[int, int] | None = None, play: bool = False, interval: float = 0.5,
-              host: str = "127.0.0.1", port: int = 9889, say=print, rounds: int | None = None) -> None:
+              host: str = "127.0.0.1", port: int = 9889, say=print, rounds: int | None = None, daw: str = "live") -> None:
         """Hot reload: keep the Live set in step with song.py. Every time song.py (or a sample it uses) is
         saved, the song is rebuilt and only what changed is redone in Live — while Live keeps playing.
         `bars` sets Live's loop to that range; `play` starts playback. A song.py that does not build is
@@ -295,7 +295,9 @@ class Project:
         import time
 
         from .live import LiveBridge
-        from .live.client import live_lock, update_song
+        from .live.client import BridgeError, live_lock, update_song
+        if daw == "logic":
+            raise BridgeError("watch (hot reload) is Live only: Logic has no incremental push — use `--daw logic push` after each change")
 
         def stamp():
             files = [self.source_path] + sorted((self.root / "samples").glob("*.wav")) + sorted((self.root / "serum").glob("*.wav"))
@@ -373,7 +375,7 @@ class Project:
 
     def ab(self, variants: list[tuple[str, dict[str, str]]], bars: tuple[int, int] | None = None,
            tracks: list[str] | None = None, live: bool = False, host: str = "127.0.0.1", port: int = 9889,
-           progress=None) -> list[tuple[str, Path]]:
+           progress=None, daw: str = "live") -> list[tuple[str, Path]]:
         """Render candidates of the song side by side. Each variant is (label, {option: value}) — the
         `option()` choices in song.py to switch; {} is the song as it stands. Offline (the preview) by default;
         live=True pushes each one to Live and records it, after which Live is left holding the song as it stands.
@@ -395,6 +397,22 @@ class Project:
                 raise ValueError(f"{values}: song.py builds an invalid song:\n  " + "\n  ".join(errs))
             return song
 
+        if live and daw == "logic":
+            from .live.client import live_lock
+            from .logic import LogicBridge, capture_logic
+            from .logic import push_song as push_logic
+            with live_lock(f"ab {self.root.name}", progress=progress, port=port), LogicBridge(progress=progress) as b:
+                for label, values in variants:
+                    song = build(values)
+                    rep = push_logic(song, b, replace=True, progress=lambda m, label=label: say(f"{label}: {m}"), save=False)
+                    for w in rep.warnings:
+                        say(f"{label}: ! {w}")
+                    dst = self.root / "ab" / f"{label}.wav"
+                    capture_logic(song, b, dst, bars=bars, tracks=tracks, progress=lambda m, label=label: say(f"{label}: {m}"))
+                    out.append((label, dst))
+                say("Logic: back to the song as it stands")
+                push_logic(build({}), b, replace=True, progress=say)
+            return out
         if live:
             from .live import LiveBridge, capture_live
             from .live.client import live_lock, update_song
