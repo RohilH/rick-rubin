@@ -35,20 +35,63 @@ Sending raw audio to an LLM is token-expensive and gives poor feedback. MIDI dum
   * whether loudness follows the intended energy curve
   * breakdown-vs-drop contrast
 
-## Install
+## Setup
+
+You need macOS or Windows with **Ableton Live 11 or later** (Live 12 recommended; any edition, though Intro's 16-track limit applies), **Python 3.10+**, and a coding agent with shell access (Claude Code, Codex, …). The fastest way is to paste the setup prompt from [`install.md`](install.md) into your agent. By hand:
+
+**1. Clone and install**
 
 ```bash
-pip install -e ".[all]"        # numpy, scipy, matplotlib (for views)
+git clone https://github.com/dadams22/rick-rubin.git
+cd rick-rubin
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[all]"
+rick-rubin --help
+```
+
+Optional extras, only if you want the feature:
+
+| Extra | Adds | Install |
+|---|---|---|
+| `serum` | Hosting Serum 2 presets (macOS, needs Serum 2 installed) | `pip install -e ".[serum]"` |
+| `transcribe` | Word-level timing of vocal samples | `pip install -e ".[transcribe]"` |
+| `dev` | Tests and linters | `pip install -e ".[dev]"` |
+
+`ffmpeg` is needed to tempo-match sample loops, read non-WAV reference tracks and write mp3s (`brew install ffmpeg`). Everything else works without it.
+
+**2. Install the Live bridge**
+
+```bash
 rick-rubin install-bridge     # copies the RickRubin remote script into Live's User Library
 ```
 
-To connect Live, restart it, then open **Settings → Link, Tempo & MIDI → Control Surface** and choose **RickRubin**. Live shows "rick-rubin bridge … listening on 127.0.0.1:9889". To check the connection:
+Restart Live, open **Settings → Link, Tempo & MIDI**, and under **Control Surface** choose **RickRubin**. Live's status bar shows "rick-rubin bridge … listening on 127.0.0.1:9889".
+
+**3. Check the connection**
 
 ```bash
-rick-rubin status
+rick-rubin status             # {"bridge": "0.7.1", "live_version": "12.x.y"}
 ```
 
-Requirements: Live 11+. Live 12 is recommended. Arrangement clips are created directly with `Track.create_midi_clip`. On older versions the bridge falls back to building each clip in a session slot and copying it to the arrangement. Inserting devices by name uses `Track.insert_device` on Live 12.3+ and the browser otherwise.
+If this fails, check that the control surface is selected and that Live is running. For recording from Live (`rick-rubin capture`), Live's audio engine must be on: pick an Output Device in **Settings → Audio**.
+
+**4. Register the skill with your agent**
+
+```bash
+ln -sfn "$PWD" ~/.claude/skills/rick-rubin      # Claude Code
+# ln -sfn "$PWD" ~/.codex/skills/rick-rubin     # Codex
+```
+
+**5. Start a song**
+
+```bash
+rick-rubin init ~/music/night-bus --title "Night Bus" --bpm 126 --key "A minor"
+cd ~/music/night-bus && claude
+```
+
+Open an **empty Live set** before the agent pushes: a push builds the arrangement in whatever set is open.
+
+Notes on Live versions: arrangement clips are created directly on Live 12; on Live 11 each clip is built in a session slot and copied to the arrangement. Inserting devices by name uses Live 12.3+ and the browser otherwise.
 
 ## Use it
 

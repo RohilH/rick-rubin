@@ -7,7 +7,7 @@ rick-rubin has no agent harness of its own. Your coding agent (Claude Code, Code
 Paste this into your agent:
 
 ```
-Set up https://github.com/<you>/rick-rubin for me.
+Set up https://github.com/dadams22/rick-rubin for me.
 
 Read install.md first: install the package, register the skill with whichever
 agent you're running under, and install the Ableton bridge. Then read SKILL.md
@@ -20,7 +20,7 @@ for a brief.
 
 1. **Clone and install** (Python 3.10+):
    ```bash
-   git clone <repo> ~/Developer/rick-rubin
+   git clone https://github.com/dadams22/rick-rubin.git ~/Developer/rick-rubin
    cd ~/Developer/rick-rubin && pip install -e ".[all]"     # or: uv pip install -e ".[all]"
    rick-rubin --help                                        # smoke test
    ```
@@ -39,7 +39,7 @@ for a brief.
 
 4. **Verify:**
    ```bash
-   rick-rubin status                  # {"bridge": "0.5.0", "live_version": "12.x.y"}
+   rick-rubin status                  # {"bridge": "0.7.1", "live_version": "12.x.y"}
    ```
    If this fails, check that the control surface is selected, then check Live's `Log.txt` for "rick-rubin".
 
