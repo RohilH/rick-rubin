@@ -701,10 +701,12 @@ class LogicBridge:
             self._press(M.TRACK, settle=0.5)
             self._stable_lcd(0.5, 2.5)
             row0 = self._lcd()[0]
-            if row0.startswith("Volume") and "Channel Strip" not in row0:
+            # Channel view: 'Volume Pan Inst ...' (Value mode) or 'Track 3 "Hats"  Channel Strip parameters' (Name mode)
+            if (row0.startswith("Volume") and "parameter:" not in row0) or bool(re.match(r'^Track \d+ "', row0)):
                 break
         else:
             raise LogicError(f"the surface is not in the Track Channel view (LCD {self._lcd()[0]!r})")
+        self._value_mode()                                                  # names above, instrument name below
         u = self._need_mcu()
         col = 2
 
@@ -907,13 +909,14 @@ class LogicBridge:
         Each press toggles Mixer view <-> Channel view, so the LCD is read (once stable) after every press."""
         def chan(row0, row1):
             both = row0 + row1
-            return bool(re.search(r'^(Track|Aux|Output|Stereo)\b.*"', row0)) or bool(re.search(r"Ins[1-7]Pl Ins[2-8]Pl", both)) \
+            return bool(re.match(r'^(Track|Aux|Output|Stereo|Master|Bus)\b.*"', row0)) or bool(re.search(r"Ins[1-7]Pl Ins[2-8]Pl", both)) \
                 or bool(re.search(r"Sen\d", both))
         for _ in range(3):
             self._press(button, settle=0.5)
             self._stable_lcd(0.4, 2.0)
             row0, row1 = self._lcd()
             if not channel_view or chan(row0, row1):
+                self._value_mode()                          # labels above, contents below: what the readers expect
                 return
         self.say(f"mcu: not in channel view after three presses (LCD {row0!r} / {row1!r})")
 
