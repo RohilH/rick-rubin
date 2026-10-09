@@ -560,15 +560,20 @@ class Mixer:
         self.project = project
 
     def window(self):
+        """The window holding our project's Mixer: the separate Mixer window, or the main window when the Mixer
+        is shown as a pane in it (its title then ends in '- Mixer')."""
         w = self.app.mixer_window(self.project)
         if w is None:
             main = self.app.main_window(self.project)
             if main is None:
                 raise AXError("no project window to open a Mixer for")
+            if find(main, lambda e: role(e) == "AXLayoutArea" and desc(e) == "Mixer", 7) is not None:
+                return main
             self.app.make_key(main)
             if not self.app.menu("Window", "Open Mixer"):
                 raise AXError("could not open the Mixer window")
-            w = wait_for(lambda: self.app.mixer_window(self.project), 5.0)
+            w = wait_for(lambda: self.app.mixer_window(self.project)
+                         or (find(self.app.main_window(self.project), lambda e: role(e) == "AXLayoutArea" and desc(e) == "Mixer", 7) and self.app.main_window(self.project)), 6.0)
             if w is None:
                 raise AXError("the Mixer window did not appear")
         return w

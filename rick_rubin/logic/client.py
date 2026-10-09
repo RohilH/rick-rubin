@@ -65,7 +65,7 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
     smf = export_logic_midi(song, out_dir / f"{title}.mid")
     say(f"wrote {smf['path'].name}: {len(smf['tracks'])} tracks, {smf['markers']} markers")
 
-    ours = {title, f"{title}.logicx"}
+    ours = {title, f"{title}.logicx"} | our_projects()
     rec = _load_record(song)
     if rec:
         ours |= set(rec.get("projects", []))
@@ -74,6 +74,9 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
         if t in ours or (replace and t and t.startswith("Untitled")):
             say(f"closing our earlier project {t!r}")
             bridge.close_project(t)
+    left = [bridge.app.project_title(w) for w in bridge.app.project_windows()]
+    if left:
+        say(f"leaving {left} open (not rick-rubin's); Logic will hold both projects")
     say("opening the MIDI file in Logic")
     proj = bridge.open_midi_project(smf["path"], expect_tracks=len(song.tracks), ours=tuple(ours))
     say(f"Logic project {proj!r}")
@@ -289,6 +292,7 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
     if save:
         try:
             saved = bridge.save_project_as(out_dir, title)
+            remember_project(saved)
             say(f"saved {saved}")
         except LogicError as err:
             rep.warnings.append(f"project not saved: {err}")
@@ -318,6 +322,27 @@ def _aux_index(bridge: LogicBridge, aux_name: str) -> int:
         if s.name == aux_name:
             return i
     return 0
+
+
+def _global_record() -> Path:
+    return Path.home() / ".cache" / "rick-rubin" / "logic-projects.json"
+
+
+def our_projects() -> set[str]:
+    """Titles of every Logic project rick-rubin has saved on this machine (so a push can close one of ours that is
+    open, and never anything else)."""
+    p = _global_record()
+    try:
+        return set(json.loads(p.read_text())) if p.exists() else set()
+    except ValueError:
+        return set()
+
+
+def remember_project(path: Path) -> None:
+    p = _global_record()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    names = our_projects() | {path.stem, path.name}
+    p.write_text(json.dumps(sorted(names)) + "\n")
 
 
 def _load_record(song: Song) -> dict | None:
