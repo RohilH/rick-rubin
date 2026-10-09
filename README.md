@@ -93,6 +93,35 @@ Open an **empty Live set** before the agent pushes: a push builds the arrangemen
 
 Notes on Live versions: arrangement clips are created directly on Live 12; on Live 11 each clip is built in a session slot and copied to the arrangement. Inserting devices by name uses Live 12.3+ and the browser otherwise.
 
+## Ableton Live: setup and troubleshooting
+
+### How it connects
+
+`rick-rubin install-bridge` copies a small MIDI Remote Script, `RickRubin`, into Live's User Library (`~/Music/Ableton/User Library/Remote Scripts` on macOS, `Documents\Ableton\User Library\Remote Scripts` on Windows). Once selected as a Control Surface, it listens on `127.0.0.1:9889` (this machine only) and the `rick-rubin` commands talk to it. Nothing is written into your Live set until you run `push`, `watch`, `capture` or `ab --live`.
+
+Before the first push:
+
+- Open an **empty set**. `push` adds tracks to the open set; `--replace` deletes tracks with the same names first, and `--clean` also removes the set's untouched empty tracks.
+- In **Settings → Audio**, make sure an **Output Device** is chosen. Pushing works without one; recording from Live does not.
+- While a `capture` or `ab --live` is running, leave Live's transport and mixer alone. A take that was disturbed is thrown away and redone.
+
+### Troubleshooting
+
+| What you see | Cause and fix |
+|---|---|
+| `RickRubin` is not in the Control Surface list | Live reads Remote Scripts at start-up: restart Live after `install-bridge`. If your User Library is somewhere else (Settings → Library shows where), run `rick-rubin install-bridge --dest "<User Library>/Remote Scripts"`. |
+| `cannot reach the rick-rubin bridge at 127.0.0.1:9889` | Live is not running, or the control surface is not selected. Select it under Settings → Link, Tempo & MIDI. If it is selected, set it to None and back to RickRubin. |
+| The bridge is selected but still unreachable | Another program holds port 9889, or the script failed to load. Search Live's `Log.txt` for "rick-rubin" (macOS: `~/Library/Preferences/Ableton/Live x.x.x/Log.txt`; Windows: `%APPDATA%\Ableton\Live x.x.x\Preferences\Log.txt`). |
+| `rick-rubin status` shows an older bridge version than the repo | You updated the code but Live still runs the old script. Run `rick-rubin install-bridge`, then set the Control Surface to None and back to RickRubin (or restart Live). |
+| `Live's audio engine is off` or `Live's transport is not moving` | Live has no audio output. This happens when the device it used goes away or the device list changes (headphones, a monitor, a call app). Choose an Output Device in Settings → Audio, then run the command again. |
+| A push warns `no sidechain source 'Kick' among ['(none)']` | Same cause: with the audio engine off, tracks offer no routing, so sidechains are not connected. Fix the Output Device, then push again. |
+| `Live set already has tracks [...]` | The set already holds tracks with those names. Push with `--replace`, or open an empty set. |
+| Tracks are missing, or track creation fails part-way | Live Intro allows 16 tracks and Lite 8, and a new set's default tracks count. Push with `--replace --clean`, and keep the song within the limit. |
+| `none of <instrument> found in the Live browser` | That instrument is not in your edition of Live or your library. Run `rick-rubin browse` to see what is there, and name one of those in `song.py`. |
+| `gave up after 3 takes: each one was disturbed` | Something changed in Live during every recording (transport, tempo, solo, mute, volume or pan). Leave Live alone until the capture finishes. |
+| `Live is in use by another rick-rubin run` | Two commands tried to drive Live at once (two agents, or a `watch` left running). Wait for the other to finish or stop it. |
+| A capture sounds different from the offline preview | Expected. The preview is a sketch; what Live plays is the reference. Judge sound on `rick-rubin capture`. |
+
 ## Use it
 
 ### With Claude Code (or any coding agent) — the intended way
@@ -233,7 +262,7 @@ docs/HOUSE.md     research notes behind the defaults
 
 * The preview synth is only a sketch for measuring rhythm, balance and arrangement. It is not a mixdown. Compare its sections against each other, not against commercial masters.
 * Live's API cannot draw sound design. The agent chooses instruments by name and writes notes and automation; timbre is down to your presets.
-* The bridge is tested against a simulated Live Object Model, not a real Live install. The first real push is the moment to watch for API differences between Live versions. The push report and Live's `Log.txt` will show them.
+* The bridge has been run against Live 12.4 (Intro) on macOS; the automated tests use a simulated Live Object Model. On other versions the first real push is the moment to watch for API differences. The push report and Live's `Log.txt` will show them.
 * House is the first-class genre: the lint rules and the craft notes in SKILL.md are written for it. The model, notation and bridge are genre-agnostic.
 
 ## Tests
