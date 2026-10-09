@@ -17,6 +17,7 @@ turns one into bridge commands for Ableton.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -44,6 +45,10 @@ LCD_NAMES = {
                    "Limiter": "LimrOn", "Limiter Threshold": "LimThr", "Distortion": "Distrt", "Mix": "Mix", "Circuit Type": "CirTyp",
                    "Side Chain Detection": "SiChDe", "Side Chain Filter": "State", "Filter Mode": "Mode", "Filter Frequency": "Freq",
                    "Filter Q": "Q", "Filter Gain": "Gain"},
+    "ChromaVerb": {"Dry": "Dry", "Wet": "Wet", "Room Type": "RooTyp", "Decay": "DcTime", "Decay Time": "DcTime", "Predelay": "Predly",
+                   "Pre-delay": "Predly", "Freeze": "Freeze"},
+    "Limiter": {"Gain": "Gain", "Release": "Releas", "Output Level": "OutLev", "Lookahead": "LookAh"},
+    "AutoFilter": {"Cutoff": "Cutoff", "Resonance": "Reso", "Drive": "Drive", "Filter Type": "FltTyp"},
 }
 
 
@@ -576,9 +581,33 @@ class LogicBridge:
     def _plugin_name(self, text: str) -> str:
         return text.split(" (")[0].strip().lower()
 
-    def _scroll_list(self, vpot: int, read: Callable[[], str], match: Callable[[str], bool], what: str, max_steps: int = 320) -> str:
+    @staticmethod
+    def _catalog_path(kind: str) -> Path:
+        return Path(__file__).resolve().parent.parent.parent / ".cache" / f"logic-{kind}.json"
+
+    def _catalog(self, kind: str) -> list[str]:
+        p = self._catalog_path(kind)
+        try:
+            return list(json.loads(p.read_text())) if p.exists() else []
+        except ValueError:
+            return []
+
+    def _remember(self, kind: str, order: list[str]) -> None:
+        """Keep the order of a list as seen, so the next scroll can jump most of the way."""
+        if len(order) < 2:
+            return
+        p = self._catalog_path(kind)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        old = self._catalog(kind)
+        if order[: len(old)] != old[: len(order)] or len(order) > len(old):
+            p.write_text(json.dumps(order if len(order) >= len(old) else old, indent=0) + "\n")
+
+    def _scroll_list(self, vpot: int, read: Callable[[], str], match: Callable[[str], bool], what: str, max_steps: int = 320,
+                     kind: str = "plugins") -> str:
         """Turn a V-Pot through one of Logic's preselection lists (plug-ins, instruments): back to the '--' entry at
-        the start, then forward one verified detent at a time until `match`. Returns the matching text."""
+        the start, then forward until `match`. A list order remembered from an earlier scroll (.cache/) lets it jump
+        most of the way with unverified detents; the last few are verified one by one, and whatever is seen is
+        remembered for next time. Returns the matching text."""
         cur = read()
         seen: list[str] = []
         for _ in range(max_steps):
@@ -588,14 +617,33 @@ class LogicBridge:
             cur = self._step_until_change(vpot, -1, read)
             if len(seen) > 3 and seen[-3:] == [cur] * 3:
                 break
+        order: list[str] = ["--"]
+        known = self._catalog(kind)
+        target_i = next((i for i, n in enumerate(known) if match(n)), None)
+        if target_i is not None and target_i > 4:
+            self._tick(vpot, target_i - 3, spacing=0.03)      # fast, unverified: dropped detents only leave us short
+            self._need_mcu().settle(0.15, 1.0)
+            cur = read()
+            if not any(match(n) for n in known[max(0, target_i - 12): target_i + 1]) or cur not in known:
+                pass
+            if cur in known and known.index(cur) > target_i:   # overshot: come back
+                for _ in range(known.index(cur) - target_i + 1):
+                    cur = self._step_until_change(vpot, -1, read)
+            order = known[: known.index(cur) + 1] if cur in known else ["--"]
         for _ in range(max_steps):
             if match(cur):
+                if order and order[-1] != cur:
+                    order.append(cur)
+                self._remember(kind, order)
                 return cur
             seen.append(cur)
             nxt = self._step_until_change(vpot, 1, read)
             if nxt == cur:
                 break                                      # end of the list
             cur = nxt
+            if order and order[-1] != cur:
+                order.append(cur)
+        self._remember(kind, order)
         raise LogicError(f"no {what} in Logic's list (last shown {cur!r}; the list goes {seen[-5:]})")
 
     def insert_plugin(self, ref, name: str, view: str = "tracks", index: int | None = None) -> str:
@@ -653,7 +701,7 @@ class LogicBridge:
             if low.startswith(want + " stereo") or low == want or low.startswith(want + " (") and "stereo" in low:
                 return True
             return low.startswith(want) and "mono" not in low and "multi" not in low and "legacy" not in low
-        self._scroll_list(col, read, match, f"instrument {name!r}")
+        self._scroll_list(col, read, match, f"instrument {name!r}", kind="instruments")
         self._press(M.VPOT_PUSH + col, settle=1.0)
         got = AX.wait_for(lambda: (lambda cur: cur if cur and cur != before else None)(self.strip_info(ref).instrument), 8.0, 0.25)
         self.close_plugin_windows()

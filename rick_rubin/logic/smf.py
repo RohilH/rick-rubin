@@ -66,9 +66,12 @@ def cc7_for_db(db: float) -> int:
     return int(round(max(0, CC7_UNITY + db * 4.5)))
 
 
+DRUM_PROGRAM = 25                     # on channel 10 Logic 11.2 answers this with its Drum Synth kit (0 is an acoustic SoCal kit)
+
+
 def program_for(track: Track) -> int | None:
     if track.is_drum:
-        return 0
+        return DRUM_PROGRAM
     return GM_PROGRAM_BY_ROLE.get(track.role, 80)
 
 

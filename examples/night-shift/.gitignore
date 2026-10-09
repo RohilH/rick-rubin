@@ -1,0 +1,12 @@
+*.wav
+*.mp3
+zoom/
+stems/
+history/
+logic/
+song.json
+score.md
+eval.md
+views/
+midi/
+.live-push.json
