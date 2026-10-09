@@ -90,7 +90,8 @@ SINGLE_VOICE_INSTRUMENTS = ("drum synth", "quick sampler", "sampler", "sample al
 
 def drum_pitch(track: Track) -> int:
     if track.sample or (track.instrument and track.instrument[0].strip().lower() in SINGLE_VOICE_INSTRUMENTS):
-        return 60
+        # single-voice synth drums track the key: C2 keeps a kick's weight (C1 was all sub, C3 thin on Drum Synth), C3 for the rest
+        return 48 if track.role in ("kick", "sub") else 60
     return DRUM_MAP.get(track.role, 60)
 
 

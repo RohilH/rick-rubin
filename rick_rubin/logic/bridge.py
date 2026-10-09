@@ -1286,12 +1286,17 @@ class LogicBridge:
         self._answer_alert(["Replace"], "already exists", timeout=1.5)
         candidates = [out_path, out_path.with_suffix(".wav"), out_path.parent / f"{out_path.stem}.wav"]
 
+        def busy():
+            # a bounce still running shows a progress window or its file panel; plug-in windows do not count
+            return any(AX.attr(d, "AXIdentifier") in ("save-panel", "open-panel") or AX.desc(d) == "alert"
+                       or AX.title(d).startswith("Bounce") for d in self.app.dialogs())
+
         def done():
             for c in candidates:
                 if c.exists():
                     s1 = c.stat().st_size
                     time.sleep(0.6)
-                    if c.stat().st_size == s1 and s1 > 1000 and not self.app.dialogs():
+                    if c.stat().st_size == s1 and s1 > 1000 and not busy():
                         return c
             return None
         got = AX.wait_for(done, 300.0, 0.5)

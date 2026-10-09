@@ -46,3 +46,6 @@ levels say nothing about Logic's patches (Retro Synth's and the pad's default vo
 Logic bounce, not the preview: kick -9, clap -7, hats -8, open hat -11, rim -10, shaker -16, bass -8, stab -3 with 6 dB of
 make-up on its compressor, pad 0, limiter gain +3. Drum Synth voices: Punch Kick, Human Clap, Sharp Hat (hats and shaker,
 different decay and tone), Smooth (open hat), a Percussion voice for the rim.
+
+**Bounce of that push:** -23.8 LUFS overall, energy curve r=0.85, but the breakdown fell to -36 LUFS (pad too far back at -20)
+and the kick had no sub at all (Drum Synth played at C3). Last round: kick notes on C2, pad -10, bass -12, limiter gain +6.
