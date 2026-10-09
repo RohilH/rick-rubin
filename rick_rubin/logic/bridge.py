@@ -292,7 +292,7 @@ class LogicBridge:
             raise LogicError("the Save panel did not open")
         self._panel_navigate(panel, folder)
         for cb_title in ("Include Apple Sound Library Content",):
-            cb = AX.find(panel, lambda e: AX.role(e) == "AXCheckBox" and AX.title(e) == cb_title, 6)
+            cb = AX.find(panel, lambda e, t=cb_title: AX.role(e) == "AXCheckBox" and AX.title(e) == t, 6)
             if cb is not None:
                 AX.set_checkbox(cb, False)
         tf = AX.find(panel, lambda e: AX.attr(e, "AXIdentifier") == "saveAsNameTextField", 3)
@@ -831,7 +831,7 @@ class LogicBridge:
         Each press toggles Mixer view <-> Channel view, so the LCD is read (once stable) after every press."""
         def chan(row0, row1):
             return bool(re.search(r'^(Track|Aux|Output|Stereo)\b.*"', row0)) or "Ins1Pl" in row0 + row1 or bool(re.search(r"Sen\d", row0 + row1))
-        for attempt in range(3):
+        for _ in range(3):
             self._press(button, settle=0.5)
             self._stable_lcd(0.4, 2.0)
             row0, row1 = self._lcd()
@@ -958,7 +958,7 @@ class LogicBridge:
         """Set parameters of the plug-in in insert `slot` (1..) of a strip: {name: value} where value is a number
         in the units Logic shows (dB, ms, Hz, %, ratio) or an option name / on/off. Names are Logic's full
         parameter names or the LCD abbreviations."""
-        u = self._need_mcu()
+        self._need_mcu()
         rep = ParamReport()
         self.mcu_select(track_index, view)
         self.mcu_view(M.PLUGIN)
@@ -1256,7 +1256,7 @@ class LogicBridge:
         parameter in the Plug-in Edit view) so its displayed value follows `points` [(beat in clip, 0..1)] mapped by
         `to_value(v) -> displayed units`. Logic records the moves as that parameter's automation."""
         say = say or (lambda *_: None)
-        u = self._need_mcu()
+        self._need_mcu()
         pts = sorted((float(b), float(v)) for b, v in points)
         if len(pts) < 2:
             return 0
