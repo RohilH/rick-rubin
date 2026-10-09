@@ -28,17 +28,17 @@ rim = song.add_track("Rim", "perc", volume_db=-10, pan=-0.3, swing=True, sends={
 shaker = song.add_track("Shaker", "shaker", volume_db=-16, pan=0.3, swing=True, instrument="Drum Synth",
                         instrument_params={"Sound Category": "Hats and Cymbals", "Sound Model": "Sharp Hat", "Decay": 10, "Tone": 70})
 # Bass: the role's default Logic patch (a synth bass) ducked against the kick — the tech house pump.
-bass = song.add_track("Bass", "bass", volume_db=-7, sidechain=True,
+bass = song.add_track("Bass", "bass", volume_db=-14, sidechain=True,
                       effects=[{"device": "Channel EQ"}])
 # Stab: Retro Synth's own voice, short; one compressor keyed from the kick does both the glue and the pump.
-stab = song.add_track("Stab", "stab", instrument="Retro Synth", volume_db=-3, pan=-0.1, sends={"A": -12},
+stab = song.add_track("Stab", "stab", instrument="Retro Synth", volume_db=-14, pan=-0.1, sends={"A": -12},
                       effects=[{"device": "Compressor", "sidechain": "Kick",
-                                "params": {"Threshold": -18, "Ratio": 3, "Attack": 10, "Release": 90, "Make Up": 6, "Auto Gain": "Off"}}])
-# Pad: the role's default pad, wide and far back.
-pad = song.add_track("Pad", "pad", volume_db=0, sends={"A": -9}, sidechain=True)
+                                "params": {"Threshold": -18, "Ratio": 3, "Attack": 10, "Release": 90}}])
+# Pad: the role's default pad, far back; not ducked (Logic's Compressor adds make-up gain of its own, which made a ducked pad louder, not quieter).
+pad = song.add_track("Pad", "pad", volume_db=-20, sends={"A": -9})
 
 song.add_return("A", [{"device": "ChromaVerb", "params": {"Dry": 0, "Wet": 100, "Decay": 1800}}])
-song.master_effects = [{"device": "Limiter", "params": {"Gain": 3}}]
+song.master_effects = [{"device": "Limiter", "params": {"Gain": 0}}]
 
 # ---------------------------------------------------------------- drums
 four = song.pattern("four", kick, "x...x...x...x...")
