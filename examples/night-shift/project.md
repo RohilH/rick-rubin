@@ -49,3 +49,7 @@ different decay and tone), Smooth (open hat), a Percussion voice for the rim.
 
 **Bounce of that push:** -23.8 LUFS overall, energy curve r=0.85, but the breakdown fell to -36 LUFS (pad too far back at -20)
 and the kick had no sub at all (Drum Synth played at C3). Last round: kick notes on C2, pad -10, bass -12, limiter gain +6.
+
+**Final bounce (Logic, offline):** -19.2 LUFS integrated, peak -2.7 dBFS, drops -18.6 / -17.8, breakdown -24.0 (5 LU below),
+intro/outro -19.7; loudness follows the energy curve (r=0.61). The breakdown is wide and its low end is not centred —
+the pad is a stereo ES2 patch and there is no kick or bass in those bars; acceptable for a breakdown, noted.
