@@ -697,10 +697,11 @@ class LogicBridge:
         self.mcu_select(idx)
         # the Track button's Channel view: V-Pot 1 volume, 2 pan, 3 instrument (its preselection text has the
         # room of the whole right half of the LCD), 4-5 inserts 1-2, 6-8 sends
-        for _ in range(3):
+        for _ in range(5):
             self._press(M.TRACK, settle=0.5)
-            self._stable_lcd(0.4, 2.0)
-            if self._lcd()[0].startswith("Volume Pan"):
+            self._stable_lcd(0.5, 2.5)
+            row0 = self._lcd()[0]
+            if row0.startswith("Volume") and "Channel Strip" not in row0:
                 break
         else:
             raise LogicError(f"the surface is not in the Track Channel view (LCD {self._lcd()[0]!r})")
@@ -1158,10 +1159,12 @@ class LogicBridge:
         wanted = [table[k] for k in table if k.lower() == name.lower()] + [name]
         self._name_mode()
         for _ in range(12):                                   # back to the first page
-            self._stable_lcd()
-            if "Page 1/" in "".join(self._lcd()) or "/" not in self._lcd()[0]:
+            self._stable_lcd(0.5, 2.0)
+            header = self._lcd()[0]
+            m = re.search(r"Page (\d+)/(\d+)", header)
+            if m is None or m.group(1) == "1":
                 break
-            self._press(M.CURSOR_LEFT, 0.15)
+            self._press(M.CURSOR_LEFT, 0.3)
         seen_pages = set()
         for _ in range(12):
             names = self._names()
@@ -1194,21 +1197,31 @@ class LogicBridge:
                 self._stable_lcd(0.4, 1.5)
                 return read()
             cur = stable_read()
-            for _ in range(60):
-                if cur.lower() == want.lower() or (len(want) >= 3 and cur.lower().startswith(want.lower()[:len(cur)])) \
-                        or abbrev_matches(cur, want):
-                    return cur
-                if cur in seen:
-                    break                                    # wrapped around: the option is not in this list
+
+            def hit(c: str) -> bool:
+                cl, wl = c.lower(), want.lower()
+                return bool(c) and (cl == wl or (len(want) >= 3 and cl.startswith(wl[:len(c)])) or abbrev_matches(c, want)
+                                    or (len(c) >= 4 and cl.replace(" ", "") in wl.replace(" ", "")))
+            if hit(cur):
+                return cur
+            first = cur
+            for _ in range(80):
                 seen.append(cur)
                 nxt = self._step_until_change(col, 1, stable_read)
                 if nxt == cur:
                     break                                    # end stop
                 cur = nxt
+                if hit(cur):
+                    return cur
+                if cur == first and len(seen) > 2:
+                    break                                    # back where we started: the option is not in this list
             raise LogicError(f"no option {want!r} (options seen: {seen})")
         target = AX.disp_number(val) if isinstance(val, str) else float(val)
         shown = self._converge(col, float(target), read)
-        return shown + "B" if shown.endswith(" d") else shown          # the 7-character cell cuts 'dB' short
+        for cut, full in ((" d", " dB"), (" m", " ms"), (" H", " Hz"), (" k", " kHz")):
+            if shown.endswith(cut):
+                return shown[: -len(cut)] + full                       # the 7-character cell cuts the unit short
+        return shown
 
     # ------------------------------------------------------------------ bounce
     def bounce(self, out_path: str | Path, start_bar: int, end_bar: int, bit_depth: str = "24", sample_rate: str | None = None,
