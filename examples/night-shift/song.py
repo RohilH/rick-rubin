@@ -12,14 +12,21 @@ from rick_rubin import Song
 song = Song("Night Shift", bpm=126, key="F minor", swing=56)
 
 # ---------------------------------------------------------------- tracks
-# Drums: Logic's Drum Synth kit (the role's default kit on channel 10). Each voice on its own track so the
-# mixer, sends and automation can treat them apart, as a house producer would.
-kick = song.add_track("Kick", "kick", volume_db=-4)
-clap = song.add_track("Clap", "clap", volume_db=-9, sends={"A": -16})
-hats = song.add_track("Hats", "hat", volume_db=-14, pan=0.15, swing=True)
-ohat = song.add_track("Open Hat", "openhat", volume_db=-17, pan=-0.1, swing=True)
-rim = song.add_track("Rim", "perc", volume_db=-15, pan=-0.3, swing=True, sends={"A": -20})
-shaker = song.add_track("Shaker", "shaker", volume_db=-21, pan=0.3, swing=True)
+# Drums: one Logic Drum Synth per voice, each on its own track so the mixer, sends and automation can treat
+# them apart, as a house producer would. Drum Synth is a single-voice analogue-style drum: its Sound Category
+# and Sound Model pick the voice, Decay / Tone / Pitch shape it (names as Logic's edit view shows them).
+kick = song.add_track("Kick", "kick", volume_db=-4, instrument="Drum Synth",
+                      instrument_params={"Sound Category": "Kicks", "Sound Model": "Punch Kick", "Decay": 42, "Tone": 20})
+clap = song.add_track("Clap", "clap", volume_db=-9, sends={"A": -16}, instrument="Drum Synth",
+                      instrument_params={"Sound Category": "Snares and Claps", "Sound Model": "Human Clap", "Decay": 40})
+hats = song.add_track("Hats", "hat", volume_db=-14, pan=0.15, swing=True, instrument="Drum Synth",
+                      instrument_params={"Sound Category": "Hats and Cymbals", "Sound Model": "Sharp Hat", "Decay": 18})
+ohat = song.add_track("Open Hat", "openhat", volume_db=-17, pan=-0.1, swing=True, instrument="Drum Synth",
+                      instrument_params={"Sound Category": "Hats and Cymbals", "Sound Model": "Hat", "Decay": 55})
+rim = song.add_track("Rim", "perc", volume_db=-15, pan=-0.3, swing=True, sends={"A": -20}, instrument="Drum Synth",
+                     instrument_params={"Sound Category": "Percussion", "Decay": 25})
+shaker = song.add_track("Shaker", "shaker", volume_db=-21, pan=0.3, swing=True, instrument="Drum Synth",
+                        instrument_params={"Sound Category": "Hats and Cymbals", "Sound Model": "Smooth", "Decay": 12, "Tone": 70})
 # Bass: the role's default Logic patch (a synth bass) ducked against the kick — the tech house pump.
 bass = song.add_track("Bass", "bass", volume_db=-7, sidechain=True,
                       effects=[{"device": "Channel EQ"}])

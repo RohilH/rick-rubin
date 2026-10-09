@@ -62,6 +62,7 @@ calls on it, mirroring `live/client.py`.
 | role | a Logic patch from the General MIDI program for the role (the report says which) |
 | `instrument="Retro Synth"` / `"Alchemy"` / `"Serum 2"` | that instrument in the instrument slot (Logic's own and Audio Units) |
 | `instrument="Deep House Kit"` (not an instrument name) | the first Library patch the search finds |
+| `instrument_params` | the instrument's parameters by displayed value, set in the surface's Instrument Edit view (e.g. Drum Synth: `{"Sound Category": "Kicks", "Sound Model": "Punch Kick", "Decay": 42}`) |
 | pattern / section parts | one region per track per section with the notes (swing and groove baked in, as for Live) |
 | `effects` | Logic plug-ins by name in the insert slots, in order, after the patch's own inserts; `params` set by displayed value |
 | `sidechain: true` | a Compressor keyed from the Kick (side chain input = the Kick's channel strip) |
@@ -118,7 +119,10 @@ Section, offline, 24-bit WAV, the bar range you give (tracks soloed when asked),
 ## Logic's instrument choices per role (for reference)
 
 Measured on Logic Pro 11.2 with the General MIDI programs in `logic/smf.py`: drums (channel 10, program 0)
-→ SoCal kit; program 16 → "Kick 1 - Tough Kit" (Drum Machine Designer), 24/25 → "Drum Synth Kit";
+→ SoCal kit (Drum Kit Designer, a full acoustic kit — the default, because it answers every drum note); program
+16 → a single "Kick 1" pad of the Tough Kit, 24/25 → a single "Sub Kick" Drum Synth (every note plays that one
+voice, so hats and claps would all be sub kicks — name `instrument="Drum Synth"` per track with `instrument_params`
+for electronic drums instead, as `examples/night-shift` does);
 38 → Pulse Bass, 39 → Taureg Moon Bass, 33 → Simple Foundation; 81 → The Final Lead, 80 → Reverse
 Engineering, 87 → Soft Square Lead; 89 → Classic Pad, 88 → Glistening Pad, 90 → Epic Cloud Formation;
 4 → Classic Electric Piano, 16 → Tonewheel Organ. Name a patch or an instrument when the role's default is

@@ -1189,16 +1189,22 @@ class LogicBridge:
             want = ("On" if val else "Off") if isinstance(val, bool) else str(val).strip()
             cur = read()
             seen = []
+            def stable_read():
+                time.sleep(0.6)                              # the long option name Logic flashes would be misread
+                self._stable_lcd(0.4, 1.5)
+                return read()
+            cur = stable_read()
             for _ in range(60):
                 if cur.lower() == want.lower() or (len(want) >= 3 and cur.lower().startswith(want.lower()[:len(cur)])) \
                         or abbrev_matches(cur, want):
                     return cur
                 if cur in seen:
-                    break
+                    break                                    # wrapped around: the option is not in this list
                 seen.append(cur)
-                self._tick(col, 1)
-                u.settle(0.08, 0.6)
-                cur = read()
+                nxt = self._step_until_change(col, 1, stable_read)
+                if nxt == cur:
+                    break                                    # end stop
+                cur = nxt
             raise LogicError(f"no option {want!r} (options seen: {seen})")
         target = AX.disp_number(val) if isinstance(val, str) else float(val)
         shown = self._converge(col, float(target), read)

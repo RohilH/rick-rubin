@@ -251,7 +251,10 @@ measurements. What changes for you:
 - Instruments: without `instrument=`, Logic picks a patch from the track's role (the push report says which,
   e.g. `Pulse Bass`, `SoCal`). `instrument="Retro Synth"` / `"Alchemy"` / `"Serum 2"` loads that instrument;
   any other string is a Library search and the first patch found is loaded (`"Deep House Kit"`). A Logic patch
-  brings its own inserts (`patch fx` in the report) — your `effects` come after them.
+  brings its own inserts (`patch fx` in the report) — your `effects` come after them. `instrument_params` sets
+  the instrument's parameters by displayed value (Drum Synth: `{"Sound Category": "Kicks", "Sound Model":
+  "Punch Kick", "Decay": 42}` — one Drum Synth per drum track is how electronic drums are done in Logic here;
+  the role's default kit is Logic's acoustic Drum Kit Designer).
 - Effects and parameters use Logic's names: `{"device": "Compressor", "params": {"Threshold": -28, "Ratio": 4,
   "Attack": 0.5, "Release": 120}}`, `"Channel EQ"`, `"AutoFilter"`, `"Limiter"`, `"ChromaVerb"`, `"Tape Delay"`.
   Units are the displayed ones. `sidechain: true` is a Compressor keyed from the Kick, as in Live.
