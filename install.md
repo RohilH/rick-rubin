@@ -50,6 +50,16 @@ for a brief.
   - Device insertion by name uses Live 12.3+. On older versions it goes through the browser.
 - `ffmpeg` is needed to tempo-match sample loops whose tempo differs from the song's (`brew install ffmpeg`), and to turn `preview.wav` into an mp3 for sharing. Everything else works without it.
 
+## Logic Pro instead of Ableton
+
+```bash
+pip install -e ".[logic]"
+rick-rubin --daw logic status      # launches Logic if needed; "mcu": true once it has found the control surface
+```
+Grant the terminal (or the agent) **Accessibility** permission in System Settings > Privacy & Security. There is no
+bridge to install: Logic detects the emulated Mackie Control by itself. Then `rick-rubin --daw logic push <dir>`.
+See `docs/LOGIC.md`.
+
 ## Day to day
 
 Open your agent in any folder and give it a brief, for example: "deep house at 121, F dorian, dubby chords, long DJ intro, then push it to Ableton." The agent creates a project folder there and follows SKILL.md: plan → confirm → edit → eval → push → remember.

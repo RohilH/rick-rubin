@@ -157,7 +157,8 @@ class PushReport:
 
     def text(self) -> str:
         n_tracks = sum(1 for k in self.tracks if k != "master" and not k.startswith("return "))
-        L = [f"Pushed to Live {self.live_version or '?'}: {n_tracks} tracks, {self.clips} clips, {self.notes} notes"
+        daw = self.live_version if (self.live_version or "").startswith("Logic") else f"Live {self.live_version or '?'}"
+        L = [f"Pushed to {daw}: {n_tracks} tracks, {self.clips} clips, {self.notes} notes"
              + (f"  [{self.mode}]" if self.mode else "")]
         for name, info in self.tracks.items():
             L.append(f"  - {name}: instrument={info.get('instrument')!s}" + (f", sidechain={info['sidechain']}" if info.get("sidechain") else ""))

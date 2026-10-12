@@ -1,6 +1,6 @@
 ---
 name: rick-rubin
-description: Write house / EDM tracks as Python code — every note, rhythm, groove and section written by you — then read, measure and render them into Ableton Live (samples, instruments, effects, sidechain, automation) and check the result on audio recorded back from Live. No templates or generators. Ask, confirm the plan, write, self-eval, push, capture, persist.
+description: Write house / EDM tracks as Python code — every note, rhythm, groove and section written by you — then read, measure and render them into Ableton Live or Logic Pro (samples, instruments, effects, sidechain, automation) and check the result on audio recorded back from the DAW. No templates or generators. Ask, confirm the plan, write, self-eval, push, capture, persist.
 ---
 
 # rick-rubin
@@ -241,6 +241,32 @@ There is one mixer, and it is Ableton's. The offline preview plays the notes and
 - `watch` is hot reload: it keeps running, and every time `song.py` is saved it rebuilds the song and applies just the change in Live without stopping playback (`--bars 81-88 --play` loops that range), printing one line per save — what was updated, how long it took, any warnings; a `song.py` that does not build is reported and Live is left as it was. It is for a person listening while the song is edited; an agent measuring should still `capture`.
 - Capture the fewest bars that answer the question (`--bars 81-84`, `--tracks ...`): recording is real time.
 - If someone changed the set by hand, `--update` notices and does a full push.
+
+## Logic Pro instead of Live
+
+`rick-rubin --daw logic push <dir>` (or `RICK_RUBIN_DAW=logic`) renders the same `song.py` into Logic Pro, and
+`--daw logic capture` bounces it offline (a 5-minute track in about ten seconds) into `live.wav` for the same
+measurements. What changes for you:
+
+- Instruments: without `instrument=`, Logic picks a patch from the track's role (the push report says which,
+  e.g. `Pulse Bass`, `SoCal`). `instrument="Retro Synth"` / `"Alchemy"` / `"Serum 2"` loads that instrument;
+  any other string is a Library search and the first patch found is loaded (`"Deep House Kit"`). A Logic patch
+  brings its own inserts (`patch fx` in the report) — your `effects` come after them. `instrument_params` sets
+  the instrument's parameters by displayed value (Drum Synth: `{"Sound Category": "Kicks", "Sound Model":
+  "Punch Kick", "Decay": 42}` — one Drum Synth per drum track is how electronic drums are done in Logic here;
+  the role's default kit is Logic's acoustic Drum Kit Designer).
+- Effects and parameters use Logic's names: `{"device": "Compressor", "params": {"Threshold": -28, "Ratio": 4,
+  "Attack": 0.5, "Release": 120}}`, `"Channel EQ"`, `"AutoFilter"`, `"Limiter"`, `"ChromaVerb"`, `"Tape Delay"`.
+  Units are the displayed ones. `sidechain: true` is a Compressor keyed from the Kick, as in Live.
+- Returns become Bus 1, 2… with an Aux each; sends are in dB; `master_effects` go on Stereo Out.
+- Every push is a full push (no `--update`, no `watch`); it takes one to four minutes. Section `volume` and
+  `filter` automation is written only with `--automation` (it plays the automated bars in real time).
+- Not built yet in Logic: sample one-shot tracks, Serum stems, MIDI effects. Their tracks exist and play the
+  role's patch; the report lists each one. Audio loops are imported onto an audio track.
+- Do not click in Logic during a push: it applies strip edits to every selected track, and the control
+  surface state must not change. Keep projects in a visible folder (file panels cannot reach hidden ones).
+
+Details, setup (Accessibility permission, `pip install -e ".[logic]"`) and troubleshooting: `docs/LOGIC.md`.
 
 ## Effects and compressors
 

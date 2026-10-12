@@ -122,6 +122,17 @@ Before the first push:
 | `Live is in use by another rick-rubin run` | Two commands tried to drive Live at once (two agents, or a `watch` left running). Wait for the other to finish or stop it. |
 | A capture sounds different from the offline preview | Expected. The preview is a sketch; what Live plays is the reference. Judge sound on `rick-rubin capture`. |
 
+## Logic Pro
+
+The same song renders into **Logic Pro 11** (macOS): `rick-rubin --daw logic push <dir>` builds the project —
+tempo, markers, named tracks and regions, a Logic patch or named instrument per track, the mixer, effects chains
+with their parameters, kick-keyed sidechain compressors, returns (busses with an Aux each) and sends, the master
+chain — and saves it as `<project>/logic/<title>.logicx`. `--daw logic capture` is an offline bounce. Nothing is
+installed into Logic: the song goes in as a MIDI file Logic opens as a project, and the mixer, plug-ins and
+dialogs are driven through macOS accessibility plus a Mackie Control that Logic detects on its own.
+`pip install -e ".[logic]"`, grant your terminal Accessibility permission, and read [`docs/LOGIC.md`](docs/LOGIC.md)
+for what is built, what differs from Live and troubleshooting.
+
 ## Use it
 
 ### With Claude Code (or any coding agent) — the intended way
@@ -244,6 +255,11 @@ rick_rubin/
   render/preview.py  numpy sketch synth with sidechain + filter automation
   live/client.py  bridge client + push_song()
   live/remote_script/RickRubin/  Live remote script (TCP JSON bridge; handlers testable without Live)
+  logic/smf.py    the song as a MIDI file Logic opens as a project (GM program per role, markers, names)
+  logic/ax.py     Logic through macOS accessibility: Mixer strips, plug-in windows, menus, dialogs, file panels
+  logic/mcu.py    a Mackie Control emulated on a virtual MIDI port (LCD, faders, clock) that Logic auto-detects
+  logic/bridge.py the Logic bridge: open/save projects, strips, inserts, sends, parameters, side chains, bounce
+  logic/client.py push_song / capture_logic for Logic (the counterpart of live/client.py)
   serum.py        Serum 2: preset catalog, patch sheets, and the plug-in hosted in-process (load presets, render parts)
   transcribe.py   syllable-level alignment of vocals to the grid, and re-timing
   pitch.py        the notes inside a single-voice sample
