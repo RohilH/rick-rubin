@@ -124,3 +124,14 @@ def test_capture_is_a_bounce(tmp_path):
     assert r["path"].exists() and r["bars"] == (3, 6) and r["seconds"] > 0
     with pytest.raises(B.LogicError):
         C.capture_logic(s, fake, tmp_path / "x.wav", tracks=["Nobody"])
+
+
+def test_logic_midi_spans_the_song_when_its_notes_do_not(tmp_path):
+    # Logic ends a project after its last note and will not move the playhead past it: an audio-only song needs an
+    # inaudible note on its last bar, or audio could not be imported after the first bars
+    s = Song("Stems", bpm=128, key="A minor")
+    s.add_track("Drums", "drums", audio=True)
+    s.add_section("a", 32, kind="drop", parts={})
+    r = export_logic_midi(s, tmp_path / "s.mid")
+    notes = read_midi_notes(r["path"])
+    assert max(n[1] for n in notes) >= (32 - 1) * 4 and all(n[4] == 1 for n in notes)   # start in beats; velocity 1 only

@@ -154,7 +154,7 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
                     from ..live.client import _segment_file
                     path = _segment_file(song, c.audio, off, ln, {k: v for k, v in c.envelopes.items() if k in ("filter", "cutoff", "volume")})
                     beat = c.start + s0
-                    bridge.import_audio(ti, path, int(beat // 4) + 1, int(beat % 4) + 1)
+                    bridge.import_audio(ti, path, int(beat // 4) + 1, int(beat % 4) + 1, keep_file_rate=True)
                     placed += 1
             rep.tracks[t.name] = {"index": ti, "instrument": f"audio track ({placed} regions)"}
             rep.warnings += [f"{t.name}: Logic shows the track as {bridge.tracks()[ti]!r}"] if bridge.tracks()[ti] != t.name else []
