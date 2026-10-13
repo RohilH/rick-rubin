@@ -67,7 +67,7 @@ rick-rubin transcribe <dir> samples/vocal.wav [--text "lyric"]   # syllables -> 
 rick-rubin retime <dir> samples/vocal.wav --name vocal_q          # audio-quantize a loose vocal loop, word by word
 rick-rubin notes <dir> samples/vocal.wav                          # the notes inside a sample: pitch+octave, cents, position
 rick-rubin width <dir> [file]                # stereo image: correlation, side %, mono loss, per band and section
-rick-rubin split <dir> refs/track.wav [--stems vocals,bass] [--from 60 --to 90]   # a recording's stems with Logic Pro's Stem Splitter -> stems/track/<stem>.wav
+rick-rubin split <dir> refs/track.wav [--stems vocals,bass] [--bpm 128] [--transpose N]   # a recording's stems with Logic Pro's Stem Splitter (conformed with Smart Tempo) -> stems/track/<stem>.wav
 rick-rubin sample <dir> <file> --name N --oneshot [--melodic]                       # Simpler one-shot; --melodic measures its pitch
 rick-rubin sample <dir> <file> --name N --loop --src-bpm B [--bars N] [--align end] [--end-at S] # audio loop, conformed to the song tempo
 rick-rubin eval <dir>                        # lint + preview render + measurements -> eval.md (exit 1 on errors)
@@ -271,7 +271,9 @@ measurements. What changes for you:
   no `--daw` needed): vocals, drums, bass, guitar, piano and other as `stems/track/<stem>.wav`, at the recording's
   rate, with each stem's level; one near silent means the recording has none of it. Use it to read a reference's
   parts on their own — `notes` on its bass stem, `transcribe` on its vocal, `width` and `reference` on its drums —
-  instead of guessing them from the full mix. A 3-minute song takes about 40 s.
+  instead of guessing them from the full mix. A 3-minute song takes about 40 s. `--bpm 128 [--transpose N]` brings a
+  second song to this one's tempo and key with Logic's Smart Tempo and Transpose (for a mashup): its stems come out
+  conformed.
 
 Details, setup (Accessibility permission, `pip install -e ".[logic]"`) and troubleshooting: `docs/LOGIC.md`.
 

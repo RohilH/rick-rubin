@@ -92,7 +92,7 @@ Section, offline, 24-bit WAV, the bar range you give (tracks soloed when asked),
 
 ## Stem splitting
 
-`rick-rubin split <dir> refs/track.wav [--stems vocals,bass] [--from 60 --to 90] [--submix] [--close]` separates a
+`rick-rubin split <dir> refs/track.wav [--stems vocals,bass] [--from 60 --to 90] [--bpm 128] [--transpose -2] [--submix] [--close]` separates a
 recording with Logic's own **Stem Splitter** (Logic Pro 11 on Apple silicon; 11.2 has six stems: vocals, drums, bass,
 guitar, piano, other) and writes `stems/track/<stem>.wav` in the project — 24-bit, at the recording's sample rate,
 as long as the recording. It does not need `--daw logic`, a song or the Mackie Control. What it does:
@@ -108,6 +108,14 @@ as long as the recording. It does not need `--daw logic`, a song or the Mackie C
 3. Logic writes the stems into the project's Audio Files folder as `<name>_<Stem>.wav` under a progress window,
    whose progress the command prints; then it adds a summing stack with one audio track per stem and mutes the
    original region. The command waits for the files to stop growing, copies them out and measures them.
+
+`--bpm 128` conforms the recording to a tempo first, with Logic's own tools: the project is made at that tempo, Smart
+Tempo analyses the recording (Edit > Open Smart Tempo Editor > Analyze; `--source-bpm` corrects a half or double
+detection with its x2 and /2 buttons), and the region is set to Flex & Follow: On in the Region Inspector, so it plays at
+the project's tempo. `--transpose N` moves it by semitones with the region's Transpose. The stems the Stem Splitter
+then makes inherit both, and each is bounced from Logic on its own (soloed, offline) and cut to the conformed length,
+so the files are Logic's stretch and pitch shift. Checked: a 126 BPM song conformed to 128 came out 230.6 s long (234.3
+× 126/128) and kept its grid to within 11 ms over four minutes.
 
 Measured on an M4 Pro: 30 s of a vocal house track split into six stems in 10 s, a 2'43" song in 34 s. The six
 stems add up to the original within 36 dB (the residual is 36 dB below the mix). A stem the recording does not

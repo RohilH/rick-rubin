@@ -530,6 +530,121 @@ class LogicBridge:
         return AX.wait_for(lambda: AX.find(self.track_regions(track_index)[nth], lambda e: AX.role(e) == "AXMenu", 3)
                            or AX.find(self.main, lambda e: AX.role(e) == "AXMenu", 12), 2.0)
 
+    # ---- the Inspector's Region parameters (Transpose, Flex & Follow, Gain …) of the selected region
+    FLEX_FOLLOW = ("Off", "On", "On + Align Bars", "On + Align Bars and Beats")
+
+    def region_param(self, label: str):
+        """The control on the Region Inspector row called `label` ('Transpose:', 'Flex & Follow:', 'Gain:' …); the
+        Region section is opened when it is folded."""
+        def find():
+            insp = next((c for c in AX.children(self.main) if AX.desc(c) == "Inspector"), None)
+            outline = AX.find(insp, lambda e: AX.role(e) == "AXOutline", 6) if insp is not None else None
+            for r in AX.children(outline) if outline is not None else []:
+                tf = AX.find(r, lambda e: AX.role(e) == "AXTextField", 3)
+                if tf is not None and AX.attr(tf, "AXValue") == label:
+                    return next((c for c in AX.children(r) if AX.role(c) in ("AXPopUpButton", "AXSlider", "AXCheckBox")), None)
+            return None
+        el = find()
+        if el is None:
+            insp = next((c for c in AX.children(self.main) if AX.desc(c) == "Inspector"), None)
+            for g in AX.children(AX.children(insp)[0]) if insp is not None and AX.children(insp) else []:
+                texts = [str(AX.attr(x, "AXValue")) for x in AX.children(g) if AX.role(x) in ("AXTextField", "AXStaticText")]
+                tri = next((x for x in AX.children(g) if AX.role(x) == "AXDisclosureTriangle"), None)
+                if "Region:" in texts and tri is not None and not AX.attr(tri, "AXValue"):
+                    AX.press(tri)
+            el = AX.wait_for(find, 2.0)
+        if el is None:
+            raise LogicError(f"the Region Inspector has no {label!r} (is the Inspector shown and a region selected?)")
+        return el
+
+    def set_flex_follow(self, track_index: int, mode: str = "On") -> str:
+        """Region Inspector > Flex & Follow on the track's first region: Off | On | On + Align Bars | On + Align Bars and
+        Beats. With it on, the region plays at the project tempo (from its file's Smart Tempo analysis). The pop-up is
+        one of Logic's own menus: it is opened and stepped with keystrokes posted to Logic's process."""
+        if mode not in self.FLEX_FOLLOW:
+            raise LogicError(f"Flex & Follow is one of {', '.join(self.FLEX_FOLLOW)}")
+        self.select_region(track_index)
+        self.focus()
+        pop = self.region_param("Flex & Follow:")
+        cur = str(AX.attr(pop, "AXValue") or "Off")
+        if cur == mode:
+            return cur
+        AX.press(pop)
+        if not self._popup_open(1.5):
+            raise LogicError("the Flex & Follow menu did not open")
+        steps = self.FLEX_FOLLOW.index(mode) - self.FLEX_FOLLOW.index(cur if cur in self.FLEX_FOLLOW else "Off")
+        for _ in range(abs(steps)):
+            K.key(self.app.pid, "down" if steps > 0 else "up")
+            time.sleep(0.12)
+        K.key(self.app.pid, "return")
+        got = AX.wait_for(lambda: (lambda v: v if v == mode else None)(str(AX.attr(self.region_param("Flex & Follow:"), "AXValue"))), 3.0)
+        if got is None:
+            self.clear_popups()
+            raise LogicError(f"Flex & Follow did not change to {mode!r}")
+        return got
+
+    def set_transpose(self, track_index: int, semitones: int) -> int:
+        """Region Inspector > Transpose (semitones, -36..36) on the track's first region. Like the playhead, the slider
+        takes one step per value it is given."""
+        self.select_region(track_index)
+        for _ in range(80):
+            cur = AX.attr(self.region_param("Transpose:"), "AXValue")
+            if cur is None or round(float(cur)) == semitones:
+                break
+            AX.set_value(self.region_param("Transpose:"), float(semitones))
+            time.sleep(0.04)
+        got = round(float(AX.attr(self.region_param("Transpose:"), "AXValue") or 0))
+        if got != semitones:
+            raise LogicError(f"Transpose stayed at {got}, not {semitones}")
+        return got
+
+    def analyze_tempo(self, track_index: int, expect_bpm: float | None = None, timeout: float = 180.0) -> float:
+        """Smart Tempo: analyse the tempo of the file under the track's first region (Edit > Open Smart Tempo Editor >
+        Analyze) and return it. `expect_bpm` corrects a detection at half or double the tempo (x2 and /2)."""
+        self.select_region(track_index)
+        self.focus()
+        self.app.menu("Edit", "Open Smart Tempo Editor")
+
+        def editor():
+            for w in self.app.windows():
+                g = AX.find(w, lambda e: AX.role(e) == "AXGroup" and AX.desc(e) == "Smart Tempo", 2)
+                if g is not None and (self.project is None or AX.title(w).startswith(self.project)):
+                    return g
+            return None
+
+        def helped(start: str, role: str):
+            g = editor()
+            return AX.find(g, lambda e: AX.role(e) == role and str(AX.attr(e, "AXHelp") or "").startswith(start), 8) if g is not None else None
+
+        def tempo():
+            tf = helped("Shows the tempo of the audio file", "AXTextField")
+            return AX.disp_number(str(AX.attr(tf, "AXValue") or "")) if tf is not None else None
+
+        if AX.wait_for(editor, 6.0) is None:
+            raise LogicError("the Smart Tempo Editor did not open")
+        analyze = AX.find(editor(), lambda e: AX.role(e) == "AXButton" and AX.title(e) == "Analyze", 4)
+        if analyze is not None:
+            AX.press(analyze)
+
+        def done():
+            g = editor()
+            pending = g is not None and AX.find(g, lambda e: "does not contain tempo" in str(AX.attr(e, "AXValue") or ""), 4) is not None
+            return tempo() if not pending and self.stem_split_progress() is None else None
+        bpm = AX.wait_for(done, timeout, 0.5)
+        if bpm is None:
+            raise LogicError(f"Smart Tempo found no tempo in {timeout:.0f} s (pending: {self.pending_alert()})")
+        if expect_bpm:
+            for _ in range(3):
+                if abs(bpm * 2 - expect_bpm) < abs(bpm - expect_bpm):
+                    AX.press(AX.find(editor(), lambda e: AX.role(e) == "AXButton" and AX.title(e) == "x2", 8))
+                elif abs(bpm / 2 - expect_bpm) < abs(bpm - expect_bpm):
+                    AX.press(AX.find(editor(), lambda e: AX.role(e) == "AXButton" and AX.title(e) == "/2", 8))
+                else:
+                    break
+                time.sleep(0.6)
+                bpm = tempo() or bpm
+        return float(bpm)
+
     def _tracks_menu(self, name: str):
         """Open the Tracks area's own Edit / Functions / View menu and return it (press an item, or AXCancel it)."""
         button = AX.find(self.main, lambda e: AX.role(e) == "AXMenuButton" and AX.desc(e) == name, 8)
@@ -1428,8 +1543,12 @@ class LogicBridge:
                     AX.set_checkbox(cb, on)
             groups = [g for g in AX.children(dlg) if AX.role(g) == "AXGroup" and AX.desc(g).startswith("\t")]
             if len(groups) >= 2:
+                # the dialog opens on the project's end, and stepping past it wraps to bar 1: never ask for more
+                project_end = AX.disp_number(AX.desc(groups[1]).split("\t")[1]) or end_bar + 1
+                if end_bar + 1 > project_end:
+                    self.say(f"the project ends at bar {project_end:g}: bouncing to there, not to bar {end_bar + 1}")
                 self._set_position_group(groups[0], start_bar)
-                self._set_position_group(groups[1], end_bar + 1)
+                self._set_position_group(groups[1], int(min(end_bar + 1, project_end)))
             AX.press(AX.find(dlg, lambda e: AX.role(e) == "AXButton" and AX.title(e) == "OK", 2))
         except Exception:
             AX.press(AX.find(dlg, lambda e: AX.role(e) == "AXButton" and AX.title(e) == "Cancel", 2))
@@ -1475,6 +1594,9 @@ class LogicBridge:
             if cur is None or int(cur) == bar:
                 break
             AX.do(segs[0], "AXIncrement" if cur < bar else "AXDecrement")
+        got = AX.disp_number(AX.shown(segs[0]))
+        if got is None or int(got) != bar:
+            raise LogicError(f"the bounce position stayed at bar {got}, not {bar}")
         for s in segs[1:]:
             for _ in range(20):
                 cur = AX.disp_number(AX.shown(s))

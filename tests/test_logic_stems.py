@@ -134,6 +134,34 @@ class FakeStemBridge:
     def stem_split_progress(self):
         return None
 
+    # Smart Tempo / Transpose / solo + bounce, for split_stems(bpm=, transpose=)
+    def analyze_tempo(self, ti, expect_bpm=None):
+        self.calls.append(("analyze", ti, expect_bpm))
+        return 126.0
+
+    def set_flex_follow(self, ti, mode="On"):
+        self.calls.append(("follow", ti, mode))
+        return mode
+
+    def set_transpose(self, ti, semitones):
+        self.calls.append(("transpose", ti, semitones))
+        return semitones
+
+    def set_solo(self, i, on):
+        self.calls.append(("solo", self._tracks[i], on))
+        return on
+
+    def bounce(self, out, start_bar, end_bar, tail=False):
+        """What Logic plays of the soloed stem: the file sped up from 126 to 128 BPM (plus a bar of silence)."""
+        track = next(c[1] for c in reversed(self.calls) if c[0] == "solo" and c[2])
+        st = track.split("(")[1].rstrip(")")
+        sr, x = read_audio(self.package / "Media" / "Audio Files" / f"{self.source.stem}_{st}.wav")
+        n = int(len(x) * 126 / 128)
+        y = np.concatenate([x[np.linspace(0, len(x) - 1, n).astype(int)], np.zeros((sr * 2, 2), np.float32)])
+        write_wav24(out, sr, y)
+        self.calls.append(("bounce", track, start_bar, end_bar))
+        return Path(out)
+
     def pending_alert(self):
         return None
 
@@ -241,3 +269,19 @@ def test_open_midi_project_keeps_the_frontmost_project_unless_ours(monkeypatch, 
     br.open_midi_project(tmp_path / "x.mid", expect_tracks=1)
     assert br.app.answered == (["Close"] if ours else ["Don't Close"])
     assert br.project == "Untitled 2" and "Untitled 2" in br._opened
+
+
+def test_split_stems_conformed_by_logic(tmp_path):
+    src = tmp_path / "song.wav"
+    write_wav24(src, SR, _tone(15.0))
+    b = FakeStemBridge()
+    r = S.split_stems(src, tmp_path / "out", "vocals,bass", bpm=128, source_bpm=126, transpose=-2, bridge=b)
+    kinds = [c[0] for c in b.calls]
+    assert ("analyze", 0, 126) in b.calls and ("follow", 0, "On") in b.calls and ("transpose", 0, -2) in b.calls
+    assert kinds.index("analyze") < kinds.index("split") < kinds.index("bounce")        # conformed before the split
+    assert [c[1] for c in b.calls if c[0] == "bounce"] == ["song (Vocals)", "song (Bass)"]
+    assert all(c[3] == 8 for c in b.calls if c[0] == "bounce")                         # 15 s * 126/128 = 7.9 bars at 128
+    sr, v = read_audio(r["stems"]["vocals"])
+    assert abs(len(v) / sr - 15.0 * 126 / 128) < 0.01                                  # cut to the conformed length
+    assert r["source_bpm"] == 126.0 and r["bpm"] == 128 and r["transpose"] == -2
+    assert ("solo", "song (Bass)", False) in b.calls                                   # nothing left soloed

@@ -201,6 +201,9 @@ def _main(argv: list[str] | None = None) -> int:
     s.add_argument("--to", dest="end_s", type=float, help="... up to this second")
     s.add_argument("--submix", action="store_true", help="also write the stems not asked for, summed (Logic's Submix), as submix.wav")
     s.add_argument("--close", action="store_true", help="close the Logic project afterwards (it is saved either way)")
+    s.add_argument("--bpm", type=float, help="conform the stems to this tempo with Logic's Smart Tempo (Flex & Follow)")
+    s.add_argument("--source-bpm", type=float, help="the recording's tempo if you know it: corrects a half/double detection")
+    s.add_argument("--transpose", type=int, default=0, help="semitones to move the stems, with the region's Transpose in Logic")
 
     s = sub.add_parser("serum", help="read Serum 2 presets: `serum list` to find one, `serum show NAME` for its patch sheet")
     s.add_argument("action", choices=["list", "search", "index", "show", "params", "render", "view"])
@@ -623,8 +626,10 @@ def _main(argv: list[str] | None = None) -> int:
         project_dir = Path(a.dir)
         recording = Path(a.source) if Path(a.source).is_absolute() else project_dir / a.source
         stems_dir = Path(a.out) if a.out else project_dir / "stems" / recording.stem
-        r = split_stems(recording, stems_dir, a.stems, a.submix, a.start_s, a.end_s, a.close, progress=lambda m: print("·", m, file=sys.stderr))
-        print(f"# Logic Stem Splitter — {a.source} ({r['seconds']:.1f} s at {r['sample_rate']} Hz, split in {r['split_s']:.0f} s)")
+        r = split_stems(recording, stems_dir, a.stems, a.submix, a.start_s, a.end_s, a.close, progress=lambda m: print("·", m, file=sys.stderr),
+                        bpm=a.bpm, transpose=a.transpose, source_bpm=a.source_bpm)
+        how = (f"; {r['source_bpm']:g} -> {a.bpm:g} BPM" if a.bpm else "") + (f"; transposed {a.transpose:+d}" if a.transpose else "")
+        print(f"# Logic Stem Splitter — {a.source} ({r['seconds']:.1f} s at {r['sample_rate']} Hz, split in {r['split_s']:.0f} s{how})")
         for st, path in r["stems"].items():
             rms, peak = r["levels"][st]
             print(f"{st:7s} {path}  {rms:6.1f} dB RMS, peak {peak:5.1f} dBFS" + ("  — near silent: nothing of this in the recording" if st in r["silent"] else ""))
