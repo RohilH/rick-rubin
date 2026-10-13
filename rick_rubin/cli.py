@@ -192,6 +192,16 @@ def _main(argv: list[str] | None = None) -> int:
     s.add_argument("--move", action="append", default=[], metavar="N=POS",
                    help="place piece N yourself, e.g. --move 3=2.3.1 (bar.beat.sixteenth); repeatable")
 
+    s = sub.add_parser("split", help="separate a recording into stems (vocals, drums, bass, guitar, piano, other) with Logic Pro's Stem Splitter")
+    s.add_argument("dir")
+    s.add_argument("source", help="the recording (wav, aiff, mp3, m4a), project-relative or absolute, e.g. refs/track.wav")
+    s.add_argument("--stems", default="all", help="comma-separated: vocals,drums,bass,guitar,piano,other (default all)")
+    s.add_argument("--out", help="folder for <stem>.wav (default: stems/<source name>/ in the project)")
+    s.add_argument("--from", dest="start_s", type=float, help="split only from this second of the recording")
+    s.add_argument("--to", dest="end_s", type=float, help="... up to this second")
+    s.add_argument("--submix", action="store_true", help="also write the stems not asked for, summed (Logic's Submix), as submix.wav")
+    s.add_argument("--close", action="store_true", help="close the Logic project afterwards (it is saved either way)")
+
     s = sub.add_parser("serum", help="read Serum 2 presets: `serum list` to find one, `serum show NAME` for its patch sheet")
     s.add_argument("action", choices=["list", "search", "index", "show", "params", "render", "view"])
     s.add_argument("words", nargs="*", help="show/params/render/view: the preset's name (or words from it, or a path); "
@@ -603,6 +613,22 @@ def _main(argv: list[str] | None = None) -> int:
         from .live import install_bridge
         t = install_bridge(a.dest)
         print(f"installed to {t}\nRestart Live, then Settings > Link, Tempo & MIDI > Control Surface: RickRubin")
+    elif a.cmd == "split":
+        from .logic.stems import parse_stems, split_stems
+        try:
+            parse_stems(a.stems)
+        except ValueError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+        project_dir = Path(a.dir)
+        recording = Path(a.source) if Path(a.source).is_absolute() else project_dir / a.source
+        stems_dir = Path(a.out) if a.out else project_dir / "stems" / recording.stem
+        r = split_stems(recording, stems_dir, a.stems, a.submix, a.start_s, a.end_s, a.close, progress=lambda m: print("·", m, file=sys.stderr))
+        print(f"# Logic Stem Splitter — {a.source} ({r['seconds']:.1f} s at {r['sample_rate']} Hz, split in {r['split_s']:.0f} s)")
+        for st, path in r["stems"].items():
+            rms, peak = r["levels"][st]
+            print(f"{st:7s} {path}  {rms:6.1f} dB RMS, peak {peak:5.1f} dBFS" + ("  — near silent: nothing of this in the recording" if st in r["silent"] else ""))
+        print(f"Logic project: {r['project']} ({'closed' if a.close else 'open in Logic: a stack of stem tracks, the original muted'})")
     elif a.cmd == "status" and a.daw == "logic":
         from .logic import LogicBridge
         with LogicBridge(progress=lambda m: print("·", m, file=sys.stderr)) as b:
@@ -618,8 +644,9 @@ def main(argv: list[str] | None = None) -> int:
     from .live.client import BridgeError
     try:
         return _main(argv)
-    except BridgeError as e:                      # Live said no, or is not there: a message, not a stack trace
-        print(f"error (Live): {e}", file=sys.stderr)
+    except BridgeError as e:                      # the DAW said no, or is not there: a message, not a stack trace
+        daw = "Logic" if type(e).__name__ == "LogicError" else "Live"
+        print(f"error ({daw}): {e}", file=sys.stderr)
         return 2
 
 

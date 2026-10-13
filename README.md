@@ -130,8 +130,9 @@ with their parameters, kick-keyed sidechain compressors, returns (busses with an
 chain — and saves it as `<project>/logic/<title>.logicx`. `--daw logic capture` is an offline bounce. Nothing is
 installed into Logic: the song goes in as a MIDI file Logic opens as a project, and the mixer, plug-ins and
 dialogs are driven through macOS accessibility plus a Mackie Control that Logic detects on its own.
-`pip install -e ".[logic]"`, grant your terminal Accessibility permission, and read [`docs/LOGIC.md`](docs/LOGIC.md)
-for what is built, what differs from Live and troubleshooting.
+`rick-rubin split <dir> refs/track.wav` uses Logic's own Stem Splitter to separate a recording into vocals, drums,
+bass, guitar, piano and other stems. `pip install -e ".[logic]"`, grant your terminal Accessibility permission, and
+read [`docs/LOGIC.md`](docs/LOGIC.md) for what is built, what differs from Live and troubleshooting.
 
 ## Use it
 
@@ -260,6 +261,7 @@ rick_rubin/
   logic/mcu.py    a Mackie Control emulated on a virtual MIDI port (LCD, faders, clock) that Logic auto-detects
   logic/bridge.py the Logic bridge: open/save projects, strips, inserts, sends, parameters, side chains, bounce
   logic/client.py push_song / capture_logic for Logic (the counterpart of live/client.py)
+  logic/stems.py  split_stems: a recording's stems through Logic's Stem Splitter
   serum.py        Serum 2: preset catalog, patch sheets, and the plug-in hosted in-process (load presets, render parts)
   transcribe.py   syllable-level alignment of vocals to the grid, and re-timing
   pitch.py        the notes inside a single-voice sample

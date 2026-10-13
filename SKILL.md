@@ -67,6 +67,7 @@ rick-rubin transcribe <dir> samples/vocal.wav [--text "lyric"]   # syllables -> 
 rick-rubin retime <dir> samples/vocal.wav --name vocal_q          # audio-quantize a loose vocal loop, word by word
 rick-rubin notes <dir> samples/vocal.wav                          # the notes inside a sample: pitch+octave, cents, position
 rick-rubin width <dir> [file]                # stereo image: correlation, side %, mono loss, per band and section
+rick-rubin split <dir> refs/track.wav [--stems vocals,bass] [--from 60 --to 90]   # a recording's stems with Logic Pro's Stem Splitter -> stems/track/<stem>.wav
 rick-rubin sample <dir> <file> --name N --oneshot [--melodic]                       # Simpler one-shot; --melodic measures its pitch
 rick-rubin sample <dir> <file> --name N --loop --src-bpm B [--bars N] [--align end] [--end-at S] # audio loop, conformed to the song tempo
 rick-rubin eval <dir>                        # lint + preview render + measurements -> eval.md (exit 1 on errors)
@@ -265,6 +266,12 @@ measurements. What changes for you:
   role's patch; the report lists each one. Audio loops are imported onto an audio track.
 - Do not click in Logic during a push: it applies strip edits to every selected track, and the control
   surface state must not change. Keep projects in a visible folder (file panels cannot reach hidden ones).
+
+- `rick-rubin split <dir> refs/track.wav` runs Logic's Stem Splitter on a recording (Logic Pro 11 on Apple silicon,
+  no `--daw` needed): vocals, drums, bass, guitar, piano and other as `stems/track/<stem>.wav`, at the recording's
+  rate, with each stem's level; one near silent means the recording has none of it. Use it to read a reference's
+  parts on their own — `notes` on its bass stem, `transcribe` on its vocal, `width` and `reference` on its drums —
+  instead of guessing them from the full mix. A 3-minute song takes about 40 s.
 
 Details, setup (Accessibility permission, `pip install -e ".[logic]"`) and troubleshooting: `docs/LOGIC.md`.
 

@@ -36,6 +36,8 @@ LOGIC_INSTRUMENTS = ["Alchemy", "Drum Kit Designer", "Drum Machine Designer", "D
                      "EVOC 20 PS", "External Instrument", "Klopfgeist", "Quick Sampler", "Retro Synth", "Sample Alchemy", "Sampler",
                      "Sculpture", "Studio Bass", "Studio Horns", "Studio Piano", "Studio Strings", "Ultrabeat", "Vintage B3 Organ",
                      "Vintage Clav", "Vintage Electric Piano"]
+# the stems Logic Pro 11.2's Stem Splitter separates (its dialog's check boxes, in order)
+STEMS = ("Vocals", "Drums", "Bass", "Guitar", "Piano", "Other")
 # how Logic abbreviates parameter names on a Mackie Control LCD, for the plug-ins a house track reaches for.
 # Anything not listed is matched by abbreviation (see `abbrev_matches`); the LCD name itself always works too.
 LCD_NAMES = {
@@ -86,6 +88,11 @@ def abbrev_matches(abbrev: str, name: str) -> bool:
     return i == len(a)
 
 
+def first_new_index(before: list[str], after: list[str]) -> int:
+    """Where a track was added: the first position at which the track lists differ (the end when they agree)."""
+    return next((i for i, name in enumerate(after) if i >= len(before) or name != before[i]), len(after) - 1)
+
+
 @dataclass
 class TrackRef:
     index: int            # 0-based position among the project's tracks (= Mixer strip order)
@@ -108,6 +115,7 @@ class LogicBridge:
         self.mcu: M.MackieControl | None = None
         self.project = project               # title prefix of the project window this bridge works in
         self._mixer: AX.Mixer | None = None
+        self._opened: set[str] = set()       # projects this bridge opened itself (the only ones it closes unasked)
         self._bank = 0
         self._view = "tracks"
 
@@ -233,8 +241,9 @@ class LogicBridge:
     def open_midi_project(self, path: str | Path, expect_tracks: int | None = None, close_ours: bool = True,
                           ours: tuple[str, ...] = ()) -> str:
         """Open `path` (an SMF) as a new Logic project and make it this bridge's project. When another project
-        is open Logic asks whether to close it first: a project of ours (title in `ours`, or an unsaved
-        'Untitled' one this bridge created) is closed without saving, anyone else's is left open."""
+        is open Logic asks whether to close it first: a project of ours (title in `ours`, or one this bridge
+        opened earlier) is closed without saving, anyone else's is left open — including the project that was
+        frontmost when the bridge connected, which is only the bridge's default *target*, not ours to discard."""
         before = {self.app.project_title(w) for w in self.app.project_windows()}
         subprocess.run(["open", "-a", LOGIC_APP, str(path)], check=False)
         t_end = time.time() + 40.0
@@ -246,7 +255,7 @@ class LogicBridge:
                 low = text.lower()
                 if "close the current project" in low:
                     cur = self.app.project_title()
-                    mine = close_ours and cur is not None and (cur in ours or cur == self.project)
+                    mine = close_ours and cur is not None and (cur in ours or cur in self._opened)
                     self._answer_alert(["Close"] if mine else ["Don’t Close", "Don't Close"], "close the current project")
                 elif "want to save" in low:
                     self._answer_alert(["Don’t Save", "Don't Save"], "want to save")
@@ -263,6 +272,7 @@ class LogicBridge:
             raise LogicError(f"Logic did not open {Path(path).name} as a project (pending: {self.pending_alert()})")
         time.sleep(0.8)
         self.project = new_title
+        self._opened.add(new_title)
         self._mixer = None
         return new_title
 
@@ -309,6 +319,8 @@ class LogicBridge:
         new_title = AX.wait_for(lambda: next((self.app.project_title(w) for w in self.app.project_windows()
                                              if (self.app.project_title(w) or "").startswith(name)), None), 8.0)
         if new_title:
+            if self.project in self._opened:
+                self._opened.add(new_title)
             self.project = new_title
             self._mixer = None
         return target
@@ -383,6 +395,12 @@ class LogicBridge:
                 raise LogicError("the file panel shows no columns")
             col = cols[min(depth, len(cols) - 1)]
             items = AX.wait_for(lambda col=col: [(g, n) for g, n in self._column_items(col) if n], 3.0) or []
+            if not any(n == want for _, n in items):
+                # a folder made a moment ago reaches the panel's listing a little later
+                def listing(col=col, want=want):
+                    it = [(g, n) for g, n in self._column_items(col) if n]
+                    return it if any(n == want for _, n in it) else None
+                items = AX.wait_for(listing, 4.0, 0.3) or items
             hit = next((g for g, n in items if n == want), None)
             if hit is None:
                 names = [n for _, n in items]
@@ -427,8 +445,10 @@ class LogicBridge:
         time.sleep(0.1)
 
     def add_audio_track(self) -> int:
-        """Track > New Tracks… > Audio > Create, below the selected track. Returns its index."""
-        n = len(self.tracks())
+        """Track > New Tracks… > Audio > Create, below the selected track. Returns its index (found by comparing
+        the track list before and after: when the selection does not take, Logic puts the track elsewhere)."""
+        before = self.tracks()
+        n = len(before)
         self.select_track(n - 1)
         self.focus()
         self.app.menu("Track", "New Tracks…")
@@ -446,10 +466,12 @@ class LogicBridge:
         if AX.wait_for(lambda: len(self.tracks()) > n, 8.0) is None:
             raise LogicError("Logic did not add an audio track")
         self._mixer = None
-        return len(self.tracks()) - 1
+        return first_new_index(before, self.tracks())
 
-    def import_audio(self, track_index: int, path: str | Path, bar: int, beat: int = 1) -> bool:
-        """File > Import > Audio File… onto `track_index` at bar.beat (Logic places it at the playhead)."""
+    def import_audio(self, track_index: int, path: str | Path, bar: int, beat: int = 1, keep_file_rate: bool = False) -> bool:
+        """File > Import > Audio File… onto `track_index` at bar.beat (Logic places it at the playhead). When the file's
+        sample rate is not the project's, Logic asks: the file is converted, or with `keep_file_rate` the project
+        is switched to the file's rate (right for a project that holds only this file)."""
         path = Path(path).expanduser().resolve()
         if not path.exists():
             raise LogicError(f"{path} does not exist")
@@ -464,10 +486,123 @@ class LogicBridge:
         btn = AX.find(panel, lambda e: AX.attr(e, "AXIdentifier") == "OKButton", 3)
         AX.press(btn)
         time.sleep(0.8)
-        self._answer_alert(["Don’t Import", "Don't Import", "OK", "Import"], "tempo", timeout=2.0)
+        # Logic may ask about the file's tempo, and (a 44.1 kHz file in a 48 kHz project) about the sample rate
+        rate_answer = "Change Project" if keep_file_rate else "Convert File"
+        t_end = time.time() + 4.0
+        while time.time() < t_end:
+            if self._answer_alert([rate_answer], "sample rate", timeout=0.3) or \
+                    self._answer_alert(["Don’t Import", "Don't Import", "OK", "Import"], "tempo", timeout=0.3):
+                t_end = time.time() + 1.5
         if AX.wait_for(lambda: not any(AX.attr(d, "AXIdentifier") == "open-panel" for d in self.app.dialogs()), 10.0) is None:
             raise LogicError("the Import Audio File panel stayed open")
+        left = self.pending_alert()
+        if left:
+            raise LogicError(f"Logic is asking {left[0][:120]!r} ({', '.join(left[1])}) after the import")
         return True
+
+    # ------------------------------------------------------------------ regions and the Stem Splitter
+    def track_regions(self, track_index: int) -> list:
+        """The region elements on a track's lane in the Tracks area (lanes follow the track order)."""
+        cont = AX.find(self.main, lambda e: AX.desc(e) == "Tracks contents", 10)
+        lanes = [k for k in AX.children(cont) if AX.role(k) == "AXLayoutArea"] if cont is not None else []
+        if track_index >= len(lanes):
+            return []
+        return [r for r in AX.children(lanes[track_index]) if AX.role(r) == "AXLayoutItem"]
+
+    def select_region(self, track_index: int, nth: int = 0) -> str:
+        """Make the nth region of the track the selected one and return its name. Focusing a region selects it
+        (setting AXSelected does not stick)."""
+        regions = AX.wait_for(lambda: self.track_regions(track_index), 10.0) or []
+        if len(regions) <= nth:
+            raise LogicError(f"track {track_index + 1} has no region {nth + 1} (it has {len(regions)})")
+        AX.set_attr(regions[nth], "AXFocused", True)
+        if AX.wait_for(lambda: AX.attr(self.track_regions(track_index)[nth], "AXSelected"), 2.0) is None:
+            raise LogicError(f"could not select the region {AX.desc(regions[nth])!r}")
+        return AX.desc(regions[nth])
+
+    def _tracks_menu(self, name: str):
+        """Open the Tracks area's own Edit / Functions / View menu and return it (press an item, or AXCancel it)."""
+        button = AX.find(self.main, lambda e: AX.role(e) == "AXMenuButton" and AX.desc(e) == name, 8)
+        if button is None:
+            raise LogicError(f"the Tracks area has no {name} menu")
+        AX.press(button)
+        menu = AX.wait_for(lambda: next((c for c in AX.children(button) if AX.role(c) == "AXMenu"), None), 2.0)
+        if menu is None:
+            raise LogicError(f"the Tracks area's {name} menu did not open")
+        return menu
+
+    def _stem_sheet(self):
+        return next((s for s in AX.children(self.main) if AX.role(s) == "AXSheet"
+                     and AX.find(s, lambda e: AX.role(e) == "AXHeading" and AX.desc(e) == "Stem Splitter", 4) is not None), None)
+
+    def stem_split(self, track_index: int, stems: tuple[str, ...] | list[str] = STEMS, submix: bool = False,
+                   timeout: float = 600.0, on_progress: Callable[[float], None] | None = None) -> list[str]:
+        """Tracks area > Functions > Stem Splitter… on the track's first region, with `stems` ticked (any of STEMS)
+        and the Submix of the unticked stems on or off, and wait for it. Logic writes the stems into the project's
+        Audio Files folder under a progress window (`stem_split_progress`, passed to `on_progress`), then adds a
+        summing stack holding one audio track per stem and mutes the original region (an unsaved project gets the
+        tracks at once). Returns the names of the tracks added."""
+        want = {s.strip().capitalize() for s in stems}
+        unknown = want - set(STEMS)
+        if unknown or not want:
+            raise LogicError(f"Logic's Stem Splitter has the stems {', '.join(STEMS)} (asked for {sorted(unknown) or 'none'})")
+        self.focus()
+        self.select_region(track_index)
+        before = self.tracks()
+        menu = self._tracks_menu("Functions")
+        item = next((i for i in AX.children(menu) if AX.title(i).rstrip("…") == "Stem Splitter"), None)
+        if item is None or not AX.attr(item, "AXEnabled"):
+            AX.do(menu, "AXCancel")
+            raise LogicError("Functions > Stem Splitter is not available: it needs Logic Pro 11 on a Mac with Apple silicon, "
+                             "and an audio region selected" if item is None else "Functions > Stem Splitter is disabled (no audio region selected)")
+        AX.press(item)
+        sheet = AX.wait_for(self._stem_sheet, 5.0)
+        if sheet is None:
+            raise LogicError("the Stem Splitter sheet did not open")
+
+        def box(name):
+            return AX.find(sheet, lambda e: AX.role(e) == "AXCheckBox" and AX.desc(e) == name, 8)
+        try:
+            for s in STEMS:
+                if box(s) is None:
+                    if s in want:                            # Logic 11.0/11.1 split vocals, drums, bass and other only
+                        raise LogicError(f"this Logic's Stem Splitter has no {s} stem")
+                elif AX.set_checkbox(box(s), s in want) != (s in want):
+                    raise LogicError(f"could not set the Stem Splitter's {s} box")
+            if box("Submix") is not None:
+                AX.set_checkbox(box("Submix"), submix)
+        except Exception:
+            AX.press(AX.find(sheet, lambda e: AX.role(e) == "AXButton" and AX.desc(e) == "Cancel", 3))
+            raise
+        AX.press(AX.find(sheet, lambda e: AX.role(e) == "AXButton" and AX.desc(e) == "Apply", 3))
+        if AX.wait_for(lambda: self._stem_sheet() is None, 5.0) is None:
+            raise LogicError("the Stem Splitter sheet did not close after Apply")
+        t_end, last = time.time() + timeout, -1.0
+        while True:
+            frac = self.stem_split_progress()
+            if frac is not None and on_progress is not None and frac - last >= 0.1:
+                on_progress(frac)
+                last = frac
+            if frac is None and len(self.tracks()) > len(before):
+                break
+            if time.time() > t_end:
+                raise LogicError(f"the Stem Splitter did not finish in {timeout:.0f} s (progress {frac}, pending: {self.pending_alert()})")
+            time.sleep(0.5)
+        self._mixer = None
+        added = list(self.tracks())
+        for name in before:
+            if name in added:
+                added.remove(name)
+        return added
+
+    def stem_split_progress(self) -> float | None:
+        """The Stem Splitter's progress (0..1) while its progress window (a dialog called 'Logic Pro') is up, else None."""
+        for d in self.app.dialogs():
+            if AX.title(d) == LOGIC_APP and AX.desc(d) != "alert":
+                bar = AX.find(d, lambda e: AX.role(e) == "AXProgressIndicator", 2)
+                if bar is not None:
+                    return float(AX.attr(bar, "AXValue") or 0.0)
+        return None
 
     # ------------------------------------------------------------------ transport
     def set_playhead(self, bar: int, beat: int = 1) -> tuple[int, int] | None:
