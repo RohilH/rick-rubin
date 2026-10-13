@@ -219,6 +219,9 @@ rick-rubin width my-track [file]                    # stereo image as numbers: c
 rick-rubin serum list --folder Pad                  # search installed Serum 2 presets
 rick-rubin serum show "<preset>"                    # a preset as a text patch sheet
 rick-rubin serum render "<preset>" --note F1 --out x.wav   # play a preset through the real plug-in, offline
+rick-rubin serum params --group filter "<preset>"   # the producer-facing parameter map (osc filter env lfo mod fx ...)
+rick-rubin serum ab "<preset>" --try "filter_1.cutoff_hz=600" --try "osc_a.detune=0.1"   # variants measured side by side
+rick-rubin serum set "<preset>" filter_1.cutoff_hz=600 --save my-bass --project <dir>    # design and save a .SerumPreset
 ```
 
 `rick-rubin reference compare <dir>` measures a Live capture against released tracks you add with `reference add`
@@ -261,6 +264,9 @@ rick_rubin/
   logic/bridge.py the Logic bridge: open/save projects, strips, inserts, sends, parameters, side chains, bounce
   logic/client.py push_song / capture_logic for Logic (the counterpart of live/client.py)
   serum.py        Serum 2: preset catalog, patch sheets, and the plug-in hosted in-process (load presets, render parts)
+  serum_params.py Serum's parameters as a producer-facing map (keys, units, ranges, menus), read off the plug-in
+  serum_patch.py  a patch as data: edit by those keys, mod routings, FX units, save as a real .SerumPreset
+  sounddesign.py  one note in numbers: envelope, brightness over time, harmonics, width per band, movement, pitch
   transcribe.py   syllable-level alignment of vocals to the grid, and re-timing
   pitch.py        the notes inside a single-voice sample
   midifx.py       MIDI effects: real devices in Live, emulated offline where deterministic

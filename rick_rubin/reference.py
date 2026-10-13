@@ -260,6 +260,22 @@ def compare_many(mixes: list[Profile], refs: list[Profile]) -> str:
     return "\n".join(L)
 
 
+STEM_METRICS = [k for k in METRICS if k[0] not in ("novelty_per_min", "repeat_pct")]
+
+
+def compare_stems(target: Profile, others: list[Profile]) -> str:
+    """One part against another — a captured or bounced track next to the same part isolated from a reference
+    (`rick-rubin isolate`): the mix-level measures that still mean something for one part, and the difference."""
+    L = ["| measure | " + " | ".join(p.name[:28] for p in [target] + others) + " | " + " | ".join(f"Δ {p.name[:18]}" for p in others) + " |",
+         "|---|" + "---|" * (1 + 2 * len(others))]
+    for key, label, _, unit in STEM_METRICS:
+        v0 = _get(target, key)
+        vals = [_get(p, key) for p in others]
+        L.append(f"| {label}{' (' + unit + ')' if unit else ''} | {v0:.1f} | " + " | ".join(f"{v:.1f}" for v in vals) + " | "
+                 + " | ".join(f"{v - v0:+.1f}" for v in vals) + " |")
+    return "\n".join(L)
+
+
 # ============================================================================ a shared shelf of reference profiles
 def shelf_path() -> Path:
     """Reference profiles are numbers only (no audio) and shared by every project: <repo>/.cache/references.json."""

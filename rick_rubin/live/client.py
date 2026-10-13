@@ -19,6 +19,37 @@ from ..model import Song, simpler_velocity_db
 DEFAULT_PORT = 9889
 # what `sidechain: true` on a track means: a pumping house compressor keyed from the kick
 DEFAULT_SIDECHAIN = {"device": "Compressor", "params": {"Threshold": -28, "Ratio": 4, "Attack": 0.5, "Release": 120}}
+# Kickstart 2's "Loop Length" is a four-step switch (Logic shows 0.00 0.33 0.67 1.00). Measured on Logic bounces at
+# 126 BPM: 0.00 repeats the shape every beat, 0.33 every 2 beats, 1.00 every bar (0.67 also measured 2 beats).
+KICKSTART_LENGTH = {1.0: 0.0, 2.0: 0.33, 4.0: 1.0}
+
+
+def kick_period_beats(song, kick: str) -> float:
+    """How often the kick lands on the beat, in beats: 1 (four on the floor, or anything syncopated), 2 (beats 1 and 3
+    only) or 4 (the downbeat only) — the most common pattern over the bars where the kick plays."""
+    from collections import Counter
+    from ..model import BEATS_PER_BAR
+    per_bar: dict[int, set[int]] = {}
+    for c in song.flatten()[0]:
+        if c.track != kick:
+            continue
+        for n in c.notes:
+            t = c.start + n.start
+            if abs(t - round(t)) < 0.05:
+                per_bar.setdefault(int(round(t) // BEATS_PER_BAR), set()).add(int(round(t)) % BEATS_PER_BAR)
+    votes = Counter(1.0 if b >= {0, 1, 2, 3} else 2.0 if b == {0, 2} else 4.0 if b == {0} else 1.0 for b in per_bar.values())
+    return votes.most_common(1)[0][0] if votes else 1.0
+
+
+def kickstart_device(song, kick: str | None) -> dict:
+    """The `sidechain="kickstart"` shorthand: Kickstart 2 at full mix, its shape repeating as often as the kick hits."""
+    beats = kick_period_beats(song, kick) if kick else 1.0
+    return {"device": "Kickstart 2", "params": {"Loop Length": KICKSTART_LENGTH[beats], "Mix": 1.0}}
+
+
+def sidechain_device(song, track, kick: str) -> dict:
+    """What the `sidechain` shorthand puts on a track in Live: a Compressor keyed from the kick, or Kickstart 2."""
+    return kickstart_device(song, kick) if track.sidechain == "kickstart" else dict(DEFAULT_SIDECHAIN, sidechain=kick)
 # where instrument names are looked up, in order: Live's own, then the user's saved presets, then VST/AU plug-ins
 INSTRUMENT_CATEGORIES = ["drums", "instruments", "sounds", "user_library", "plugins"]
 REMOTE_SCRIPT_DIR = Path(__file__).parent / "remote_script" / "RickRubin"
@@ -350,8 +381,8 @@ def push_song(song: Song, bridge: LiveBridge, replace: bool = False, load_instru
             continue
         rep.tracks.setdefault(t.name, {"index": index.get(t.name)})
         chain = [dict(e) for e in t.effects]
-        if sidechain and t.sidechain and kick and not any(e.get("sidechain") for e in chain):
-            chain.append(dict(DEFAULT_SIDECHAIN, sidechain=kick))        # `sidechain: true` shorthand
+        if sidechain and t.sidechain and kick and not any(e.get("sidechain") == kick or e["device"].lower() == "kickstart 2" for e in chain):
+            chain.append(sidechain_device(song, t, kick))                # `sidechain: true` / "kickstart" shorthand
         seen: dict[str, int] = {}
         for e in chain:
             dev = e["device"]
@@ -462,8 +493,8 @@ def _fingerprints(song: Song) -> dict:
         d = t.to_json()
         mix = {k: d.pop(k, None) for k in ("volume_db", "pan", "mute", "sends")}
         chain = [dict(e) for e in d.pop("effects", [])]
-        if t.sidechain and kick and not any(e.get("sidechain") for e in chain):
-            chain.append(dict(DEFAULT_SIDECHAIN, sidechain=kick))
+        if t.sidechain and kick and not any(e.get("sidechain") == kick or e["device"].lower() == "kickstart 2" for e in chain):
+            chain.append(sidechain_device(song, t, kick))
         src = sounding if t.serum else clips
         mine = [[c.name, c.start, c.length, [n.to_json() for n in c.notes], c.envelopes, c.audio, c.segments, mtime(c.audio) if c.audio else None]
                 for c in src if c.track == t.name]

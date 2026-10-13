@@ -433,7 +433,7 @@ def test_serum_preset_sheet_and_catalog(tmp_path):
     assert "- ENV 1: Release 0.8" in text and "ENV 2" not in text and "- LFO 1: Rate 10.7" in text
     assert "- Reverb: Type Hall, Wet 0" in text
     assert "- Macro 1 'FILTER' at 50% → VoiceFilter0.Freq +29" in text
-    assert "- source #3 → Oscillator0.Fine -12" in text and text.count("source #") == 1
+    assert "- env_2 → Oscillator0.Fine -12" in text and "source #" not in text
     assert "- MonoToggle 1" in text
     assert main(["serum", "list", "--root", str(tmp_path), "--folder", "Bass"]) == 0
 

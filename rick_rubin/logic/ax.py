@@ -369,11 +369,24 @@ class LogicApp:
         return children(hdr) if hdr is not None else []
 
     def select_track(self, index: int, w=None) -> bool:
+        """Select exactly this track (and give it the focus). Pressing a header's 'Has Focus' button alone moves the
+        focus but leaves the selection where it was (measured on Logic 11.2); the header list's AXSelectedChildren
+        sets the selection itself."""
         heads = self.track_headers(w)
         if index >= len(heads):
             raise AXError(f"no track {index + 1} (the project has {len(heads)})")
         foc = next((k for k in children(heads[index]) if desc(k) == "Has Focus"), None)
-        return press(foc)
+        press(foc)
+        set_attr(attr(heads[index], "AXParent"), "AXSelectedChildren", [heads[index]])
+        t_end = time.time() + 1.0
+        while time.time() < t_end:
+            if [bool(attr(h, "AXSelected")) for h in heads] == [i == index for i in range(len(heads))]:
+                return True
+            time.sleep(0.05)
+        return False
+
+    def selected_tracks(self, w=None) -> list[int]:
+        return [i for i, h in enumerate(self.track_headers(w)) if attr(h, "AXSelected")]
 
     def tracks_functions_menu(self, w=None):
         w = w or self.main_window()
@@ -551,6 +564,19 @@ class StripInfo:
     kind: str = ""                     # 'track' | 'aux' | 'output' | 'master'
 
 
+def _in_inspector(el, depth: int = 6) -> bool:
+    """Is `el` inside the main window's Inspector? Its channel strips (the selected track and its output) are a
+    'Mixer' layout area too, but not the Mixer."""
+    e = el
+    for _ in range(depth):
+        e = attr(e, "AXParent")
+        if e is None:
+            return False
+        if desc(e) == "Inspector":
+            return True
+    return False
+
+
 class Mixer:
     """Logic's Mixer window in 'Tracks' view: one channel strip per track in track order, then the aux
     strips, then Stereo Out and Master. Everything on a strip is an accessibility element."""
@@ -569,7 +595,8 @@ class Mixer:
                 raise AXError("no project window to open a Mixer for")
             def pane(win):
                 # the Mixer shown as a pane of the main window (the Inspector's channel strips are a 'Mixer' area too, but empty)
-                area = find(win, lambda e: role(e) == "AXLayoutArea" and desc(e) == "Mixer" and len(children(e)) > 1, 7) if win is not None else None
+                area = find(win, lambda e: role(e) == "AXLayoutArea" and desc(e) == "Mixer" and len(children(e)) > 1 and not _in_inspector(e), 7) \
+                    if win is not None else None
                 return win if area is not None else None
             if pane(main) is not None:
                 return main
@@ -595,7 +622,7 @@ class Mixer:
         self.ensure_tracks_view(w)
 
         def read():
-            area = find(w, lambda e: role(e) == "AXLayoutArea" and desc(e) == "Mixer" and len(children(e)) > 0, 7)
+            area = find(w, lambda e: role(e) == "AXLayoutArea" and desc(e) == "Mixer" and len(children(e)) > 0 and not _in_inspector(e), 7)
             return [c for c in children(area)] if area is not None else []
         return wait_for(read, 4.0, 0.2) or []
 

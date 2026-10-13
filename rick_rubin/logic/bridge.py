@@ -98,6 +98,13 @@ class ParamReport:
     errors: list[str] = field(default_factory=list)
 
 
+def plugin_matches(shown: str, want: str) -> bool:
+    """Is the surface's preselected plug-in `shown` the one called `want`? The LCD keeps only the end of a long name,
+    7 to 14 characters depending on the column ('rackspacer 2.5' and 'start 2' are Trackspacer 2.5 and Kickstart 2)."""
+    shown, want = shown.strip().lower(), want.strip().lower()
+    return shown == want or (len(want) > 3 and shown.startswith(want)) or (len(shown) >= 6 and len(want) > len(shown) and want.endswith(shown))
+
+
 class LogicBridge:
     """Connect once per command; `with LogicBridge() as b:`. Methods raise LogicError with a message a person can act on."""
 
@@ -383,6 +390,10 @@ class LogicBridge:
                 raise LogicError("the file panel shows no columns")
             col = cols[min(depth, len(cols) - 1)]
             items = AX.wait_for(lambda col=col: [(g, n) for g, n in self._column_items(col) if n], 3.0) or []
+            if not any(n == want for _, n in items):
+                # a folder made a moment ago reaches the panel's listing a little later
+                items = AX.wait_for(lambda col=col: (lambda it: it if any(n == want for _, n in it) else None)(
+                    [(g, n) for g, n in self._column_items(col) if n]), 4.0, 0.3) or items
             hit = next((g for g, n in items if n == want), None)
             if hit is None:
                 names = [n for _, n in items]
@@ -426,6 +437,27 @@ class LogicBridge:
         self.app.select_track(index, self.main)
         time.sleep(0.1)
 
+    def delete_track(self, index: int) -> None:
+        """Track > Delete Track on exactly this track."""
+        n = len(self.tracks())
+        self.select_track(index)
+        self.focus()
+        if self.app.selected_tracks(self.main) != [index]:            # Delete acts on the selection: never guess it
+            raise LogicError(f"track {index + 1} could not be selected on its own (selected: {self.app.selected_tracks(self.main)})")
+        try:
+            ok = self.app.menu("Track", "Delete Track")
+        except AX.AXError as e:
+            raise LogicError(f"Track > Delete Track: {e}") from e
+        time.sleep(0.4)
+        self._answer_alert(["Delete"], "delete", timeout=2.0)           # 'Delete Track and Regions?' when it holds a region
+        if not ok or AX.wait_for(lambda: len(self.tracks()) < n, 4.0) is None:
+            left = self.pending_alert()
+            if left:
+                self._answer_alert(["Cancel"], None, timeout=1.0)
+            raise LogicError(f"Logic did not delete track {index + 1}" + (f" (it asked {left[0][:80]!r})" if left else ""))
+        self._mixer = None
+        self.select_track(0)
+
     def add_audio_track(self) -> int:
         """Track > New Tracks… > Audio > Create, below the selected track. Returns its index."""
         n = len(self.tracks())
@@ -464,9 +496,18 @@ class LogicBridge:
         btn = AX.find(panel, lambda e: AX.attr(e, "AXIdentifier") == "OKButton", 3)
         AX.press(btn)
         time.sleep(0.8)
-        self._answer_alert(["Don’t Import", "Don't Import", "OK", "Import"], "tempo", timeout=2.0)
+        # Logic may ask about the file's tempo, and (a 44.1 kHz file in a 48 kHz project) whether to change the
+        # project's sample rate: keep the project as it is and convert the file
+        t_end = time.time() + 4.0
+        while time.time() < t_end:
+            if self._answer_alert(["Convert File"], "sample rate", timeout=0.3) or \
+                    self._answer_alert(["Don’t Import", "Don't Import", "OK", "Import"], "tempo", timeout=0.3):
+                t_end = time.time() + 1.5
         if AX.wait_for(lambda: not any(AX.attr(d, "AXIdentifier") == "open-panel" for d in self.app.dialogs()), 10.0) is None:
             raise LogicError("the Import Audio File panel stayed open")
+        left = self.pending_alert()
+        if left:
+            raise LogicError(f"Logic is asking {left[0][:120]!r} ({', '.join(left[1])}) after the import")
         return True
 
     # ------------------------------------------------------------------ transport
@@ -679,7 +720,7 @@ class LogicBridge:
             self._stable_lcd(0.2, 1.0)
             return self._presel_text(u.state.line(1), slot)
         want = name.strip().lower()
-        self._scroll_list(slot, read, lambda t: self._plugin_name(t) == want or (len(want) > 3 and self._plugin_name(t).startswith(want)), f"plug-in {name!r}")
+        self._scroll_list(slot, read, lambda t: plugin_matches(self._plugin_name(t), want), f"plug-in {name!r}")
         self._press(M.VPOT_PUSH + slot, settle=0.8)                        # inserts it (and opens its window)
         time.sleep(0.5)
         got = AX.wait_for(lambda: (lambda cur: cur if len(cur) > len(before) else None)(self.strip_info(ref).inserts), 6.0, 0.25)
@@ -1032,6 +1073,12 @@ class LogicBridge:
             if back:
                 self._tick(vpot, back)
                 u.wait_lcd(time.time() - 0.05, 0.4)
+            # a dropped detent leaves it one step off the best value: step towards it until it shows
+            for _ in range(4):
+                now, _t = current()
+                if now is None or now == best[2]:
+                    break
+                self._step_until_change(vpot, 1 if best[2] > now else -1, lambda: (self._stable_lcd(0.2, 1.0), read())[1])
         self._stable_lcd(0.25, 1.5)
         return read()
 
@@ -1279,8 +1326,13 @@ class LogicBridge:
         panel = AX.wait_for(lambda: next((d for d in self.app.dialogs() if AX.attr(d, "AXIdentifier") == "save-panel"), None), 8.0)
         if panel is None:
             raise LogicError("the bounce file panel did not open")
-        self._panel_navigate(panel, out_path.parent)
-        AX.set_value(AX.find(panel, lambda e: AX.attr(e, "AXIdentifier") == "saveAsNameTextField", 3), out_path.stem)
+        try:
+            self._panel_navigate(panel, out_path.parent)
+            AX.set_value(AX.find(panel, lambda e: AX.attr(e, "AXIdentifier") == "saveAsNameTextField", 3), out_path.stem)
+        except Exception:
+            # leave Logic as it was: an open bounce panel blocks every later step (and the control surface)
+            AX.press(AX.find(panel, lambda e: AX.role(e) == "AXButton" and AX.title(e) == "Cancel", 4))
+            raise
         AX.press(AX.find(panel, lambda e: AX.attr(e, "AXIdentifier") == "OKButton", 3))
         time.sleep(0.5)
         self._answer_alert(["Replace"], "already exists", timeout=1.5)

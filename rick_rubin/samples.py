@@ -57,7 +57,7 @@ def write_wav24(path: str | Path, sr: int, x: np.ndarray) -> None:
     x = np.clip(np.asarray(x, dtype=np.float64), -1, 1)
     if x.ndim == 1:
         x = x[:, None]
-    ints = np.round(x * 8388607).astype(np.int32)
+    ints = np.ascontiguousarray(np.round(x * 8388607).astype(np.int32))
     b = ints.astype("<i4").view(np.uint8).reshape(-1, 4)[:, :3].tobytes()
     ch = x.shape[1]
     hdr = b"RIFF" + (36 + len(b)).to_bytes(4, "little") + b"WAVEfmt " + (16).to_bytes(4, "little")
