@@ -60,6 +60,9 @@ class _App:
     def project_title(self, w=None):
         return w
 
+    def project_path(self, w):
+        return self.br.paths.get(w)
+
 
 class FakeStemBridge:
     """What split_stems sees of Logic: projects, one audio track, and a Stem Splitter that writes
@@ -67,6 +70,7 @@ class FakeStemBridge:
 
     def __init__(self, open_projects=()):
         self.open = list(open_projects)
+        self.paths: dict[str, Path] = {}
         self.app = _App(self)
         self.project = None
         self.closed: list[str] = []
@@ -141,17 +145,28 @@ def test_split_stems_against_a_fake_logic(tmp_path):
     out = tmp_path / "stems" / "song"
     out.mkdir(parents=True)
     (out / "guitar.wav").write_bytes(b"stale")                  # from an earlier split: must not survive
-    b = FakeStemBridge(open_projects=["Someone Else.logicx", "My Song_ stems.logicx"])
+    b = FakeStemBridge(open_projects=["Someone Else.logicx", "song stems.logicx"])
+    b.paths["song stems.logicx"] = out / "logic" / "song stems.logicx"
     r = S.split_stems(src, out, "vocals,bass,piano", bridge=b)
     assert set(r["stems"]) == {"vocals", "bass", "piano"} and not (out / "guitar.wav").exists()
-    assert b.closed == ["My Song_ stems.logicx"]                 # our earlier project, not someone else's
+    assert b.closed == ["song stems.logicx"]                     # our earlier project, not someone else's
     assert "Someone Else.logicx" in b.open
     assert ("import", 0, "My Song_.wav", True) in b.calls        # onto the track Logic actually added
     assert ("split", 0, ("Vocals", "Bass", "Piano"), False) in b.calls
     assert r["silent"] == ["piano"] and r["levels"]["vocals"][0] > -20
     sr, voc = read_audio(r["stems"]["vocals"])
     assert sr == SR and len(voc) == 4 * SR
-    assert r["project"] == out / "logic" / "My Song_ stems.logicx" and r["seconds"] == pytest.approx(4.0)
+    assert r["project"] == out / "logic" / "song stems.logicx" and r["seconds"] == pytest.approx(4.0)
+
+
+def test_split_stems_will_not_close_a_namesake_elsewhere(tmp_path):
+    src = tmp_path / "t.wav"
+    write_wav24(src, SR, _tone(1.0))
+    b = FakeStemBridge(open_projects=["out stems.logicx"])
+    b.paths["out stems.logicx"] = tmp_path / "elsewhere" / "out stems.logicx"
+    with pytest.raises(B.LogicError, match="another project called"):
+        S.split_stems(src, tmp_path / "out", bridge=b)
+    assert b.closed == [] and b.calls == []
 
 
 def test_split_stems_submix_and_range(tmp_path):

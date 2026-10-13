@@ -4,7 +4,8 @@
 
 The recording gets a Logic project of its own: a one-track MIDI file Logic opens as a project, saved as
 `<out>/logic/<name> stems.logicx`, an audio track, File > Import (the project takes the recording's sample
-rate). Tracks area > Functions > Stem Splitter… then separates the region into the stems asked for. Logic adds a
+rate). Right-click > Stem Splitter… on the region then separates it into the stems asked for. The project is named after the output folder (`stems/track` ->
+'track stems'). Logic adds a
 summing stack with one audio track per stem, mutes the original, and writes the stems into the project's Audio
 Files folder while its progress window is up (a 2'43" song takes about 30 s on an M4 Pro). They are copied out
 as `<stem>.wav`, 24-bit at the recording's rate, and measured: a stem with nothing in it (no piano in a house
@@ -74,13 +75,20 @@ def prepare_source(src: Path, dest: Path, start_s: float | None = None, end_s: f
     return dest, sr, (b - a) / sr
 
 
-def _close_ours(bridge: LogicBridge, title: str) -> None:
+def _close_ours(bridge: LogicBridge, title: str, package: Path) -> None:
+    """Close our earlier split into the same folder; refuse to go on beside another project of the same name
+    (the bridge finds a project's window by its name)."""
     app = bridge.app
     assert app is not None
     for w in app.project_windows():
         t = app.project_title(w) or ""
-        if t in (title, f"{title}.logicx"):
+        if t not in (title, f"{title}.logicx"):
+            continue
+        path = app.project_path(w)
+        if path is not None and path.resolve() == package.resolve():
             bridge.close_project(t)
+        else:
+            raise LogicError(f"another project called {t!r} is open in Logic ({path or 'unsaved'}); close it, or split into another folder (--out)")
 
 
 def _wait_for_stems(bridge: LogicBridge, roots: list[Path], before: dict[Path, float], region: str, want: list[str],
@@ -129,7 +137,7 @@ def split_stems(source: str | Path, out_dir: str | Path, stems: list[str] | tupl
         raise LogicError(f"{source} does not exist")
     out_dir = Path(out_dir).expanduser().resolve()
     name = safe_name(source.stem)
-    title = f"{name} stems"
+    title = f"{safe_name(out_dir.name)} stems"
     work = out_dir / "logic"
     if bridge is None:
         if any(p.startswith(".") for p in out_dir.parts) or str(out_dir).startswith(("/private/", "/tmp/")):
@@ -138,8 +146,8 @@ def split_stems(source: str | Path, out_dir: str | Path, stems: list[str] | tupl
         with live_lock(f"split {name}", progress=say), LogicBridge(progress=say, use_mcu=False) as b:
             return split_stems(source, out_dir, want, submix, start_s, end_s, close, b, say, timeout)
 
-    _close_ours(bridge, title)
     package = work / f"{title}.logicx"
+    _close_ours(bridge, title, package)
     if package.exists():
         shutil.rmtree(package)                            # our own earlier split of this recording
     for st in [*STEMS, "submix"]:

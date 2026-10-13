@@ -244,6 +244,14 @@ class LogicApp:
             return None
         return title(w).rsplit(" - ", 1)[0]
 
+    @staticmethod
+    def project_path(w):
+        """The .logicx package a project window shows (its AXDocument URL), or None while it is unsaved."""
+        from pathlib import Path
+        from urllib.parse import unquote, urlparse
+        url = attr(w, "AXDocument")
+        return Path(unquote(urlparse(str(url)).path)) if url else None
+
     def dialogs(self) -> list:
         """Dialogs and alerts: every window that is not a standard document window."""
         return [w for w in self.windows() if attr(w, "AXSubrole") != "AXStandardWindow"]

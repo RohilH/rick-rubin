@@ -520,6 +520,16 @@ class LogicBridge:
             raise LogicError(f"could not select the region {AX.desc(regions[nth])!r}")
         return AX.desc(regions[nth])
 
+    def region_menu(self, track_index: int, nth: int = 0):
+        """Right-click a region: its context menu (Stem Splitter…, Bounce in Place…, Edit, Export …), or None.
+        Logic opens it on AXShowMenu (which reports failure) as an AXMenu in the window's tree."""
+        regions = self.track_regions(track_index)
+        if len(regions) <= nth:
+            return None
+        AX.do(regions[nth], "AXShowMenu")
+        return AX.wait_for(lambda: AX.find(self.track_regions(track_index)[nth], lambda e: AX.role(e) == "AXMenu", 3)
+                           or AX.find(self.main, lambda e: AX.role(e) == "AXMenu", 12), 2.0)
+
     def _tracks_menu(self, name: str):
         """Open the Tracks area's own Edit / Functions / View menu and return it (press an item, or AXCancel it)."""
         button = AX.find(self.main, lambda e: AX.role(e) == "AXMenuButton" and AX.desc(e) == name, 8)
@@ -537,7 +547,8 @@ class LogicBridge:
 
     def stem_split(self, track_index: int, stems: tuple[str, ...] | list[str] = STEMS, submix: bool = False,
                    timeout: float = 600.0, on_progress: Callable[[float], None] | None = None) -> list[str]:
-        """Tracks area > Functions > Stem Splitter… on the track's first region, with `stems` ticked (any of STEMS)
+        """Right-click > Stem Splitter… on the track's first region (Functions > Stem Splitter… if the context menu
+        does not open), with `stems` ticked (any of STEMS)
         and the Submix of the unticked stems on or off, and wait for it. Logic writes the stems into the project's
         Audio Files folder under a progress window (`stem_split_progress`, passed to `on_progress`), then adds a
         summing stack holding one audio track per stem and mutes the original region (an unsaved project gets the
@@ -549,12 +560,24 @@ class LogicBridge:
         self.focus()
         self.select_region(track_index)
         before = self.tracks()
-        menu = self._tracks_menu("Functions")
-        item = next((i for i in AX.children(menu) if AX.title(i).rstrip("…") == "Stem Splitter"), None)
+
+        def splitter_item(menu):
+            return next((i for i in AX.children(menu) if AX.title(i).rstrip("…") == "Stem Splitter"), None) if menu is not None else None
+        # the region's right-click menu, as a person would; the Tracks area's Functions menu has the same command
+        menu = self.region_menu(track_index)
+        item = splitter_item(menu)
+        via = "the region's right-click menu"
+        if item is None or not AX.attr(item, "AXEnabled"):
+            if menu is not None:
+                AX.do(menu, "AXCancel")
+            menu = self._tracks_menu("Functions")
+            item = splitter_item(menu)
+            via = "the Tracks area's Functions menu"
+        self.say(f"Stem Splitter… from {via}")
         if item is None or not AX.attr(item, "AXEnabled"):
             AX.do(menu, "AXCancel")
-            raise LogicError("Functions > Stem Splitter is not available: it needs Logic Pro 11 on a Mac with Apple silicon, "
-                             "and an audio region selected" if item is None else "Functions > Stem Splitter is disabled (no audio region selected)")
+            raise LogicError("Stem Splitter is not available: it needs Logic Pro 11 on a Mac with Apple silicon, "
+                             "and an audio region selected" if item is None else "Stem Splitter is disabled (no audio region selected)")
         AX.press(item)
         sheet = AX.wait_for(self._stem_sheet, 5.0)
         if sheet is None:

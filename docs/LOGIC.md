@@ -99,10 +99,11 @@ as long as the recording. It does not need `--daw logic`, a song or the Mackie C
 
 1. The recording (WAV, AIFF, MP3, M4A — anything but WAV goes through macOS's `afconvert`; `--from/--to` cut it
    first) is copied to `stems/track/logic/` and a project is made for it: a one-track MIDI file Logic opens as a
-   project, saved as `stems/track/logic/<name> stems.logicx`, an audio track, File > Import. A sample-rate question
+   project, saved as `stems/track/logic/track stems.logicx` (named after the output folder), an audio track, File > Import. A sample-rate question
    is answered "Change Project", so nothing is resampled.
-2. The region is selected (focusing it through accessibility) and Tracks area > Functions > Stem Splitter… is run
-   with the stems' check boxes set and the Submix (the unticked stems summed; Logic calls it "Instrumental" when
+2. The region is selected (focusing it through accessibility) and Stem Splitter… is chosen from its right-click
+   menu (Logic opens the context menu on AXShowMenu; the Tracks area's Functions menu has the same command and is
+   the fallback), with the stems' check boxes set and the Submix (the unticked stems summed; Logic calls it "Instrumental" when
    only the vocals are ticked) on with `--submix`, written as `submix.wav`.
 3. Logic writes the stems into the project's Audio Files folder as `<name>_<Stem>.wav` under a progress window,
    whose progress the command prints; then it adds a summing stack with one audio track per stem and mutes the
@@ -113,7 +114,8 @@ stems add up to the original within 36 dB (the residual is 36 dB below the mix).
 have comes out near silent (piano at -110 dB RMS in a house track) and the report says so.
 
 The project is saved and left open, so the split can be auditioned in Logic (`--close` closes it). Running the
-command again on the same recording replaces its project and stems; other open projects are left alone. The
+command again into the same folder replaces its project and stems. Other open projects are left alone; one with the
+same name in another folder stops the command (the bridge finds project windows by name), rather than being closed. The
 recording's copy next to the project is the project's source file — keep it with the project.
 
 ## What differs from Live, and what is missing
@@ -145,7 +147,7 @@ recording's copy next to the project is the project's source file — keep it wi
 | `no parameter X in <plug-in>` | Use the name the plug-in window shows or the LCD abbreviation; the message lists the ones seen. |
 | The push stops with `no project window` | Logic quit. Logic Pro 11.2 crashed for us when a plug-in header pop-up (side chain) was used while the Mackie Control was linked to that window; the bridge now disconnects the surface for that step. Check `~/Library/Logs/DiagnosticReports`. |
 | Faders or plug-ins changed on *every* track | Several tracks were selected in Logic: it applies strip edits to all selected strips. The bridge selects one track before each edit; do not select tracks by hand during a push. |
-| `Functions > Stem Splitter is not available` | The Stem Splitter needs Logic Pro 11 and a Mac with Apple silicon. On Logic 11.0/11.1 only four stems exist (vocals, drums, bass, other): ask for those. |
+| `Stem Splitter is not available` | The Stem Splitter needs Logic Pro 11 and a Mac with Apple silicon. On Logic 11.0/11.1 only four stems exist (vocals, drums, bass, other): ask for those. |
 | `the Stem Splitter did not finish in … s` | Logic was still working (a long recording on a busy Mac) or asked something; the message says what is pending. The project stays open: wait for its progress window, then run again. |
 | A file dialog does not find the folder | File panels are navigated by column; hidden folders (`/private/tmp`, dot folders) cannot be reached. Keep projects somewhere visible, e.g. under `~/Documents`. |
 
