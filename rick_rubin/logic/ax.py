@@ -427,8 +427,12 @@ class LogicApp:
         hdr = find(w, lambda e: desc(e) == "Tracks header", 10) if w is not None else None
         out = []
         for k in children(hdr) if hdr is not None else []:
-            m = re.match(r'Track \d+ “(.*)”$', desc(k))
+            m = re.match(r'Track \d+ “(.*)”(?:, [a-z ,]+)?$', desc(k))        # 'Track 5 “Audio 30”, mute'
             out.append(m.group(1) if m else desc(k))
+        # an output or master track shown at the bottom of the Tracks area is not a track strip of the Mixer
+        # (its strip stands with the outputs, after the Aux strips)
+        while out and (out[-1] in ("Stereo Out", "Master") or re.fullmatch(r"Output \d+(-\d+)?", out[-1])):
+            out.pop()
         return out
 
     def track_headers(self, w=None) -> list:
@@ -662,6 +666,14 @@ def set_frame(el, x: float, y: float, w: float, h: float) -> None:
     AXUIElementSetAttributeValue(el, "AXSize", AXValueCreate(kAXValueCGSizeType, Quartz.CGSizeMake(w, h)))
 
 
+def screen_width() -> float:
+    try:
+        import Quartz
+        return float(Quartz.CGDisplayBounds(Quartz.CGMainDisplayID()).size.width)
+    except Exception:  # noqa: BLE001
+        return 1440.0
+
+
 def screen_height() -> float:
     try:
         import Quartz
@@ -680,6 +692,18 @@ def restore_mixer_frame(app, project: str | None) -> None:
     w = app.mixer_window(project) if old else None
     if w is not None:
         set_frame(w, *old)
+
+
+# Logic names a strip's controls two ways: in words ('volume fader', 'MIDI plug-in') for strips on the visible screen,
+# and by identifier ('volumeFader', 'midiPlugIn') for strips of a window that hangs off the screen's right edge.
+_STRIP_NAMES = {"volumeFader": "volume fader", "volume": "volume fader level", "peak": "peak level meter", "sendButton": "send button",
+                "sendKnob": "send knob", "audioPlugIn": "audio plug-in", "midiPlugIn": "MIDI plug-in", "insertBar": "insert bar",
+                "equalizerThumbnail": "EQ", "gainReductionMeter": "gain reduction meter", "channelMode": "channel mode"}
+
+
+def sdesc(el) -> str:
+    d = desc(el)
+    return _STRIP_NAMES.get(d, d)
 
 
 class Mixer:
@@ -741,11 +765,34 @@ class Mixer:
         def read():
             area = mixer_area(w, 1)
             return [c for c in children(area)] if area is not None else []
-        return wait_for(read, 4.0, 0.2) or []
+        got = wait_for(read, 4.0, 0.2) or []
+        if got and self._make_wide(w, got):
+            got = wait_for(read, 4.0, 0.2) or got
+        return got
+
+    def _make_wide(self, w, strips: list) -> bool:
+        """Strips beyond the window's right edge are not named either (a project with 38 strips needs about 2,600 px).
+        The Mixer window is widened to hold them all, hanging off the left of the screen if it must: a window may be
+        wider than the screen once its left edge is off it. Its old frame comes back with restore_mixer_frame."""
+        if " - Mixer" not in title(w) or self.app._is_main(w):
+            return False
+        f, first, last = frame_of(w), frame_of(strips[0]), frame_of(strips[-1])
+        if f is None or first is None or last is None:
+            return False
+        if last[0] + last[2] <= f[0] + f[2] - 4:
+            return False                                     # every strip is inside the window
+        need = (last[0] + last[2] - first[0]) + (first[0] - f[0]) + 80.0
+        _MIXER_FRAMES.setdefault(self.project or "", f)
+        x = min(f[0], screen_width() - need - 20.0)
+        set_frame(w, x, f[1], need, f[3])
+        time.sleep(0.2)
+        set_frame(w, x, f[1], need, f[3])                    # the size only takes once the left edge is off-screen
+        time.sleep(0.6)
+        return True
 
     @staticmethod
     def control(strip, text: str):
-        return next((k for k in children(strip) if desc(k) == text), None)
+        return next((k for k in children(strip) if sdesc(k) == text), None)
 
     def info(self, strip, index: int = -1) -> StripInfo:
         """Read a strip. Its children run from the bottom of the strip upwards: name, mute, solo, fader, level,
@@ -753,14 +800,14 @@ class Mixer:
         after the bus followed by a 'send knob'), the insert slots ('audio plug-in' when empty, 'insert bar' +
         group when filled), the instrument group (software instruments only), 'MIDI plug-in', EQ, meter, setting."""
         kids = children(strip)
-        name_el = next((k for k in kids if desc(k) == "name"), None)
-        vol = next((k for k in kids if desc(k) == "volume fader"), None)
-        pan = next((k for k in kids if desc(k) == "pan"), None)
-        mute = next((k for k in kids if desc(k) == "mute"), None)
-        solo = next((k for k in kids if desc(k) == "solo"), None)
-        auto = next((k for k in kids if role(k) == "AXGroup" and "automation" in desc(k)), None)
-        out = next((k for k in kids if role(k) == "AXButton" and ("Output" in desc(k) or desc(k).startswith("Bus ") or desc(k) == "No Output")), None)
-        i_midi = next((i for i, k in enumerate(kids) if desc(k) == "MIDI plug-in"), None)
+        name_el = next((k for k in kids if sdesc(k) == "name"), None)
+        vol = next((k for k in kids if sdesc(k) == "volume fader"), None)
+        pan = next((k for k in kids if sdesc(k) == "pan"), None)
+        mute = next((k for k in kids if sdesc(k) == "mute"), None)
+        solo = next((k for k in kids if sdesc(k) == "solo"), None)
+        auto = next((k for k in kids if role(k) == "AXGroup" and "automation" in sdesc(k)), None)
+        out = next((k for k in kids if role(k) == "AXButton" and ("Output" in sdesc(k) or sdesc(k).startswith("Bus ") or sdesc(k) == "No Output")), None)
+        i_midi = next((i for i, k in enumerate(kids) if sdesc(k) == "MIDI plug-in"), None)
         sends: list[str] = []
         inserts: list[str] = []
         instrument = None
@@ -771,13 +818,14 @@ class Mixer:
             parts = [desc(c) for c in children(k)]
             if "open" in parts:                              # a filled plug-in slot: bypass, open, list
                 if i_midi is not None and i == i_midi - 1:
-                    instrument = desc(k)
+                    instrument = sdesc(k)
                 else:
                     # a slot clipped off the top of a short Mixer loses its name ('audio plug-in'): it still counts
-                    inserts.append(desc(k) if desc(k) not in ("audio plug-in", "") else "?")
-            elif "bypass" in parts and desc(k):              # a send: bypass, list (the send knobs follow all of them)
-                sends.append(desc(k))
+                    inserts.append(sdesc(k) if sdesc(k) not in ("audio plug-in", "") else "?")
+            elif "bypass" in parts and sdesc(k):              # a send: bypass, list (the send knobs follow all of them)
+                sends.append(sdesc(k) if sdesc(k) != "send button" else "?")
         inserts.reverse()                                  # top to bottom
+        sends.reverse()                                    # likewise: the first in the list is send slot 1
         nm = str(attr(name_el, "AXValue") or desc(strip)) if name_el is not None else desc(strip)
         kind = "track"
         if nm == "Master":
@@ -786,7 +834,14 @@ class Mixer:
             kind = "output"
         elif nm.startswith("Aux "):
             kind = "aux"
-        return StripInfo(index, nm, shown(vol) if vol is not None else "", shown(pan) if pan is not None else "",
+        vol_text = shown(vol) if vol is not None else ""
+        if "dB" not in vol_text:
+            # off the visible screen the fader gives no display text: the level field's title carries it ('volume, -2.3 dB')
+            lvl = next((k for k in kids if sdesc(k) == "volume fader level"), None)
+            t = title(lvl) if lvl is not None else ""
+            if "dB" in t:
+                vol_text = t.rsplit(", ", 1)[-1]
+        return StripInfo(index, nm, vol_text, shown(pan) if pan is not None else "",
                          is_on(mute) if mute is not None else False, is_on(solo) if solo is not None else False,
                          inserts, instrument, sends, desc(out) if out is not None else "",
                          desc(auto) if auto is not None else "", kind)
@@ -837,15 +892,15 @@ class Mixer:
     def insert_groups(self, strip) -> list:
         """The filled insert groups, top to bottom (Logic's order), plus a flag for the instrument group."""
         kids = children(strip)
-        auto = next((k for k in kids if role(k) == "AXGroup" and "automation" in desc(k)), None)
-        i_midi = next((i for i, k in enumerate(kids) if desc(k) == "MIDI plug-in"), len(kids))
-        first_insert = next((i for i, k in enumerate(kids) if desc(k) in ("audio plug-in", "insert bar")), 0)
+        auto = next((k for k in kids if role(k) == "AXGroup" and "automation" in sdesc(k)), None)
+        i_midi = next((i for i, k in enumerate(kids) if sdesc(k) == "MIDI plug-in"), len(kids))
+        first_insert = next((i for i, k in enumerate(kids) if sdesc(k) in ("audio plug-in", "insert bar")), 0)
         groups = [k for i, k in enumerate(kids) if role(k) == "AXGroup" and k is not auto and first_insert <= i < i_midi]
         return list(reversed(groups))
 
     def instrument_group(self, strip):
         kids = children(strip)
-        i_midi = next((i for i, k in enumerate(kids) if desc(k) == "MIDI plug-in"), None)
+        i_midi = next((i for i, k in enumerate(kids) if sdesc(k) == "MIDI plug-in"), None)
         if i_midi is None:
             return None
         g = kids[i_midi - 1] if i_midi > 0 else None
@@ -867,7 +922,7 @@ class Mixer:
             raise AXError(f"no insert {name!r} #{nth + 1} on this strip (have {[desc(g) for g in self.insert_groups(strip)]})")
         before = {id(w) for w in self.app.plugin_windows()}
         titles_before = [title(w) for w in self.app.plugin_windows()]
-        btn = next((k for k in children(hits[nth]) if desc(k) == "open"), None)
+        btn = next((k for k in children(hits[nth]) if sdesc(k) == "open"), None)
         if not press(btn):
             raise AXError(f"could not press 'open' on {name!r}")
         t_end = time.time() + 4.0
@@ -888,7 +943,7 @@ class Mixer:
         hits = [g for g in self.insert_groups(strip) if desc(g).lower() == name.lower()]
         if len(hits) <= nth:
             raise AXError(f"no insert {name!r} on this strip")
-        return set_checkbox(next((k for k in children(hits[nth]) if desc(k) == "bypass"), None), bypass)
+        return set_checkbox(next((k for k in children(hits[nth]) if sdesc(k) == "bypass"), None), bypass)
 
 
 # ============================================================================ plug-in windows
