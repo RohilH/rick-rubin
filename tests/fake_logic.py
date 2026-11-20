@@ -78,6 +78,7 @@ class FakeLogicBridge:
         self.imports: list[tuple[int, Path, int, int]] = []
         self.midi_imports: list[tuple[Path, int]] = []
         self.fader_stop: float | None = None  # a fader that will not go below this (a readback that differs)
+        self.transposed: dict[str, int] = {"Bass": 12}   # Logic puts +12 on the region of a bass program
 
     def say(self, m):
         self.said.append(m)
@@ -114,6 +115,13 @@ class FakeLogicBridge:
         n = len(self.tracks())
         self._strips.insert(n, FakeStrip(f"Inst {n + 1}", region=Path(path).stem))
         return [n]
+
+    def region_transpose(self, track_index):
+        return self.transposed.get(self._strip(track_index).name, 0)
+
+    def set_transpose(self, track_index, semitones):
+        self.transposed[self._strip(track_index).name] = semitones
+        return semitones
 
     def load_setting(self, ref, path, plugin="instrument", nth=0):
         if not Path(path).exists():

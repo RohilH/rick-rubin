@@ -173,6 +173,15 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
                 rep.warnings += [f"{t.name}: instrument: {m}" for m in pr.errors]
             except LogicError as err:
                 rep.warnings.append(f"{t.name}: instrument parameters not set ({err})")
+        if loaded and (t.serum or " (instrument)" in loaded):
+            # Logic transposes the region of a bass program +12 for its own bass patch; ours plays the notes as written
+            try:
+                was = bridge.region_transpose(index[t.name])
+                if was:
+                    bridge.set_transpose(index[t.name], 0)
+                    info["transpose"] = f"region Transpose {was:+d} -> 0 (Logic sets it for the role's own patch)"
+            except (LogicError, AttributeError) as err:
+                rep.warnings.append(f"{t.name}: the region's Transpose could not be read ({err}): check that the part is not an octave up")
         if t.midi_effects:
             from ..midifx import unemulated
             info["midi_fx"] = "written into the notes: " + ", ".join(str(e.get("device")) for e in t.midi_effects)

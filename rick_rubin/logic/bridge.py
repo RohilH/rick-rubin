@@ -1457,10 +1457,16 @@ class LogicBridge:
         self._press(M.VPOT_PUSH + col, settle=0.8)
         time.sleep(0.4)
         self.close_plugin_windows()
-        after = AX.wait_for(lambda: (lambda cur_: cur_ if len(cur_) < len(before) else None)(self.strip_info(ref).inserts), 5.0, 0.25)
-        if after is None:
+        if AX.wait_for(lambda: len(self.strip_info(ref).inserts) < len(before) or None, 5.0, 0.25) is None:
             raise LogicError(f"Logic did not take the plug-in out of insert {slot} (inserts: {self.strip_info(ref).inserts})")
-        return after
+        return list(self.strip_info(ref).inserts)
+
+    def region_transpose(self, track_index: int) -> int:
+        """The Transpose of the track's first region. Logic sets +12 on the region of a bass General MIDI program when
+        it opens a MIDI file (its own bass patches are built for that), so an instrument put on the track afterwards
+        plays an octave above the written notes unless this is brought back to 0."""
+        self.select_region(track_index)
+        return round(float(AX.attr(self.region_param("Transpose:"), "AXValue") or 0))
 
     def load_instrument(self, ref, name: str, index: int | None = None) -> str:
         """Put software instrument `name` ("Retro Synth", "Alchemy", "Serum 2"...) in the instrument slot of track

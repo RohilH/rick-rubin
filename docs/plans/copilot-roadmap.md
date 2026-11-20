@@ -21,7 +21,7 @@ panels), and the Serum design and matching work. Checked live with a push and a 
 | The skill is linked into `~/.claude/skills/rick-rubin` | done at the end of the session (see the PR) |
 | A song declares which genre checks apply (`song.meta["lint"]`) | done, tests. Which genres Rohil makes is still his to say |
 | `serum index` (626 presets measured) | done |
-| demucs installed for `isolate` | installed; the separated path is still untested on a real excerpt |
+| demucs installed for `isolate` | done: a bass part separated from a released mp3 and its notes read |
 | Reference shelf | seeded with the four released tracks of the two mashup projects; Rohil should add 8 to 15 tracks he measures himself against |
 
 ## Phase 2. Session mode: inside the open project — done, with limits
@@ -54,6 +54,10 @@ Found and fixed on the way (each would have hurt in a real project):
   insert was dropped and instruments read `input`. The second of two sends was read as an insert.
 - The MIDI file a push opens carried volume and pan controllers; Logic moved the faders to them on every
   playback (a track written at -14 dB played at -21 dB).
+- Logic puts Transpose +12 on the region of a bass program when it opens a MIDI file, so a bass track given its own
+  instrument played an octave up. The push now sets it back to 0 for those tracks.
+- A bar-range bounce failed on Logic 11.2.2 (its position fields move ten bars at a time): it is now cut out of a
+  full bounce. `isolate` could not read mp3 files and called demucs with a broken command line.
 - `instrument="Serum 2"` loaded Serum 2 FX. A new instrument track took Logic's default patch and its two reverb
   busses. Typed text lost its capitals. A cold start of Logic was not seen for 150 s.
 

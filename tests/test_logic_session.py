@@ -269,6 +269,7 @@ def test_push_can_put_a_live_serum_on_the_track(tmp_path, monkeypatch):
     strip = fake._strips[1]
     assert strip.instrument == "Serum 2" and strip.params[0]["setting"] == "Bass" and strip.inserts == [] and strip.volume == -9.0
     assert (tmp_path / "logic" / "presets" / "Bass.aupreset").exists() and "live" in rep.tracks["Bass"]["instrument"]
+    assert fake.transposed["Bass"] == 0 and "+12 -> 0" in rep.tracks["Bass"]["transpose"]      # Logic's +12 on a bass region is undone
     notes = [n for n in read_midi_notes(tmp_path / "logic" / "Live Serum.mid") if n[0] == 2 and n[4] > 1]
     assert len(notes) == 8 * 3                                                    # the part is in the MIDI file
     # without the option the part is rendered: an audio track, as before (needs the real plug-in, so only the plan is checked)

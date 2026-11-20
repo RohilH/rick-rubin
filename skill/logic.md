@@ -123,6 +123,9 @@ measurements. What changes for you:
   plug-ins are not set from here). Arpeggiator, Random and Scale are not: the report names them, and that part
   plays as written.
 - The project's key signature is the song's (a mode shows as its relative major: F dorian as E♭ major).
+- Octaves: Logic transposes the region of a bass program +12 for its own bass patches. The push undoes that when it
+  puts another instrument on the track and prints `region Transpose +12 -> 0`. If you change a bass track's
+  instrument by hand in a pushed project (`logic instrument Bass ...`), check the register on a bounce (`notes`).
 - Mixer levels are the bridge's alone: the MIDI file carries no volume or pan controllers (it used to, and Logic
   moved the faders to them whenever playback started).
 - A push brings Logic to the front for its whole run (saving and the Aux / Stereo Out strips need it there) and

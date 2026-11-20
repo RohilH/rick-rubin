@@ -194,6 +194,12 @@ class PushReport:
         for name, info in self.tracks.items():
             L.append(f"  - {name}: instrument={info.get('instrument')!s}" + (f", sidechain={info['sidechain']}" if info.get("sidechain") else ""))
             L += [f"      midi fx: {e}" for e in info.get("midi_effects", [])]
+            if info.get("midi_fx"):
+                L.append(f"      midi fx {info['midi_fx']}")
+            if info.get("patch_fx"):
+                L.append(f"      patch fx (Logic's own, before yours): {', '.join(info['patch_fx'])}")
+            if info.get("transpose"):
+                L.append(f"      {info['transpose']}")
             if info.get("instrument_params"):
                 L.append(f"      instrument: {info['instrument_params']}")
             L += [f"      fx: {e}" for e in info.get("effects", [])]

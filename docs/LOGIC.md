@@ -214,6 +214,11 @@ signature. A range the dialog does not cover is an error that says what to clear
   `instrument="Serum 2"` instead puts a live Serum on its init patch.
 - MIDI effects are not Logic MIDI plug-ins: the deterministic ones are written into the notes, the others are
   reported and skipped.
+- Logic sets the region's Transpose to +12 for a bass General MIDI program when it opens the file: its own bass
+  patches are built to be played that way. When the push puts another instrument on the track (`instrument=` naming a
+  Logic instrument or Audio Unit, or a live Serum), it sets the region's Transpose back to 0 and says so in the
+  report; otherwise the part would play an octave above the written notes (measured: F1 written, F2 bounced).
+  A track that keeps the role's own patch keeps Logic's +12.
 - The MIDI file carries no volume or pan controllers. It used to (CC7 and CC10 as a first guess at the mixer), and
   Logic moved each fader to them whenever playback started: a track written at -14 dB played at -21 dB.
 - Automation needs `--automation` because it plays the automated bars: a 16-bar volume ride at 126 BPM takes
