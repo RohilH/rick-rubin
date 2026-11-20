@@ -72,9 +72,10 @@ bars is about 15 s.
 **Taking things away.** `rick-rubin logic remove TRACK PLUGIN` takes a plug-in off a strip, and its settings go
 with it. Use it only when Rohil asked for exactly that; to try a sound without a plug-in, bypass is his to press.
 
-**Limits today.** A bounce of a bar range is cut out of a bounce of what Logic's dialog offers (its position
-fields move ten bars at a time): that is the whole project, unless a cycle or a selection narrows it, in which
-case the command says so and asks for it to be cleared. Imported audio lands on the bar line. There is no command to move, cut or delete regions, to write automation, or
+**Limits today.** Imported audio lands on the bar line. Tracks inside a collapsed stack are not visible to the
+session (expand the stack in Logic to reach them); a stack's own strip is. A bounce without `--tracks` keeps
+the project's solos and tells you which were on. If a command is interrupted while it has something soloed, the
+solo stays: check `inspect` for an `S` before trusting a mix bounce. There is no command to move, cut or delete regions, to write automation, or
 to edit notes inside an existing region: say so and describe the manual steps instead of approximating.
 
 ## A song.py into a new Logic project: `push` and `capture`
