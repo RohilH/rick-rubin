@@ -21,6 +21,7 @@ all projects, is in `~/.rick-rubin/taste.md` (`rick-rubin taste`): read it befor
 | A mashup, an edit, a remix recreation | Stems, conform, arrange | `skill/mashups.md`, `skill/logic.md` |
 | "Does this sound finished?", levels, width, loudness, a master chain | Measure, compare with released tracks | `skill/mix.md` |
 | Samples, loops, a vocal to build around | Import, read, compare | `skill/samples.md`, `skill/explore.md` |
+| "How do I make X sound / why does my track sound unfinished / what would Ryos do" | **Knowledge**: what the producers he follows teach, as technique cards | `knowledge/PRINCIPLES.md`, then `knowledge/INDEX.md` and the cards it points to |
 | Ableton Live (not on this Mac) | | `skill/live.md` |
 
 Read only the files the job needs. `docs/LOGIC.md` has setup and the troubleshooting table.
@@ -40,6 +41,15 @@ Read only the files the job needs. `docs/LOGIC.md` has setup and the troubleshoo
 6. **Ask, confirm the plan, then act.** For a new track or anything large. A single change he asked for in so
    many words needs no plan: do it and report before and after.
 7. **Say what happened.** What was tried, kept, rejected, measured, and what is still weak or unverified.
+
+## The knowledge base
+
+`knowledge/` holds digests of videos by the creators Rohil follows (Ryos, Moonboy, Alex Rome) as technique cards:
+what it is, when to use it, the settings, how to do it in Logic and Serum 2 with his plug-ins, how to check it by
+measurement, and the source with a timestamp. Read `knowledge/PRINCIPLES.md` before giving production advice or
+judging a track, and look in `knowledge/INDEX.md` for cards on the job at hand (by topic and by genre). When you use
+a card, name it and its creator to Rohil (PREFERENCES §10). Cards are `untested` until someone runs them here and
+writes the numbers down; when you do that, update the card. The cards never replace writing the part yourself.
 
 ## Setup check
 
@@ -109,4 +119,4 @@ checked on a bounce so far.
 
 - Outputs go in the project folder, never in this repo.
 - After a session, `rick-rubin remember` (for a song project) so the next session starts from what was decided.
-- When a technique is used, name it and say why it fits (PREFERENCES §9).
+- When a technique is used, name it and say why it fits (PREFERENCES §10).

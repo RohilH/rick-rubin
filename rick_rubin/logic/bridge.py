@@ -1420,9 +1420,10 @@ class LogicBridge:
             self._scroll_list(slot, read, lambda t: plugin_matches(self._plugin_name(t), want), f"plug-in {name!r}")
         self._press(M.VPOT_PUSH + slot, settle=0.8)                        # inserts it (and opens its window)
         time.sleep(0.5)
-        got = AX.wait_for(lambda: (lambda cur: cur if len(cur) > len(before) else None)(self.strip_info(ref).inserts), 6.0, 0.25)
+        # some Audio Units take a while to come up the first time (licence checks): 6 s was too short for several
+        got = AX.wait_for(lambda: (lambda cur: cur if len(cur) > len(before) else None)(self.strip_info(ref).inserts), 25.0, 0.5)
         if not got:
-            raise LogicError(f"{name!r} was preselected but Logic did not insert it")
+            raise LogicError(f"{name!r} was preselected but Logic did not insert it (pending: {self.pending_alert()})")
         self.close_plugin_windows()
         return got[slot] if len(got) > slot else got[-1]
 
