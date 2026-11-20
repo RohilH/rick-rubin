@@ -219,8 +219,13 @@ class Session:
         return hits[nth][0] + 1, hits[nth][1]
 
     def _single(self, target) -> None:
-        """One track selected, and only one: the target when it is a track, else the one the person had (or the first)."""
-        self.b.select_track(target if isinstance(target, int) else (self._selection[0] if self._selection else 0))
+        """One track selected, and only one: the target when it is a track, else the one the person had (or the first).
+        Nothing is changed unless Logic shows exactly that selection: it applies strip edits to every selected strip."""
+        index = target if isinstance(target, int) else (self._selection[0] if self._selection else 0)
+        self.b.select_track(index)
+        check = getattr(self.b, "only_selected", None)
+        if check is not None and not check(index):
+            raise LogicError(f"track #{index + 1} could not be selected on its own, so nothing was changed. Click on Logic's window and run it again")
 
     # ------------------------------------------------------------------ the record
     def _begin(self) -> None:
@@ -505,7 +510,7 @@ def map_plugins(names: list[str], progress=None, refresh: bool = False, max_page
         mid.tracks.append(tr)
         smf = scratch / "plug-in map.mid"
         mid.save(str(smf))
-        with LogicBridge(progress=say, front=True) as b:
+        with LogicBridge(progress=say, front="start") as b:
             title = b.open_midi_project(smf, expect_tracks=1, close_ours=False)
             try:
                 ti = b.add_audio_track()
@@ -629,7 +634,7 @@ def run(a, say=None) -> int:
                 print()
         return 0
 
-    with LogicBridge(progress=say, use_mcu=act in NEEDS_SURFACE, front=act not in READ_ONLY and act != "backup" and not a.background) as b:
+    with LogicBridge(progress=say, use_mcu=act in NEEDS_SURFACE or act == "set", front=act not in READ_ONLY and act != "backup" and not a.background) as b:
         b.project = find_project(b.app, a.project)
         b._mixer = None
         if act == "backup":

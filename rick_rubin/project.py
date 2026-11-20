@@ -273,7 +273,7 @@ class Project:
             from .logic import LogicBridge
             from .logic import push_song as push_logic
             from .live.client import live_lock
-            with live_lock(f"push {self.root.name}", progress=progress, port=port), LogicBridge(progress=progress) as b:
+            with live_lock(f"push {self.root.name}", progress=progress, port=port), LogicBridge(progress=progress, front="start") as b:
                 return push_logic(song, b, replace=replace, load_instruments=load_instruments, progress=progress, automation=automation)
         from .live import LiveBridge, push_song
         from .live.client import _fingerprints, live_lock, push_record, update_song
@@ -367,7 +367,7 @@ class Project:
         from .live.client import live_lock
         if daw == "logic":
             from .logic import LogicBridge, capture_logic
-            with live_lock(f"capture {self.root.name}", progress=progress, port=port), LogicBridge(progress=progress) as b:
+            with live_lock(f"capture {self.root.name}", progress=progress, port=port), LogicBridge(progress=progress, front="start") as b:
                 return capture_logic(self.load(), b, self.zoom_path("live", bars, tracks), bars=bars, tracks=tracks, progress=progress)
         from .live import LiveBridge, capture_live
         with live_lock(f"capture {self.root.name}", progress=progress, port=port), LiveBridge(host, port) as b:
@@ -401,7 +401,7 @@ class Project:
             from .live.client import live_lock
             from .logic import LogicBridge, capture_logic
             from .logic import push_song as push_logic
-            with live_lock(f"ab {self.root.name}", progress=progress, port=port), LogicBridge(progress=progress) as b:
+            with live_lock(f"ab {self.root.name}", progress=progress, port=port), LogicBridge(progress=progress, front="start") as b:
                 for label, values in variants:
                     song = build(values)
                     rep = push_logic(song, b, replace=True, progress=lambda m, label=label: say(f"{label}: {m}"), save=False)

@@ -117,14 +117,17 @@ class LogicBridge:
     """Connect once per command; `with LogicBridge() as b:`. Methods raise LogicError with a message a person can act on."""
 
     def __init__(self, progress: Callable[[str], None] | None = None, use_mcu: bool = True, project: str | None = None,
-                 front: bool = False):
+                 front: bool | str = False):
         self.say = progress or (lambda *_: None)
         self.use_mcu = use_mcu
-        # front=True: Logic is brought to the front for the life of the bridge (when the person at the Mac is not
-        # typing) and the app that was in front gets it back afterwards. Needed by anything that saves, bounces,
-        # imports or touches Aux / Stereo Out strips: with Logic in the background its File > Save commands are
-        # disabled and those strips are not selected (measured on Logic 11.2.2, macOS 15.6).
-        self.front = front and os.environ.get("RICK_RUBIN_LOGIC_BACKGROUND", "") not in ("1", "true", "yes")
+        # With Logic in the background its File > Save commands are disabled and Aux / Stereo Out strips are not
+        # selected by the surface (measured on Logic 11.2.2, macOS 15.6); tracks, their plug-ins and sends work
+        # there. front=True lets the bridge bring Logic to the front when a step needs it (need_front), only once
+        # the person at the Mac has stopped typing, and gives the front back in close(). front="start" does it on
+        # connecting, for a push or a bounce that needs it throughout. False never moves Logic.
+        allowed = os.environ.get("RICK_RUBIN_LOGIC_BACKGROUND", "") not in ("1", "true", "yes")
+        self.front = bool(front) and allowed
+        self._front_at_start = front == "start" and allowed
         self._front_prev: int | None = None
         self.app: AX.LogicApp | None = None
         self.mcu: M.MackieControl | None = None
@@ -162,7 +165,7 @@ class LogicBridge:
             self._close_setup_window()
         if self.project is None:
             self.project = self.app.project_title()
-        if self.front:
+        if self._front_at_start:
             self.to_front()
         return self
 
@@ -177,6 +180,11 @@ class LogicBridge:
     # ------------------------------------------------------------------ in front of the person, or behind
     def is_front(self) -> bool:
         return bool(AX.attr(self.app.el, "AXFrontmost"))
+
+    def need_front(self) -> None:
+        """This step only works with Logic in front: bring it there if the bridge may (front=True)."""
+        if self.front and not self.is_front():
+            self.to_front()
 
     def to_front(self, idle: float = 1.5, timeout: float = 30.0) -> bool:
         """Bring Logic to the front if it is not there. Waits until the keyboard and mouse have been still for
@@ -267,8 +275,7 @@ class LogicBridge:
 
     def focus(self) -> None:
         """Make our project window Logic's key window (menu commands act on it)."""
-        if self.front and not self.is_front():
-            self.to_front()                                  # someone clicked away in the middle of a run
+        self.need_front()                                    # menus that open sheets and file panels, and Save
         self.clear_popups()
         self.app.make_key(self.main)
 
@@ -509,9 +516,27 @@ class LogicBridge:
         return self.tracks()
 
     def select_track(self, index: int) -> None:
-        """Select exactly this track (edits to a Mixer strip apply to all selected strips, so keep it to one)."""
+        """Select exactly this track (edits to a Mixer strip apply to all selected strips, so keep it to one). With
+        Logic in the background the track list does not take a selection: the surface's SELECT button does, and
+        failing that Logic is brought to the front when the bridge may."""
         self.app.select_track(index, self.main)
         time.sleep(0.1)
+        if self.only_selected(index) or self.is_front():
+            return
+        if self.mcu is not None and self.mcu.state.last_change > 0:
+            try:
+                self.mcu_select(index)
+            except LogicError:
+                pass
+            if self.only_selected(index):
+                return
+        if self.front:
+            self.to_front()
+            self.app.select_track(index, self.main)
+            time.sleep(0.1)
+
+    def only_selected(self, index: int) -> bool:
+        return self.app.selected_tracks(self.main) == [index]
 
     def delete_track(self, index: int) -> None:
         """Track > Delete Track on exactly this track."""
@@ -1429,8 +1454,8 @@ class LogicBridge:
         """Select channel strip `index` (its position in the Mixer's Tracks view) on the surface."""
         u = self._need_mcu()
         _ = view
-        if self.front and not self.is_front():
-            self.to_front()
+        if index >= len(self.tracks()):
+            self.need_front()                                # Aux and output strips are only selected with Logic in front
         if u.state.leds.get(M.GLOBAL_VIEW):
             self._press(M.GLOBAL_VIEW)                        # always the Arrange view: every strip is a channel there
         self._view = "tracks"

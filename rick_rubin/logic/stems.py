@@ -147,7 +147,7 @@ def split_stems(source: str | Path, out_dir: str | Path, stems: list[str] | tupl
         if any(p.startswith(".") for p in out_dir.parts) or str(out_dir).startswith(("/private/", "/tmp/")):
             raise LogicError(f"{out_dir} is in a hidden folder, which Logic's file panels cannot reach; use a visible folder (e.g. under ~/Documents)")
         from ..live.client import live_lock
-        with live_lock(f"split {name}", progress=say), LogicBridge(progress=say, use_mcu=False) as b:
+        with live_lock(f"split {name}", progress=say), LogicBridge(progress=say, use_mcu=False, front="start") as b:
             return split_stems(source, out_dir, want, submix, start_s, end_s, close, b, say, timeout, bpm, transpose, source_bpm, flex_mode)
 
     package = work / f"{title}.logicx"
@@ -268,7 +268,7 @@ def conform_recording(source: str | Path, out_file: str | Path, bpm: float | Non
         if any(p.startswith(".") for p in out_dir.parts) or str(out_dir).startswith(("/private/", "/tmp/")):
             raise LogicError(f"{out_dir} is in a hidden folder, which Logic's file panels cannot reach; use a visible folder (e.g. under ~/Documents)")
         from ..live.client import live_lock
-        with live_lock(f"conform {name}", progress=say), LogicBridge(progress=say, use_mcu=False) as b:
+        with live_lock(f"conform {name}", progress=say), LogicBridge(progress=say, use_mcu=False, front="start") as b:
             return conform_recording(source, out_file, bpm, source_bpm, transpose, flex_mode, close, b, say)
     package = work / f"{title}.logicx"
     _close_ours(bridge, title, package)
