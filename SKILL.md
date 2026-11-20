@@ -46,8 +46,10 @@ Read only the files the job needs. `docs/LOGIC.md` has setup and the troubleshoo
 
 `knowledge/` holds digests of videos by the creators Rohil follows (Ryos, Moonboy, Alex Rome) as technique cards:
 what it is, when to use it, the settings, how to do it in Logic and Serum 2 with his plug-ins, how to check it by
-measurement, and the source with a timestamp. Read `knowledge/PRINCIPLES.md` before giving production advice or
-judging a track, and look in `knowledge/INDEX.md` for cards on the job at hand (by topic and by genre). When you use
+measurement, and the source with a timestamp. Read `knowledge/PRINCIPLES.md` before giving production advice,
+`knowledge/FINISHED.md` before judging whether a track is done, `knowledge/genres/<genre>.md` before starting or
+finishing a track in tech house, bass house or progressive house, and look in `knowledge/INDEX.md` for cards on
+the job at hand (by topic and by genre). `knowledge/TOOLS.md` says what the creators use and what he has instead. When you use
 a card, name it and its creator to Rohil (PREFERENCES §10). Cards are `untested` until someone runs them here and
 writes the numbers down; when you do that, update the card. The cards never replace writing the part yourself.
 

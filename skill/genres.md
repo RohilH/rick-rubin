@@ -14,6 +14,12 @@ song.meta["lint"] = {"tempo": [85, 100], "off": ["H3-dj-friendly", "H8-energy"],
 `tempo` is the expected range; `off` lists rule ids (`rick-rubin check` prints them: H1-tempo, H2-phrasing, H3-dj-friendly, H5-bass, H8-energy, ...). Structure errors cannot be
 switched off. This changes what is checked, never what is written. Ask Rohil which genre a track is before switching anything off.
 
+## The genres Rohil makes
+
+Tech house and bass house now, progressive house as the goal. What each consists of, as the creators he follows teach it:
+`knowledge/genres/tech-house.md`, `knowledge/genres/bass-house.md`, `knowledge/genres/progressive-house.md`. Read the one for the
+track in hand before the notes below, which are upstream's general house notes.
+
 ## House
 
 - **Tempo/feel:** deep 118–122 with heavy swing (56–58%); classic/garage-tinged 122–125 (53–55%); tech 124–128, nearly straight (50–53%).

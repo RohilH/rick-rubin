@@ -10,8 +10,11 @@ notes, patterns or presets (see `CLAUDE.md`): a card says how and why, the agent
 
 ```
 knowledge/
+  PRINCIPLES.md                  the themes that recur across creators: read this first
+  FINISHED.md                    "is this track finished?": one checklist merged from every creator
+  genres/<genre>.md              tech house, bass house, progressive house: what a track consists of
   INDEX.md                       one line per card and per source, by topic and by genre
-  PRINCIPLES.md                  the themes that recur across creators
+  TOOLS.md                       every tool the creators use, who has it, what to buy and what not to
   sources/<creator>/<slug>.md    one digest per video
   techniques/<topic>/<creator>-<slug>.md   one card per technique
 ```
