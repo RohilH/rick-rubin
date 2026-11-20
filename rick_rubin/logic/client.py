@@ -26,7 +26,7 @@ from typing import Any
 from ..live.client import DEFAULT_SIDECHAIN, PushReport, kickstart_device
 from ..model import Song
 from .bridge import LOGIC_INSTRUMENTS, LogicBridge, LogicError
-from .smf import export_logic_midi
+from .smf import as_audio, export_logic_midi
 
 # Logic's names for the shorthand `sidechain: true` compressor (Live: Threshold/Ratio/Attack/Release)
 # NB Logic's Compressor adds make-up gain by itself ("Auto Gain" -12 dB), unlike Live's: a ducked track comes out louder
@@ -82,7 +82,7 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
     say("opening the MIDI file in Logic")
     proj = bridge.open_midi_project(smf["path"], expect_tracks=len(song.tracks), ours=tuple(ours))
     say(f"Logic project {proj!r}")
-    midi_tracks = [t for t in song.tracks if not (t.audio or t.serum)]
+    midi_tracks = [t for t in song.tracks if not as_audio(t)]
     try:
         names = bridge.name_tracks_by_regions()
     except LogicError as e:
@@ -91,7 +91,7 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
     # audio-loop and Serum tracks came in as empty MIDI tracks (so the import kept the song's order); their audio goes
     # on audio tracks below, so the placeholders go, bottom up
     order = [t.name for t in song.tracks]
-    for i in reversed([i for i, t in enumerate(song.tracks) if t.audio or t.serum]):
+    for i in reversed([i for i, t in enumerate(song.tracks) if as_audio(t)]):
         try:
             bridge.delete_track(i)
             order.pop(i)
@@ -146,11 +146,35 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
                 rep.warnings += [f"{t.name}: instrument: {m}" for m in pr.errors]
             except LogicError as err:
                 rep.warnings.append(f"{t.name}: instrument parameters not set ({err})")
-        if t.sample:
-            rep.warnings.append(f"{t.name}: sample tracks (Simpler one-shots) are not yet built in Logic; the role's patch plays the notes")
         if t.midi_effects:
-            rep.warnings.append(f"{t.name}: MIDI effects are not built in Logic (notes are sent as written)")
+            from ..midifx import unemulated
+            info["midi_fx"] = "written into the notes: " + ", ".join(str(e.get("device")) for e in t.midi_effects)
+            rep.warnings += [f"{t.name}: {m}: in Logic the notes are as written for that part of the chain" for m in unemulated(t.midi_effects)]
         rep.tracks[t.name] = info
+    # sample tracks: the part played from the sample offline (Simpler's one-shot / classic behaviour, the velocity
+    # law and attack the preview uses), on an audio track of its own from bar 1 — the same road as a Serum track
+    sample_tracks = [t for t in song.tracks if t.sample and not (t.audio or t.serum)]
+    if sample_tracks:
+        from ..live.client import _baked_stem
+        from ..render.stems import sample_stem
+        sounding, _ = song.flatten(sounding=True)
+        stems_dir = out_dir / "audio"
+        for t in sample_tracks:
+            mine = [c for c in sounding if c.track == t.name]
+            try:
+                say(f"rendering {t.name} from {Path(t.sample).name}")
+                stem = sample_stem(song, t, sounding, stems_dir / "cache")
+                regions = [(c.start, {k: v for k, v in c.envelopes.items() if k in ("filter", "cutoff", "volume")}) for c in mine]
+                baked = _baked_stem(song, stem, [(st, env) for st, env in regions if env])
+                path = stems_dir / f"{safe_name(t.name)}.wav"            # the region (and then the track) takes the file's name
+                shutil.copyfile(baked, path)
+                ti = bridge.add_audio_track()
+                bridge.import_audio(ti, path, 1, 1)
+                index[t.name] = ti
+                rep.tracks[t.name] = {"index": ti, "instrument": f"sample '{Path(t.sample).name}' (rendered to audio)"}
+                rep.notes += sum(len(c.notes) for c in mine)
+            except (LogicError, OSError, RuntimeError, FileNotFoundError, ValueError) as err:
+                rep.warnings.append(f"{t.name}: sample part not placed ({err})")
     # Serum tracks: the part as Serum plays it (rendered offline through the plug-in, at the song's tempo, with any
     # filter/volume automation baked in, as for Live) on an audio track of its own, from bar 1
     serum_tracks = [t for t in song.tracks if t.serum]
@@ -176,13 +200,15 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
                 rep.notes += sum(len(c.notes) for c in mine)
             except (LogicError, OSError, RuntimeError, FileNotFoundError, ValueError) as err:
                 rep.warnings.append(f"{t.name}: Serum stem not placed ({err})")
-        if any(t.name in index for t in serum_tracks):
+    rendered = [t for t in song.tracks if (t.serum or t.sample) and not t.audio]
+    if rendered:
+        if any(t.name in index for t in rendered):
             try:
                 names = bridge.name_tracks_by_regions()
             except LogicError as err:
-                rep.warnings.append(f"Serum track names: {err}")
+                rep.warnings.append(f"audio track names: {err}")
                 names = bridge.tracks()
-            for t in serum_tracks:
+            for t in rendered:
                 if t.name in index and names[index[t.name]] != t.name:
                     rep.warnings.append(f"{t.name}: Logic shows the track as {names[index[t.name]]!r}")
     # audio-loop tracks: an audio track appended after the MIDI tracks, each loop segment imported at its bar
@@ -225,7 +251,7 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
         chain = [dict(e) for e in t.effects]
         if sidechain and t.sidechain and kick and not any(e.get("sidechain") == kick or e["device"].lower() == "kickstart 2" for e in chain):
             chain.append(kickstart_device(song, kick) if t.sidechain == "kickstart" else dict(LOGIC_SIDECHAIN, sidechain=kick))
-        if t.name in filtered and not (t.serum or t.audio) and not any(e["device"].lower() == "autofilter" for e in chain):
+        if t.name in filtered and not as_audio(t) and not any(e["device"].lower() == "autofilter" for e in chain):
             chain.append({"device": "AutoFilter", "params": {}})          # the device the filter automation rides on
         if not chain:
             continue

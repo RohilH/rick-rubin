@@ -18,6 +18,7 @@ turns one into bridge commands for Ableton.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import time
@@ -115,9 +116,16 @@ def plugin_matches(shown: str, want: str) -> bool:
 class LogicBridge:
     """Connect once per command; `with LogicBridge() as b:`. Methods raise LogicError with a message a person can act on."""
 
-    def __init__(self, progress: Callable[[str], None] | None = None, use_mcu: bool = True, project: str | None = None):
+    def __init__(self, progress: Callable[[str], None] | None = None, use_mcu: bool = True, project: str | None = None,
+                 front: bool = False):
         self.say = progress or (lambda *_: None)
         self.use_mcu = use_mcu
+        # front=True: Logic is brought to the front for the life of the bridge (when the person at the Mac is not
+        # typing) and the app that was in front gets it back afterwards. Needed by anything that saves, bounces,
+        # imports or touches Aux / Stereo Out strips: with Logic in the background its File > Save commands are
+        # disabled and those strips are not selected (measured on Logic 11.2.2, macOS 15.6).
+        self.front = front and os.environ.get("RICK_RUBIN_LOGIC_BACKGROUND", "") not in ("1", "true", "yes")
+        self._front_prev: int | None = None
         self.app: AX.LogicApp | None = None
         self.mcu: M.MackieControl | None = None
         self.project = project               # title prefix of the project window this bridge works in
@@ -128,6 +136,8 @@ class LogicBridge:
 
     # ------------------------------------------------------------------ lifecycle
     def connect(self) -> LogicBridge:
+        if AX.screen_locked():
+            raise LogicError("the screen is locked: Logic's windows cannot be reached until it is unlocked")
         if not logic_running():
             self.say("launching Logic Pro")
             subprocess.run(["open", "-a", LOGIC_APP], check=False)
@@ -152,12 +162,48 @@ class LogicBridge:
             self._close_setup_window()
         if self.project is None:
             self.project = self.app.project_title()
+        if self.front:
+            self.to_front()
         return self
 
     def close(self) -> None:
         if self.mcu is not None:
             self.mcu.close()
             self.mcu = None
+        if self._front_prev is not None and self.app is not None and self._front_prev != self.app.pid:
+            AX.activate(self._front_prev)                    # give the front back to whoever had it
+        self._front_prev = None
+
+    # ------------------------------------------------------------------ in front of the person, or behind
+    def is_front(self) -> bool:
+        return bool(AX.attr(self.app.el, "AXFrontmost"))
+
+    def to_front(self, idle: float = 1.5, timeout: float = 30.0) -> bool:
+        """Bring Logic to the front if it is not there. Waits until the keyboard and mouse have been still for
+        `idle` seconds first, so nobody's typing lands in Logic (where single keys are commands). Returns whether
+        it had to move. The app that was in front is remembered and gets the front back in close()."""
+        if self.is_front():
+            return False
+        if AX.screen_locked():
+            raise LogicError("the screen is locked: Logic's windows cannot be reached until it is unlocked")
+        t_end = time.time() + timeout
+        told = False
+        while AX.idle_seconds() < idle:
+            if not told:
+                self.say("Logic Pro has to come to the front for this: waiting for a pause in typing")
+                told = True
+            if time.time() > t_end:
+                raise LogicError(f"Logic Pro has to be in front for this step, and the keyboard or mouse was in use for the last {timeout:.0f} s. "
+                                 "Click on Logic's window (or stop typing for a moment) and run it again")
+            time.sleep(0.2)
+        if self._front_prev is None:
+            self._front_prev = AX.frontmost_pid()
+        self.say("bringing Logic Pro to the front (leave the keyboard alone until this finishes)")
+        AX.activate(self.app.pid)
+        if AX.wait_for(self.is_front, 5.0, 0.1) is None:
+            raise LogicError("Logic Pro did not come to the front")
+        time.sleep(0.4)
+        return True
 
     def __enter__(self):
         return self.connect() if self.app is None else self
@@ -221,6 +267,8 @@ class LogicBridge:
 
     def focus(self) -> None:
         """Make our project window Logic's key window (menu commands act on it)."""
+        if self.front and not self.is_front():
+            self.to_front()                                  # someone clicked away in the middle of a run
         self.clear_popups()
         self.app.make_key(self.main)
 
@@ -428,6 +476,16 @@ class LogicBridge:
     def tempo(self) -> float | None:
         return self.app.tempo(self.main)
 
+    def control_text(self, name: str) -> str | None:
+        """What a control-bar display shows ('Key Signature' -> 'Amin', 'Time Signature' -> '4/4')."""
+        el = self.app.control(name, self.main)
+        if el is None:
+            return None
+        v = AX.attr(el, "AXValue")
+        if v in (None, ""):
+            v = AX.title(el) or " ".join(str(AX.attr(k, "AXValue") or AX.title(k) or "") for k in AX.children(el)).strip()
+        return str(v) if v not in (None, "") else None
+
     def name_tracks_by_regions(self) -> list[str]:
         """Logic names an imported track after the patch it chose; the region keeps the MIDI track's name.
         Tracks area > Functions > 'Name Track by Region/Cell Name' on all regions puts the song's names back."""
@@ -479,6 +537,13 @@ class LogicBridge:
     def add_audio_track(self) -> int:
         """Track > New Tracks… > Audio > Create, below the selected track. Returns its index (found by comparing
         the track list before and after: when the selection does not take, Logic puts the track elsewhere)."""
+        return self._add_track("Audio")
+
+    def add_instrument_track(self) -> int:
+        """Track > New Tracks… > Software Instrument > Create, below the last track. Returns its index."""
+        return self._add_track("Software Instrument")
+
+    def _add_track(self, kind: str) -> int:
         before = self.tracks()
         n = len(before)
         self.select_track(n - 1)
@@ -487,8 +552,11 @@ class LogicBridge:
         sheet = AX.wait_for(lambda: next((c for c in AX.children(self.main) if AX.role(c) == "AXSheet"), None), 5.0)
         if sheet is None:
             raise LogicError("the New Tracks sheet did not open")
-        grp = AX.find(sheet, lambda e: AX.role(e) == "AXGroup" and AX.desc(e).startswith("Audio"), 6)
+        grp = AX.find(sheet, lambda e: AX.role(e) == "AXGroup" and AX.desc(e).startswith(kind), 6)
         rb = AX.find(grp, lambda e: AX.role(e) == "AXRadioButton", 3) if grp is not None else None
+        if rb is None:
+            AX.press(AX.find(sheet, lambda e: AX.role(e) == "AXButton" and AX.title(e) == "Cancel", 3))
+            raise LogicError(f"the New Tracks sheet has no {kind!r} choice")
         AX.press(rb)
         time.sleep(0.2)
         count = AX.find(sheet, lambda e: AX.role(e) == "AXTextField" and "Number of tracks" in AX.desc(e), 4)
@@ -496,9 +564,52 @@ class LogicBridge:
             AX.set_value(count, "1")
         AX.press(AX.find(sheet, lambda e: AX.role(e) == "AXButton" and AX.title(e) == "Create", 3))
         if AX.wait_for(lambda: len(self.tracks()) > n, 8.0) is None:
-            raise LogicError("Logic did not add an audio track")
+            raise LogicError(f"Logic did not add {'an' if kind[0] in 'AEIOU' else 'a'} {kind.lower()} track")
         self._mixer = None
+        self.close_plugin_windows()                          # a new instrument track may open its instrument's window
         return first_new_index(before, self.tracks())
+
+    def import_midi(self, path: str | Path, bar: int = 1) -> list[int]:
+        """File > Import > MIDI File… with the playhead at `bar`: Logic adds one software-instrument track per MIDI
+        track of the file, its region starting at the playhead's bar. The tempo question, if Logic asks one, is
+        answered so that the project's own tempo stays. Returns the indices of the tracks it added."""
+        path = Path(path).expanduser().resolve()
+        if not path.exists():
+            raise LogicError(f"{path} does not exist")
+        before = self.tracks()
+        self.select_track(len(before) - 1)
+        self.set_playhead(bar, 1)
+        self.focus()
+        self.app.menu("File", "Import", "MIDI File…")
+        panel = AX.wait_for(lambda: next((d for d in self.app.dialogs() if AX.attr(d, "AXIdentifier") == "open-panel"), None), 8.0)
+        if panel is None:
+            raise LogicError("the Import MIDI File panel did not open")
+        self._panel_navigate(panel, path.parent, select_file=path.name)
+        AX.press(AX.find(panel, lambda e: AX.attr(e, "AXIdentifier") == "OKButton", 3))
+        time.sleep(0.8)
+        t_end = time.time() + 4.0
+        while time.time() < t_end:
+            if self._answer_alert(["Don’t Import", "Don't Import", "No"], "tempo", timeout=0.3):
+                t_end = time.time() + 1.5
+        if AX.wait_for(lambda: not any(AX.attr(d, "AXIdentifier") == "open-panel" for d in self.app.dialogs()), 10.0) is None:
+            raise LogicError("the Import MIDI File panel stayed open")
+        left = self.pending_alert()
+        if left:
+            raise LogicError(f"Logic is asking {left[0][:120]!r} ({', '.join(left[1])}) after the MIDI import")
+        after = AX.wait_for(lambda: (lambda t: t if len(t) > len(before) else None)(self.tracks()), 8.0)
+        if after is None:
+            raise LogicError("Logic did not add a track for the MIDI file")
+        self._mixer = None
+        self.close_plugin_windows()
+        # new tracks are the ones the old list does not account for, in order
+        old = list(before)
+        added = []
+        for i, name in enumerate(after):
+            if old and old[0] == name:
+                old.pop(0)
+            else:
+                added.append(i)
+        return added[: len(after) - len(before)] or list(range(len(before), len(after)))
 
     def import_audio(self, track_index: int, path: str | Path, bar: int, beat: int = 1, keep_file_rate: bool = False,
                      division: int = 1, tick: int = 1) -> bool:
@@ -1318,6 +1429,8 @@ class LogicBridge:
         """Select channel strip `index` (its position in the Mixer's Tracks view) on the surface."""
         u = self._need_mcu()
         _ = view
+        if self.front and not self.is_front():
+            self.to_front()
         if u.state.leds.get(M.GLOBAL_VIEW):
             self._press(M.GLOBAL_VIEW)                        # always the Arrange view: every strip is a channel there
         self._view = "tracks"
@@ -1510,19 +1623,8 @@ class LogicBridge:
         """Set parameters of the plug-in in insert `slot` (1..) of a strip: {name: value} where value is a number
         in the units Logic shows (dB, ms, Hz, %, ratio) or an option name / on/off. Names are Logic's full
         parameter names or the LCD abbreviations."""
-        self._need_mcu()
         rep = ParamReport()
-        self.mcu_select(self._strip_index(track_index) if isinstance(track_index, str) else track_index)
-        self.mcu_view(M.PLUGIN)
-        row0, row1 = self._lcd()
-        if not re.search(r"Ins[1-7]Pl Ins[2-8]Pl", row0 + row1):
-            raise LogicError(f"the Mackie Control is not in the Plug-in Channel view (LCD: {row0!r} / {row1!r})")
-        self._press(M.VPOT_PUSH + (slot - 1), settle=0.8)       # open the plug-in's edit view (and its window)
-        row0, row1 = self._lcd()
-        if re.search(r"Ins[1-7]Pl Ins[2-8]Pl", row0 + row1):
-            raise LogicError(f"insert slot {slot} did not open an edit view (LCD: {row0!r} / {row1!r})")
-        self._value_mode()
-        plugin = self._edit_view_plugin()
+        plugin = self._open_plugin_edit(track_index, slot)
         for name, val in params.items():
             try:
                 try:
@@ -1539,10 +1641,24 @@ class LogicBridge:
         self.close_plugin_windows()
         return rep
 
-    def set_instrument_params(self, track_index: int, params: dict, instrument: str = "") -> ParamReport:
-        """Set parameters of a track's software instrument by displayed value, in the Instrument Edit view."""
+    def _open_plugin_edit(self, track_index, slot: int) -> str:
+        """The surface's Plug-in Edit view of insert `slot` (1..) on a strip (index, or name for Aux / Stereo Out);
+        returns the plug-in's name as the view's header gives it."""
         self._need_mcu()
-        rep = ParamReport()
+        self.mcu_select(self._strip_index(track_index) if isinstance(track_index, str) else track_index)
+        self.mcu_view(M.PLUGIN)
+        row0, row1 = self._lcd()
+        if not re.search(r"Ins[1-7]Pl Ins[2-8]Pl", row0 + row1):
+            raise LogicError(f"the Mackie Control is not in the Plug-in Channel view (LCD: {row0!r} / {row1!r})")
+        self._press(M.VPOT_PUSH + (slot - 1), settle=0.8)       # open the plug-in's edit view (and its window)
+        row0, row1 = self._lcd()
+        if re.search(r"Ins[1-7]Pl Ins[2-8]Pl", row0 + row1):
+            raise LogicError(f"insert slot {slot} did not open an edit view (LCD: {row0!r} / {row1!r})")
+        self._value_mode()
+        return self._edit_view_plugin()
+
+    def _open_instrument_edit(self, track_index: int) -> None:
+        self._need_mcu()
         self.mcu_select(track_index)
         for _ in range(3):
             self._press(M.INSTRUMENT, settle=0.5)
@@ -1552,6 +1668,56 @@ class LogicBridge:
             if not names_view and not row0.startswith("Volume Pan"):
                 break
         self._value_mode()
+
+    def _read_edit_pages(self, max_pages: int = 40) -> dict[str, str]:
+        """Every parameter of the open edit view as {name on the LCD: displayed value}, page by page (eight per
+        page). Names are the surface's 7-character abbreviations; values are what the plug-in displays. Stops after
+        `max_pages` (a synth can have hundreds: Serum 2 has 328 pages)."""
+        self._name_mode()
+        for _ in range(60):                                    # back to the first page
+            self._stable_lcd(0.5, 2.0)
+            m = re.search(r"Page (\d+)/(\d+)", self._lcd()[0])
+            if m is None or m.group(1) == "1":
+                break
+            self._press(M.CURSOR_LEFT, 0.3)
+        out: dict[str, str] = {}
+        seen: set[tuple] = set()
+        for _ in range(max_pages):
+            names = self._names()
+            m = re.search(r"Page (\d+)/(\d+)", self._lcd()[0])
+            if tuple(names) in seen:
+                break
+            seen.add(tuple(names))
+            values = self._values()
+            for n, v in zip(names, values):
+                if n and n not in out:
+                    out[n] = v
+            if m is not None and m.group(1) == m.group(2):
+                break
+            self._name_mode()
+            self._press(M.CURSOR_RIGHT, 0.15)
+        return out
+
+    def read_plugin_params(self, track_index, slot: int, max_pages: int = 40) -> tuple[str, dict[str, str]]:
+        """(plug-in name, {parameter: displayed value}) of insert `slot` (1..) on a strip, read off the surface."""
+        plugin = self._open_plugin_edit(track_index, slot)
+        try:
+            return plugin, self._read_edit_pages(max_pages)
+        finally:
+            self.close_plugin_windows()
+
+    def read_instrument_params(self, track_index: int, max_pages: int = 40) -> dict[str, str]:
+        """{parameter: displayed value} of a track's software instrument, read off the surface."""
+        self._open_instrument_edit(track_index)
+        try:
+            return self._read_edit_pages(max_pages)
+        finally:
+            self.close_plugin_windows()
+
+    def set_instrument_params(self, track_index: int, params: dict, instrument: str = "") -> ParamReport:
+        """Set parameters of a track's software instrument by displayed value, in the Instrument Edit view."""
+        rep = ParamReport()
+        self._open_instrument_edit(track_index)
         for name, val in params.items():
             try:
                 try:

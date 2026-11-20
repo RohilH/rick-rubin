@@ -230,6 +230,9 @@ def _main(argv: list[str] | None = None) -> int:
     s.add_argument("--out", help="output WAV (default: samples/<source name>-<bpm>.wav in the project)")
     s.add_argument("--keep-open", action="store_true", help="leave the Logic project open")
 
+    from .logic import session as logic_session               # no Logic needed to describe the commands
+    logic_session.add_parser(sub)
+
     s = sub.add_parser("serum", help="Serum 2: find presets (list, search), read them (show, patch, params), hear them by measurement "
                                      "(render, describe, ab), design and save patches (set)")
     s.add_argument("action", choices=["list", "search", "index", "show", "params", "render", "view", "patch", "set", "describe", "ab", "tables", "shapes",
@@ -753,6 +756,8 @@ def _main(argv: list[str] | None = None) -> int:
               + (f", {r['flex_mode']}" if r['flex_mode'] else ""))
         print(f"{r['file']}  {r['length']:.1f} s (from {r['seconds']:.1f} s), {r['rms_db']:.1f} dB RMS, peak {r['peak_db']:.1f} dBFS")
         print(f"Logic project: {r['project']}")
+    elif a.cmd == "logic":
+        return logic_session.run(a, say=lambda m: print("·", m, file=sys.stderr))
     elif a.cmd == "status" and a.daw == "logic":
         from .logic import LogicBridge
         with LogicBridge(progress=lambda m: print("·", m, file=sys.stderr)) as b:

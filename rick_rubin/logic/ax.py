@@ -43,13 +43,69 @@ class AXError(RuntimeError):
     pass
 
 
+def _turn_run_loop() -> None:
+    """NSWorkspace only refreshes its list of running applications when a run loop turns, and a command-line
+    process has none: without this, an app launched after we started is never seen (a cold start of Logic
+    used to time out for that reason)."""
+    try:
+        from Foundation import NSDate, NSRunLoop
+        NSRunLoop.currentRunLoop().runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.02))
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def logic_pid() -> int | None:
     if not HAVE_AX:
         return None
+    _turn_run_loop()
     for a in NSWorkspace.sharedWorkspace().runningApplications():
         if a.bundleIdentifier() == BUNDLE_ID or a.localizedName() == APP_NAME:
             return a.processIdentifier()
     return None
+
+
+# ---- the person at the Mac: is the screen locked, are they typing, which app is in front
+def screen_locked() -> bool:
+    """With the screen locked, Logic's windows are gone from the accessibility tree and `open` does nothing."""
+    try:
+        import Quartz
+        d = Quartz.CGSessionCopyCurrentDictionary()
+        return bool(d and d.get("CGSSessionScreenIsLocked", 0))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def idle_seconds() -> float:
+    """Seconds since the keyboard or mouse was last used (hardware events only: keys the bridge posts to Logic
+    do not count)."""
+    try:
+        import Quartz
+        return float(Quartz.CGEventSourceSecondsSinceLastEventType(Quartz.kCGEventSourceStateHIDSystemState, Quartz.kCGAnyInputEventType))
+    except Exception:  # noqa: BLE001
+        return 1e9
+
+
+def frontmost_pid() -> int | None:
+    """The process that owns the front normal window (the window list is ordered front to back)."""
+    try:
+        import Quartz
+        opts = Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements
+        for w in Quartz.CGWindowListCopyWindowInfo(opts, Quartz.kCGNullWindowID) or []:
+            if w.get("kCGWindowLayer", 0) == 0:
+                return int(w.get("kCGWindowOwnerPID"))
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def activate(pid: int) -> bool:
+    """Bring an application to the front. No keystrokes are involved."""
+    try:
+        from AppKit import NSRunningApplication
+        app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+        return bool(app is not None and app.activateWithOptions_(2))     # NSApplicationActivateIgnoringOtherApps
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def attr(el, name: str):
