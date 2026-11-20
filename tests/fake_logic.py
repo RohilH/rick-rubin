@@ -121,9 +121,15 @@ class FakeLogicBridge:
         self._strip(ref).params.setdefault(0, {})["setting"] = Path(path).stem
         return Path(path).stem
 
-    def reset_strip(self, ref):
+    def remove_plugin(self, ref, slot):
         s = self._strip(ref)
-        s.inserts, s.instrument = [], None
+        if not 1 <= slot <= len(s.inserts):
+            raise LogicError(f"no plug-in in insert {slot}")
+        s.inserts.pop(slot - 1)
+        return list(s.inserts)
+
+    def clear_inserts(self, ref):
+        self._strip(ref).inserts = []
         return True
 
     def read_plugin_params(self, track_index, slot, max_pages=40):

@@ -1219,7 +1219,7 @@ class LogicBridge:
 
     def _own_popup_pick(self, button, text: str) -> bool:
         """Take an entry of one of Logic's own pop-ups (the New Tracks sheet's Instrument menu, a plug-in window's
-        Settings menu, a strip's Setting button: none of them in the accessibility tree). A press on `button` opens
+        Settings menu: neither is in the accessibility tree). A press on `button` opens
         it, the entry is found by typing the start of its name into Logic's process, return takes it. Returns False
         when the pop-up did not open. The caller checks what Logic shows afterwards. Checked on Logic 11.2.2 with
         the control surface paused."""
@@ -1283,18 +1283,15 @@ class LogicBridge:
             raise LogicError(f"the setting was not loaded: the plug-in window shows {shown!r}, not {path.stem!r}")
         return shown
 
-    def reset_strip(self, ref) -> bool:
-        """The strip's Setting button > Reset Channel Strip: an empty strip (no instrument, no inserts), for a track
-        whose Logic patch is not wanted. Only for strips of a project the bridge built. Returns whether it is empty."""
-        with self.pause_mcu():
-            strip = self.strip(ref)
-            btn = self.mixer().control(strip, "setting")
-            if btn is None:
-                return False
-            self.app.make_key(self.mixer().window())
-            self._own_popup_pick(btn, "Reset Channel Strip")
-            time.sleep(0.6)
-        self._mixer = None
+    def clear_inserts(self, ref) -> bool:
+        """Take every insert off a strip, last first (for a track whose Logic patch chain is not wanted: a patch
+        brings an EQ, a compressor, sometimes a delay). Only for strips of a project the bridge built. Returns
+        whether the strip is empty of inserts."""
+        for _ in range(8):
+            n = len(self.strip_info(ref).inserts)
+            if n == 0:
+                return True
+            self.remove_plugin(ref, min(n, 8))
         return not self.strip_info(ref).inserts
 
     def _menu_type_and_pick(self, button, text: str, down: int = 1) -> bool:
@@ -1421,6 +1418,49 @@ class LogicBridge:
             raise LogicError(f"{name!r} was preselected but Logic did not insert it")
         self.close_plugin_windows()
         return got[slot] if len(got) > slot else got[-1]
+
+    def remove_plugin(self, ref, slot: int) -> list[str]:
+        """Take the plug-in out of insert `slot` (1..8) of strip `ref`: in the surface's Plug-in Channel view the
+        slot's V-Pot is turned back to the '--' entry at the start of Logic's list and pressed. Returns the strip's
+        inserts afterwards."""
+        before = self.strip_info(ref).inserts
+        if not 1 <= slot <= min(8, len(before)):
+            raise LogicError(f"no plug-in in insert {slot} of {self.strip_info(ref).name!r} (inserts: {before})")
+        self.close_plugin_windows()
+        self.mcu_select(self._strip_index(ref))
+        self.mcu_view(M.PLUGIN)
+        row0, row1 = self._lcd()
+        if not re.search(r"Ins[1-7]Pl Ins[2-8]Pl", row0 + row1):
+            raise LogicError(f"the surface is not in the Plug-in Channel view (LCD {row0!r} / {row1!r})")
+        u = self._need_mcu()
+        col = slot - 1
+
+        def read():
+            self._stable_lcd(0.2, 1.0)
+            return self._presel_text(u.state.line(1), col)
+        cur = read()
+        for _ in range(6):                                    # the list does not wrap: fast back, then check
+            if cur.startswith("--"):
+                break
+            self._tick(col, -60, spacing=0.03)
+            u.settle(0.15, 1.0)
+            cur = read()
+        for _ in range(40):
+            if cur.startswith("--"):
+                break
+            nxt = self._step_until_change(col, -1, read)
+            if nxt == cur:
+                break
+            cur = nxt
+        if not cur.startswith("--"):
+            raise LogicError(f"the plug-in list did not reach its empty entry (shows {cur!r}); nothing was removed")
+        self._press(M.VPOT_PUSH + col, settle=0.8)
+        time.sleep(0.4)
+        self.close_plugin_windows()
+        after = AX.wait_for(lambda: (lambda cur_: cur_ if len(cur_) < len(before) else None)(self.strip_info(ref).inserts), 5.0, 0.25)
+        if after is None:
+            raise LogicError(f"Logic did not take the plug-in out of insert {slot} (inserts: {self.strip_info(ref).inserts})")
+        return after
 
     def load_instrument(self, ref, name: str, index: int | None = None) -> str:
         """Put software instrument `name` ("Retro Synth", "Alchemy", "Serum 2"...) in the instrument slot of track
@@ -2039,6 +2079,7 @@ class LogicBridge:
             out_path.unlink()
         self.stop()
         self.focus()
+        trim: tuple[int, int] | None = None                  # (bars to skip, bars to keep) of the bounced file
         if not self.app.menu("File", "Bounce", "Project or Section…"):
             raise LogicError("File > Bounce is not available")
         dlg = AX.wait_for(lambda: next((d for d in self.app.dialogs() if AX.title(d).startswith("Bounce")), None), 8.0)
@@ -2072,8 +2113,23 @@ class LogicBridge:
                 project_end = AX.disp_number(AX.desc(groups[1]).split("\t")[1]) or end_bar + 1
                 if end_bar + 1 > project_end:
                     self.say(f"the project ends at bar {project_end:g}: bouncing to there, not to bar {end_bar + 1}")
-                self._set_position_group(groups[0], start_bar)
-                self._set_position_group(groups[1], int(min(end_bar + 1, project_end)))
+                want_end = int(min(end_bar + 1, project_end))
+                try:
+                    self._set_position_group(groups[0], start_bar)
+                    self._set_position_group(groups[1], want_end)
+                except LogicError as e:
+                    if "steps by" not in str(e):
+                        raise
+                    # this Logic's position fields move ten bars at a time, so the bars asked for cannot be dialled in:
+                    # bounce the range the dialog holds and cut them out of the file afterwards
+                    got0 = AX.disp_number(AX.desc(groups[0]).split("\t")[1])
+                    got1 = AX.disp_number(AX.desc(groups[1]).split("\t")[1])
+                    if got0 is None or got1 is None or got0 > start_bar or got1 < want_end:
+                        raise LogicError(f"the bounce dialog holds bars {got0:g}-{got1:g}, which does not cover bars {start_bar}-{want_end - 1} "
+                                         "(a cycle or a selection narrows it: clear it in Logic and run it again)") from e
+                    trim = (start_bar - int(got0), want_end - start_bar)
+                    self.say(f"bouncing bars {got0:g}-{got1 - 1:g} and cutting bars {start_bar}-{want_end - 1} out of it "
+                             "(the dialog's positions move ten bars at a time)")
             AX.press(AX.find(dlg, lambda e: AX.role(e) == "AXButton" and AX.title(e) == "OK", 2))
         except Exception:
             AX.press(AX.find(dlg, lambda e: AX.role(e) == "AXButton" and AX.title(e) == "Cancel", 2))
@@ -2121,7 +2177,22 @@ class LogicBridge:
             raise LogicError(f"the bounce did not produce {out_path} (pending: {self.pending_alert()})")
         if got != out_path:
             got.rename(out_path)
+        if trim is not None:
+            self._trim_bars(out_path, *trim)
         return out_path
+
+    def _trim_bars(self, path: Path, skip_bars: int, keep_bars: int) -> None:
+        """Keep `keep_bars` bars of a bounce after its first `skip_bars`, at the project's tempo and time signature."""
+        from ..samples import read_audio, write_wav24
+        bpm = self.tempo() or 120.0
+        sig = self.control_text("Time Signature") or "4/4"
+        m = re.match(r"(\d+)\s*/\s*(\d+)", sig)
+        beats = int(m.group(1)) * 4.0 / int(m.group(2)) if m else 4.0
+        sr, x = read_audio(path)
+        bar = beats * 60.0 / bpm * sr
+        a = int(round(skip_bars * bar))
+        b = min(len(x), int(round((skip_bars + keep_bars) * bar)))
+        write_wav24(path, sr, x[a:b])
 
     @staticmethod
     def _set_position_group(group, bar: int) -> None:

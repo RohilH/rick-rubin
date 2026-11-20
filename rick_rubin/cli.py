@@ -608,7 +608,11 @@ def _main(argv: list[str] | None = None) -> int:
         from .pitch import table
         p = Project(a.dir)
         out = Path(a.out) if a.out else p.root / "samples" / "raw" / f"ref_{a.part}.wav"
-        r = isolate(a.source, out, a.part, a.bars, a.bpm, a.start_s, a.end_s, a.method, a.stem)
+        src = Path(a.source).expanduser()
+        if not src.is_absolute() and not src.exists():
+            src = p.root / src                              # a path inside the project, like every other command takes
+        stem = (p.root / a.stem if a.stem and not Path(a.stem).exists() else a.stem) if a.stem else None
+        r = isolate(src, out, a.part, a.bars, a.bpm, a.start_s, a.end_s, a.method, stem)
         print(f"{r['path']}: {a.part}, {r['start_s']:.2f}-{r['end_s']:.2f} s of {Path(a.source).name}" + (f" at {r['bpm']:.1f} BPM" if r["bpm"] else "")
               + f", by {r['method']}")
         if r["warning"]:

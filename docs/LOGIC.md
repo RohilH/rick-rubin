@@ -70,8 +70,8 @@ there. So the bridge takes a `front` argument:
 
 `RICK_RUBIN_FRONT_WAIT=<seconds>` changes how long a step waits for a pause (default 30).
 
-Three of Logic's own pop-ups are not in the accessibility tree (the New Tracks sheet's Instrument menu, a plug-in
-window's Settings menu, a strip's Setting button). They are driven the same way (`_own_popup_pick`): a press
+Two of Logic's own pop-ups are not in the accessibility tree and are needed (the New Tracks sheet's Instrument
+menu, a plug-in window's Settings menu). They are driven the same way (`_own_popup_pick`): a press
 opens the pop-up, the entry is found by typing the start of its name, return takes it, and what Logic shows
 afterwards is checked. This is done with the control surface paused.
 
@@ -131,7 +131,7 @@ calls on it, mirroring `live/client.py`.
 | `key` | the project's key signature (a mode shows as its relative major) |
 | `effects` | Logic plug-ins by name in the insert slots, in order, after the patch's own inserts; `params` set by displayed value |
 | `serum="<preset>"` | the part rendered through Serum 2 offline (at the song's tempo, section filter/volume baked in), imported at bar 1 onto an audio track named after the track; its effects, sends and mixer as for any track |
-| `serum="<preset>"` with `push --serum-live` | a MIDI track: the role patch cleared (the strip's Setting > Reset Channel Strip), Serum 2 in the instrument slot, the patch loaded from `<project>/logic/presets/<track>.aupreset` through the plug-in window's Settings > Load… (`serum.write_aupreset`: the Audio Unit wraps the VST3's processor and controller state, and renders the same audio, r = 1.000) |
+| `serum="<preset>"` with `push --serum-live` | a MIDI track: the role patch's inserts taken off one by one (each slot's V-Pot turned back to the list's empty entry and pressed), Serum 2 in the instrument slot, the patch loaded from `<project>/logic/presets/<track>.aupreset` through the plug-in window's Settings > Load… (`serum.write_aupreset`: the Audio Unit wraps the VST3's processor and controller state, and renders the same audio, r = 1.000) |
 | `sidechain: true` | a Compressor keyed from the Kick (side chain input = the Kick's channel strip) |
 | `sidechain: "kickstart"` | Kickstart 2 on the track (no routing: a tempo-locked volume shape), its Loop Length from the kick pattern: 0.00 every beat, 0.33 every 2 beats, 1.00 every bar (measured on bounces at 126 BPM), Mix 1.0 (≈ 47 dB deep) |
 | `effects=[{"device": "Trackspacer 2.5", "sidechain": "Vocal", ...}]` | Trackspacer on the track, its side chain input = the named track's strip; it carves that track's spectrum out of this one |
@@ -193,6 +193,11 @@ The project is saved and left open, so the split can be auditioned in Logic (`--
 command again into the same folder replaces its project and stems. Other open projects are left alone; one with the
 same name in another folder stops the command (the bridge finds project windows by name), rather than being closed. The
 recording's copy next to the project is the project's source file — keep it with the project.
+
+A bar range (`--bars 33-40`) is dialled into the bounce dialog when its position fields allow it. On Logic 11.2.2
+they move ten bars at a time, so the bounce is made over the range the dialog holds (the project, unless a cycle
+or selection narrows it) and the bars are cut out of the file afterwards at the project's tempo and time
+signature. A range the dialog does not cover is an error that says what to clear.
 
 ## What differs from Live, and what is missing
 

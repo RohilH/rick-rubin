@@ -128,10 +128,16 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
                 src = base / t.serum if (base / t.serum).is_file() else find_preset(t.serum)
                 au = write_aupreset(src, out_dir / "presets" / f"{safe_name(t.name)}.aupreset", t.serum_params or None)
                 say(f"Serum 2 on {t.name} ({Path(t.serum).stem})")
-                if bridge.reset_strip(strip):
+                try:
+                    cleared = bridge.clear_inserts(strip)
+                except LogicError as err:
+                    cleared = False
+                    rep.warnings.append(f"{t.name}: {err}")
+                if cleared:
                     info.pop("patch_fx", None)
                 else:
-                    rep.warnings.append(f"{t.name}: the role's Logic patch could not be cleared; its inserts stay in front of your effects")
+                    info["patch_fx"] = list(bridge.strip_info(strip).inserts)
+                    rep.warnings.append(f"{t.name}: the role patch's inserts could not all be taken off; they stay in front of your effects")
                 strip = strip_of(t.name)
                 bridge.load_instrument(strip, "Serum 2")
                 strip = strip_of(t.name)
@@ -231,7 +237,13 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
                 names = bridge.tracks()
             for t in rendered:
                 if t.name in index and names[index[t.name]] != t.name:
-                    rep.warnings.append(f"{t.name}: Logic shows the track as {names[index[t.name]]!r}")
+                    # a file Logic converted to the project's rate is renamed ('Hats-48k'), and the track after it
+                    try:
+                        got = bridge.rename_track(index[t.name], t.name)
+                    except LogicError:
+                        got = bridge.tracks()[index[t.name]]
+                    if got != t.name:
+                        rep.warnings.append(f"{t.name}: Logic shows the track as {got!r}")
     # audio-loop tracks: an audio track appended after the MIDI tracks, each loop segment imported at its bar
     audio_tracks = [t for t in song.tracks if t.audio]
     for t in audio_tracks:

@@ -310,6 +310,15 @@ class Session:
         rep = self.b.set_plugin_params(target, slot, params)
         return self._done(Change("params", f"{info.name} / {shown}", dict(params), dict(rep.set), not rep.errors, "; ".join(rep.errors)))
 
+    def remove(self, ref: str, plugin: str, nth: int = 0) -> Change:
+        """Take a plug-in off a strip. Only when the person asked for exactly that: its settings go with it."""
+        target, info = self.resolve(ref)
+        slot, shown = self._slot(info, plugin, nth)
+        self._begin()
+        self._single(target)
+        after = self.b.remove_plugin(target, slot)
+        return self._done(Change("remove plug-in", f"{info.name} / {shown}", list(info.inserts), list(after), len(after) == len(info.inserts) - 1))
+
     def instrument_params(self, ref: str, params: dict) -> Change:
         target, info = self.resolve(ref)
         if not isinstance(target, int):
@@ -613,6 +622,7 @@ ACTIONS = {
     "set": "TRACK volume=-6 pan=-20 mute=on solo=off — fader (dB), pan (-64..63), mute, solo",
     "insert": "TRACK PLUGIN [KEY=VALUE ...] [--sidechain TRACK] — a plug-in in the first free slot",
     "tweak": "TRACK PLUGIN KEY=VALUE ... — parameters of a plug-in already on the strip",
+    "remove": "TRACK PLUGIN — take a plug-in off the strip (its settings go with it: only when asked for)",
     "sidechain": "TRACK PLUGIN SOURCE — the plug-in's side chain input",
     "send": "TRACK BUS DB|off — a send to a bus",
     "instrument": "TRACK NAME [KEY=VALUE ...] — load an instrument, Audio Unit or Library patch on a track",
@@ -627,7 +637,7 @@ ACTIONS = {
     "devices": "PLUGIN ... [--refresh] — a plug-in's parameters, read in a scratch project and remembered",
 }
 READ_ONLY = {"inspect"}
-NEEDS_SURFACE = {"params", "insert", "tweak", "sidechain", "send", "instrument", "add-instrument", "add-serum", "devices"}
+NEEDS_SURFACE = {"params", "insert", "tweak", "remove", "sidechain", "send", "instrument", "add-instrument", "add-serum", "devices"}
 
 
 def add_parser(sub) -> None:
@@ -708,6 +718,9 @@ def run(a, say=None) -> int:
             elif act == "tweak":
                 need(3, "TRACK PLUGIN KEY=VALUE ...")
                 changes = [s.tweak(args[0], args[1], parse_settings(args[2:]), a.nth - 1)]
+            elif act == "remove":
+                need(2, "TRACK PLUGIN")
+                changes = [s.remove(args[0], args[1], a.nth - 1)]
             elif act == "sidechain":
                 need(3, "TRACK PLUGIN SOURCE")
                 changes = [s.side_chain(args[0], args[1], args[2], a.nth - 1)]

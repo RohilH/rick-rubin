@@ -103,7 +103,11 @@ def serum_audition(preset: str, project_dir: str | Path, notes: list[str] | None
             files.append(Path(serum_png(str(path), out_dir / f"{label}.png", seq[0][0], settings or None)))
         except Exception as e:  # noqa: BLE001 — the picture is extra; the audio is the point
             files.append(Path(f"(no picture: {e})"))
-    row = describe_sound(44100, audio, label, None, bpm)
+    # the numbers are of the first note alone: the measures are made for one note, and a phrase would read as pitch drift
+    a = int(max(0.0, seq[0][1]) * 44100)
+    nxt = min((n[1] for n in seq[1:] if n[1] > seq[0][1]), default=None)
+    b = int((nxt if nxt is not None else seq[0][1] + seq[0][2] + 1.0) * 44100)
+    row = describe_sound(44100, audio[a:b], f"{label} (first note)", min(seq[0][2], (b - a) / 44100), bpm)
     table = describe_table([row])
     log = out_dir / "log.md"
     if not log.exists():

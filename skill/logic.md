@@ -69,9 +69,12 @@ reach hidden folders).
 Logic's plug-in list on the surface (the order is remembered, so the second time is quicker). A bounce of a few
 bars is about 15 s.
 
-**Limits today.** `bounce --bars` can only shorten what Logic's bounce dialog offers (the cycle or selection when
-there is one, else the project): for an exact range with a selection active, clear the selection in Logic first.
-Imported audio lands on the bar line. There is no command to move, cut or delete regions, to write automation, or
+**Taking things away.** `rick-rubin logic remove TRACK PLUGIN` takes a plug-in off a strip, and its settings go
+with it. Use it only when Rohil asked for exactly that; to try a sound without a plug-in, bypass is his to press.
+
+**Limits today.** A bounce of a bar range is cut out of a bounce of what Logic's dialog offers (its position
+fields move ten bars at a time): that is the whole project, unless a cycle or a selection narrows it, in which
+case the command says so and asks for it to be cleared. Imported audio lands on the bar line. There is no command to move, cut or delete regions, to write automation, or
 to edit notes inside an existing region: say so and describe the manual steps instead of approximating.
 
 ## A song.py into a new Logic project: `push` and `capture`

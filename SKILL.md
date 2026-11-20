@@ -57,6 +57,7 @@ rick-rubin logic set TRACK volume=-6 pan=-20 mute=on     # fader dB, pan -64..63
 rick-rubin logic insert TRACK PLUGIN [KEY=VALUE ...] [--sidechain TRACK]
 rick-rubin logic tweak TRACK PLUGIN KEY=VALUE ...        # a plug-in already on the strip
 rick-rubin logic sidechain TRACK PLUGIN SOURCE
+rick-rubin logic remove TRACK PLUGIN                     # only when he asked for it: the plug-in's settings go too
 rick-rubin logic send TRACK BUS DB|off
 rick-rubin logic instrument TRACK NAME [KEY=VALUE ...]   # an instrument, Audio Unit or Library patch
 rick-rubin logic add-instrument NAME [--name TRACK]      # a new software-instrument track

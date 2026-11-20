@@ -290,3 +290,11 @@ def test_a_serum_patch_goes_onto_a_track_that_holds_serum(fake, tmp_path, monkey
         fake._strips[1].instrument = "Serum 2 FX"
         with pytest.raises(LogicError, match="not Serum 2"):
             s.serum("Bass", "serum/presets/round.SerumPreset", project_dir=tmp_path / "proj")
+
+
+def test_a_plug_in_is_taken_off_only_by_name(fake):
+    with S.Session(fake) as s:
+        c = s.remove("Bass", "Compressor", nth=1)
+        assert c.ok and c.before == ["Channel EQ", "Compressor", "Compressor"] and c.after == ["Channel EQ", "Compressor"]
+        with pytest.raises(LogicError, match="has no 'Limiter'"):
+            s.remove("Bass", "Limiter")
