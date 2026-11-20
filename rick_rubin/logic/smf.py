@@ -110,6 +110,8 @@ def export_logic_midi(song: Song, path: str | Path) -> dict:
     for m in markers:
         cond.append((int(round(m.start * PPQ)), 3, _meta(0x06, m.name.encode("utf-8"))))
     chunks = [_chunk(cond)]                               # no channel events: Logic makes no track for it
+    track_events: list[tuple[int, list[tuple[int, int, bytes]]]] = []      # (channel, events) per track
+    last_off = 0
     non_drum = 0
     for t in song.tracks:
         ch = channel_for(t, non_drum)
@@ -132,14 +134,22 @@ def export_logic_midi(song: Song, path: str | Path) -> dict:
                     off = max(on + 1, int(round((c.start + n.start + n.dur) * PPQ)))
                     ev.append((on, 3, bytes([0x90 | ch, pitch & 0x7F, max(1, min(127, int(n.vel)))])))
                     ev.append((off, 2, bytes([0x80 | ch, pitch & 0x7F, 0])))
+                    last_off = max(last_off, off)
                     n_notes += 1
         if n_notes == 0:
             # Logic drops an MTrk without note events; a velocity-1 note before the first downbeat keeps the
             # track (and the track order), and the bridge mutes nothing because it is inaudible at velocity 1
             ev.append((0, 3, bytes([0x90 | ch, 0, 1])))
             ev.append((1, 2, bytes([0x80 | ch, 0, 0])))
-        chunks.append(_chunk(ev))
+        track_events.append((ch, ev))
         out_tracks.append({"name": t.name, "channel": ch + 1, "program": prog, "notes": n_notes})
+    # Logic ends the project after the last note and will not move the playhead past it, so audio could not be
+    # placed later in the song: an inaudible note on the last beat makes the project as long as the song
+    end = round(song.total_bars * 4 * PPQ)
+    if track_events and last_off < end - PPQ:
+        ch, ev = track_events[0]
+        ev += [(end - PPQ, 3, bytes([0x90 | ch, 0, 1])), (end - PPQ + 1, 2, bytes([0x80 | ch, 0, 0]))]
+    chunks += [_chunk(ev) for _, ev in track_events]
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"MThd" + struct.pack(">IHHH", 6, 1, len(chunks), PPQ) + b"".join(chunks))
