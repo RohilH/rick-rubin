@@ -70,6 +70,29 @@ DRUM_PROGRAM = 0                      # on channel 10 Logic 11.2 answers this wi
                                       # instrument track; the electronic programs (16, 24, 25) give single Drum Machine Designer pads
 
 
+def as_audio(track: Track, serum_live: bool = False) -> bool:
+    """Does this track reach Logic as audio (loops, a Serum part, a sample part rendered offline) rather than as MIDI?
+    With `serum_live` a Serum track stays MIDI: Serum 2 itself goes on the track with the patch loaded."""
+    return bool(track.audio or track.sample or (track.serum and not serum_live))
+
+
+_MODE_STEP = {"major": 0, "dorian": 2, "phrygian": 4, "lydian": 5, "mixolydian": 7, "minor": 9, "locrian": 11}
+_SHARPS = {0: 0, 7: 1, 2: 2, 9: 3, 4: 4, 11: 5, 6: 6, 1: -5, 8: -4, 3: -3, 10: -2, 5: -1}
+
+
+def key_signature(key) -> tuple[int, int] | None:
+    """(sharps as a signed count, 0 major | 1 minor) for the SMF key signature, so Logic's project key is the
+    song's. A mode gets the signature of its relative major (D dorian: no sharps), minor keys their own."""
+    from ..theory import SCALES, Key
+    try:
+        k = key if isinstance(key, Key) else Key.parse(str(key))
+    except ValueError:
+        return None
+    if k.scale == "minor" or (k.scale not in _MODE_STEP and 3 in SCALES.get(k.scale, [])):
+        return _SHARPS[(k.root + 3) % 12], 1
+    return _SHARPS[(k.root - _MODE_STEP.get(k.scale, 0)) % 12], 0
+
+
 def program_for(track: Track) -> int | None:
     if track.is_drum:
         return DRUM_PROGRAM
@@ -95,11 +118,14 @@ def drum_pitch(track: Track) -> int:
     return DRUM_MAP.get(track.role, 60)
 
 
-def export_logic_midi(song: Song, path: str | Path) -> dict:
+def export_logic_midi(song: Song, path: str | Path, serum_live: bool = False) -> dict:
     """Write `song` as the SMF Logic opens as a project. Returns {"path", "tracks": [{name, channel, program,
     notes}], "markers": n}. Audio-loop tracks and Serum tracks get an (empty) MIDI track too, so that Logic's
     track order equals the song's; their audio is placed by the bridge afterwards."""
     clips, markers = song.flatten()
+    # tracks with MIDI effects get the notes that sound (a Chord's added voices, a Pitch shift, Note Length,
+    # Velocity): Logic's MIDI plug-ins are not set from here, so the effect is written into the region
+    sounding = song.flatten(sounding=True)[0] if any(t.midi_effects for t in song.tracks) else clips
     out_tracks = []
     mpqn = int(round(60_000_000 / song.bpm))
     cond: list[tuple[int, int, bytes]] = [
@@ -107,6 +133,9 @@ def export_logic_midi(song: Song, path: str | Path) -> dict:
         (0, 1, _meta(0x51, mpqn.to_bytes(3, "big"))),
         (0, 2, _meta(0x58, bytes([4, 2, 24, 8]))),
     ]
+    ks = key_signature(song.key)
+    if ks is not None:
+        cond.append((0, 2, _meta(0x59, bytes([ks[0] & 0xFF, ks[1]]))))
     for m in markers:
         cond.append((int(round(m.start * PPQ)), 3, _meta(0x06, m.name.encode("utf-8"))))
     chunks = [_chunk(cond)]                               # no channel events: Logic makes no track for it
@@ -119,13 +148,14 @@ def export_logic_midi(song: Song, path: str | Path) -> dict:
             non_drum += 1
         prog = program_for(t)
         ev: list[tuple[int, int, bytes]] = [(0, 0, _meta(0x03, t.name.encode("utf-8")))]
-        if prog is not None and not (t.audio or t.serum):
+        if prog is not None and not as_audio(t, serum_live):
             ev.append((0, 1, bytes([0xC0 | ch, prog & 0x7F])))
-        ev.append((0, 1, bytes([0xB0 | ch, 7, cc7_for_db(t.volume_db)])))
-        ev.append((0, 1, bytes([0xB0 | ch, 10, max(0, min(127, int(round(64 + t.pan * 63))))])))
+        # No CC7 / CC10 here. Logic chases a region's volume and pan controllers every time playback starts and moves
+        # the fader to them, so the exact dB the bridge sets afterwards was overwritten by this first guess at the next
+        # play or bounce (measured: -14 dB written came back as -21 dB, -12 as -16). The bridge alone sets the mixer.
         n_notes = 0
-        if not (t.audio or t.serum):
-            for c in clips:
+        if not as_audio(t, serum_live):
+            for c in (sounding if t.midi_effects else clips):
                 if c.track != t.name:
                     continue
                 for n in c.notes:

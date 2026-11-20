@@ -258,3 +258,23 @@ def test_live_lock_is_exclusive_and_reentrant(tmp_path, monkeypatch):
     lock_path().write_text("999999999 a dead run")
     with live_lock("d"):
         pass
+
+
+def test_a_song_can_declare_which_genre_checks_apply():
+    from rick_rubin import Song
+    from rick_rubin.analysis import lint
+    s = Song("Slow", bpm=92, key="A minor")
+    kick = s.add_track("Kick", "kick")
+    bass = s.add_track("Bass", "bass")
+    k = s.pattern("k", kick, "x.......x.......")
+    b = s.pattern("b", bass, ["1.1 A0 1"])
+    s.arrange(s.add_section("verse", 8, kind="main", energy=5, parts={kick: k, bass: b}))
+    rules = {i.rule for i in lint(s)}
+    assert {"H1-tempo", "H3-dj-friendly", "H8-energy"} <= rules           # judged as club house by default
+    s.meta["lint"] = {"tempo": [85, 100], "off": ["H3", "H8-energy"], "why": "a hip-hop beat"}
+    issues = lint(s)
+    rules = {i.rule for i in issues}
+    assert not rules & {"H1-tempo", "H3-dj-friendly", "H8-energy"}
+    assert any(i.rule == "L0-profile" and "a hip-hop beat" in i.message for i in issues)   # what was switched off is said
+    s.meta["lint"] = {"tempo": [100, 110]}
+    assert any(i.rule == "H1-tempo" and "100-110" in i.message for i in lint(s))

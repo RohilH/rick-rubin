@@ -34,8 +34,11 @@ def _post(pid: int, code: int, down: bool, flags: int = 0) -> None:
 
 def key(pid: int, name: str, *mods: str, delay: float = 0.02) -> None:
     """One key press, e.g. key(pid, "g", "cmd", "shift")."""
-    code = KEYCODES[name.lower()] if len(name) > 1 or name.lower() in KEYCODES else None
     flags = 0
+    if len(name) == 1 and name.isalpha() and name.isupper() and name.lower() in KEYCODES:
+        code, flags = KEYCODES[name.lower()], MODS["shift"]      # a capital letter is its key with shift
+    else:
+        code = KEYCODES[name.lower()] if len(name) > 1 or name.lower() in KEYCODES else None
     if code is None:
         if name in SHIFTED:
             code, flags = KEYCODES[SHIFTED[name]], MODS["shift"]

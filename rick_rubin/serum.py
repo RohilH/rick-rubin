@@ -505,6 +505,43 @@ def write_vstpreset(preset: str | Path, dst: str | Path, params: dict | None = N
     return Path(dst)
 
 
+AU_PATH = Path("/Library/Audio/Plug-Ins/Components/Serum2.component")
+_AU = None
+
+
+def _audio_unit():
+    """Serum 2's Audio Unit, hosted once: only used to turn a patch into the state Logic loads."""
+    global _AU
+    if _AU is None:
+        import pedalboard
+        if not AU_PATH.exists():
+            raise FileNotFoundError(f"Serum 2 Audio Unit not found at {AU_PATH}")
+        _AU = pedalboard.load_plugin(str(AU_PATH), plugin_name="Serum 2")
+    return _AU
+
+
+def write_aupreset(preset, dst: str | Path, params: dict | None = None, root: str | Path | None = None) -> Path:
+    """An Audio Unit preset (.aupreset) carrying this Serum preset or Patch, for hosts that load those — Logic's
+    plug-in window header: Settings > Load…. The Audio Unit wraps the same processor and controller state as the
+    VST3, so the patch is loaded into the hosted VST3, its two state blobs are handed to the hosted Audio Unit, and
+    the file is the state the Audio Unit then reports (checked: the Audio Unit renders the same audio as the VST3,
+    r = 1.000). Tempo-synced LFOs and delays stay synced: the DAW gives Serum its tempo."""
+    import plistlib
+    host = SerumHost.get()
+    load_with_params(host, preset, params, root, None)
+    comp, cont = split_state(bytes(host.plugin.raw_state))
+    au = _audio_unit()
+    state = plistlib.loads(bytes(au.raw_state))
+    state["Processor State"], state["Controller State"] = comp, cont
+    au.raw_state = plistlib.dumps(state, fmt=plistlib.FMT_BINARY)
+    out = plistlib.loads(bytes(au.raw_state))
+    dst = Path(dst)
+    out["name"] = dst.stem
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_bytes(plistlib.dumps(out, fmt=plistlib.FMT_XML))
+    return dst
+
+
 def track_stem(song, track, clips) -> Path:
     """The whole song's worth of one Serum track, rendered through the plug-in: every note of the
     track's clips, the preset named in `track.serum`, parameters from `track.serum_params`. The file

@@ -42,6 +42,16 @@ class _App:
     def main_window(self, title=None):
         return title if title in self.fake.projects else None
 
+    # ---- what a session reads besides the strips
+    def selected_tracks(self, w=None):
+        return [self.fake.selected] if self.fake.selected is not None else []
+
+    def mixer_window(self, project=None):
+        return "mixer"
+
+    def project_path(self, w=None):
+        return self.fake.path
+
 
 class FakeLogicBridge:
     PLUGINS = {"compressor", "channel eq", "autofilter", "limiter", "chromaverb", "tape delay", "stereo delay", "space designer", "adaptive limiter",
@@ -60,6 +70,82 @@ class FakeLogicBridge:
         self.playhead = (1, 1)
         self.app = _App(self)
         self.n = 0
+        self.selected: int | None = None
+        self.selections: list[int] = []      # every select_track call, in order
+        self.path: Path | None = None        # the saved .logicx package, when there is one
+        self.alert: tuple[str, list[str]] | None = None
+        self.said: list[str] = []
+        self.imports: list[tuple[int, Path, int, int]] = []
+        self.midi_imports: list[tuple[Path, int]] = []
+        self.fader_stop: float | None = None  # a fader that will not go below this (a readback that differs)
+        self.transposed: dict[str, int] = {"Bass": 12}   # Logic puts +12 on the region of a bass program
+
+    def say(self, m):
+        self.said.append(m)
+
+    @property
+    def main(self):
+        return self.project
+
+    def pending_alert(self):
+        return self.alert
+
+    def tempo(self):
+        return 124.0
+
+    def control_text(self, name):
+        return {"Key Signature": "Amin", "Time Signature": "4/4"}.get(name)
+
+    def close_plugin_windows(self):
+        pass
+
+    def rename_track(self, track_index, name):
+        self._strips[track_index].name = name
+        return name
+
+    def add_instrument_track(self):
+        n = len(self.tracks())
+        self._strips.insert(n, FakeStrip(f"Inst {n + 1}"))
+        return n
+
+    def import_midi(self, path, bar=1):
+        if not Path(path).exists():
+            raise LogicError(f"{path} does not exist")
+        self.midi_imports.append((Path(path), bar))
+        n = len(self.tracks())
+        self._strips.insert(n, FakeStrip(f"Inst {n + 1}", region=Path(path).stem))
+        return [n]
+
+    def region_transpose(self, track_index):
+        return self.transposed.get(self._strip(track_index).name, 0)
+
+    def set_transpose(self, track_index, semitones):
+        self.transposed[self._strip(track_index).name] = semitones
+        return semitones
+
+    def load_setting(self, ref, path, plugin="instrument", nth=0):
+        if not Path(path).exists():
+            raise LogicError(f"{path} does not exist")
+        self._strip(ref).params.setdefault(0, {})["setting"] = Path(path).stem
+        return Path(path).stem
+
+    def remove_plugin(self, ref, slot):
+        s = self._strip(ref)
+        if not 1 <= slot <= len(s.inserts):
+            raise LogicError(f"no plug-in in insert {slot}")
+        s.inserts.pop(slot - 1)
+        return list(s.inserts)
+
+    def clear_inserts(self, ref):
+        self._strip(ref).inserts = []
+        return True
+
+    def read_plugin_params(self, track_index, slot, max_pages=40):
+        s = self._strip(track_index)
+        return s.inserts[slot - 1], dict(s.params.get(slot, {"Thrshld": "-20.0 dB", "Ratio": "2.0:1"}))
+
+    def read_instrument_params(self, track_index, max_pages=40):
+        return dict(self._strip(track_index).params.get(0, {"Cutoff": "50 %"}))
 
     # ---- lifecycle / projects
     def ping(self):
@@ -76,7 +162,7 @@ class FakeLogicBridge:
         n_tracks = max(t for t, *_ in notes) if notes else 0
         names = self._smf_names(path)
         self._strips = [FakeStrip(f"Patch {i}", region=names[i] if i < len(names) else "") for i in range(n_tracks)]
-        self.imports: list[tuple[int, Path, int, int]] = []
+        self.imports = []
         self.deleted: list[str] = []
         return title
 
@@ -131,7 +217,7 @@ class FakeLogicBridge:
         self._strips.insert(n, FakeStrip(f"Audio {n + 1}", instrument=None))
         return n
 
-    def import_audio(self, track_index, path, bar, beat=1):
+    def import_audio(self, track_index, path, bar, beat=1, keep_file_rate=False, **_k):
         if not Path(path).exists():
             raise LogicError(f"{path} does not exist")
         self.imports.append((track_index, Path(path), bar, beat))
@@ -140,6 +226,7 @@ class FakeLogicBridge:
 
     def select_track(self, index):
         self.selected = index
+        self.selections.append(index)
 
     # ---- strips
     def _strip(self, ref) -> FakeStrip:
@@ -163,6 +250,8 @@ class FakeLogicBridge:
         return s.info(self._strips.index(s))
 
     def set_volume(self, ref, db):
+        if self.fader_stop is not None:
+            db = max(db, self.fader_stop)
         self._strip(ref).volume = round(db, 1)
         return f"{round(db, 1):.1f} dB"
 

@@ -51,9 +51,10 @@ def _cut(x: np.ndarray, sr: int, start_s: float, end_s: float | None) -> np.ndar
 
 
 def _demucs(src: Path, stem: str, workdir: Path) -> Path:
-    cmd = [sys.executable, "-m", "demucs.separate", "-n", "htdemucs", "-o", str(workdir), str(src)]
+    cmd = [sys.executable, "-m", "demucs.separate", "-n", "htdemucs", "-o", str(workdir)]
     if stem != "drums":
-        cmd[4:4] = [f"--two-stems={stem}"]
+        cmd.append(f"--two-stems={stem}")
+    cmd.append(str(src))
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         raise RuntimeError(f"demucs failed: {(r.stderr or r.stdout).strip()[-400:]}")
@@ -61,6 +62,24 @@ def _demucs(src: Path, stem: str, workdir: Path) -> Path:
     if not hits:
         raise RuntimeError(f"demucs wrote no {stem}.wav under {workdir}")
     return hits[0]
+
+
+def _read_any(path: str | Path):
+    """A recording in any format: WAV directly, anything else (mp3, m4a, aiff, flac) decoded by ffmpeg first."""
+    path = Path(path).expanduser()
+    if not path.exists():
+        raise FileNotFoundError(f"{path} does not exist")
+    if path.suffix.lower() in (".wav", ".wave"):
+        return read_audio(path)
+    import shutil
+    if not shutil.which("ffmpeg"):
+        raise RuntimeError(f"ffmpeg is needed to read {path.suffix} files (brew install ffmpeg), or give a WAV")
+    with tempfile.TemporaryDirectory() as td:
+        wav = Path(td) / "in.wav"
+        r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(path), "-c:a", "pcm_s24le", str(wav)], capture_output=True, text=True)
+        if r.returncode != 0:
+            raise RuntimeError(f"ffmpeg could not read {path.name}: {r.stderr.strip()[-200:]}")
+        return read_audio(wav)
 
 
 def isolate(src: str | Path, out: str | Path, part: str = "bass", bars: tuple[int, int] | None = None, bpm: float | None = None,
@@ -72,7 +91,7 @@ def isolate(src: str | Path, out: str | Path, part: str = "bass", bars: tuple[in
     from .reference import estimate_bpm
     if part not in PARTS:
         raise ValueError(f"part is one of: {', '.join(PARTS)}")
-    sr, x = read_audio(stem or src)
+    sr, x = _read_any(stem or src)
     if bars is not None:
         if bpm is None:
             bpm = estimate_bpm(x.mean(axis=1), sr)

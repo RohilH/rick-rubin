@@ -18,6 +18,7 @@ turns one into bridge commands for Ableton.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import time
@@ -115,9 +116,19 @@ def plugin_matches(shown: str, want: str) -> bool:
 class LogicBridge:
     """Connect once per command; `with LogicBridge() as b:`. Methods raise LogicError with a message a person can act on."""
 
-    def __init__(self, progress: Callable[[str], None] | None = None, use_mcu: bool = True, project: str | None = None):
+    def __init__(self, progress: Callable[[str], None] | None = None, use_mcu: bool = True, project: str | None = None,
+                 front: bool | str = False):
         self.say = progress or (lambda *_: None)
         self.use_mcu = use_mcu
+        # With Logic in the background its File > Save commands are disabled and Aux / Stereo Out strips are not
+        # selected by the surface (measured on Logic 11.2.2, macOS 15.6); tracks, their plug-ins and sends work
+        # there. front=True lets the bridge bring Logic to the front when a step needs it (need_front), only once
+        # the person at the Mac has stopped typing, and gives the front back in close(). front="start" does it on
+        # connecting, for a push or a bounce that needs it throughout. False never moves Logic.
+        allowed = os.environ.get("RICK_RUBIN_LOGIC_BACKGROUND", "") not in ("1", "true", "yes")
+        self.front = bool(front) and allowed
+        self._front_at_start = front == "start" and allowed
+        self._front_prev: int | None = None
         self.app: AX.LogicApp | None = None
         self.mcu: M.MackieControl | None = None
         self.project = project               # title prefix of the project window this bridge works in
@@ -128,6 +139,8 @@ class LogicBridge:
 
     # ------------------------------------------------------------------ lifecycle
     def connect(self) -> LogicBridge:
+        if AX.screen_locked():
+            raise LogicError("the screen is locked: Logic's windows cannot be reached until it is unlocked")
         if not logic_running():
             self.say("launching Logic Pro")
             subprocess.run(["open", "-a", LOGIC_APP], check=False)
@@ -152,12 +165,64 @@ class LogicBridge:
             self._close_setup_window()
         if self.project is None:
             self.project = self.app.project_title()
+        if self._front_at_start:
+            self.to_front()
         return self
 
     def close(self) -> None:
         if self.mcu is not None:
             self.mcu.close()
             self.mcu = None
+        if self.app is not None:
+            try:
+                AX.restore_mixer_frame(self.app, self.project)
+            except Exception:  # noqa: BLE001
+                pass
+        if self._front_prev is not None and self.app is not None and self._front_prev != self.app.pid:
+            AX.activate(self._front_prev)                    # give the front back to whoever had it
+        self._front_prev = None
+
+    # ------------------------------------------------------------------ in front of the person, or behind
+    def is_front(self) -> bool:
+        return bool(AX.attr(self.app.el, "AXFrontmost"))
+
+    def need_front(self) -> None:
+        """This step only works with Logic in front: bring it there if the bridge may (front=True)."""
+        if self.front and not self.is_front():
+            self.to_front()
+
+    def to_front(self, idle: float = 1.5, timeout: float | None = None) -> bool:
+        """Bring Logic to the front if it is not there. Waits until the keyboard and mouse have been still for
+        `idle` seconds first, so nobody's typing lands in Logic (where single keys are commands), for at most
+        `timeout` seconds (default 30, or RICK_RUBIN_FRONT_WAIT). Returns whether it had to move. The app that was
+        in front is remembered and gets the front back in close()."""
+        if self.is_front():
+            return False
+        if timeout is None:
+            try:
+                timeout = float(os.environ.get("RICK_RUBIN_FRONT_WAIT", "30"))
+            except ValueError:
+                timeout = 30.0
+        if AX.screen_locked():
+            raise LogicError("the screen is locked: Logic's windows cannot be reached until it is unlocked")
+        t_end = time.time() + timeout
+        told = False
+        while AX.idle_seconds() < idle:
+            if not told:
+                self.say("Logic Pro has to come to the front for this: waiting for a pause in typing")
+                told = True
+            if time.time() > t_end:
+                raise LogicError(f"Logic Pro has to be in front for this step, and the keyboard or mouse was in use for the last {timeout:.0f} s. "
+                                 "Click on Logic's window (or stop typing for a moment) and run it again")
+            time.sleep(0.2)
+        if self._front_prev is None:
+            self._front_prev = AX.frontmost_pid()
+        self.say("bringing Logic Pro to the front (leave the keyboard alone until this finishes)")
+        AX.activate(self.app.pid)
+        if AX.wait_for(self.is_front, 5.0, 0.1) is None:
+            raise LogicError("Logic Pro did not come to the front")
+        time.sleep(0.4)
+        return True
 
     def __enter__(self):
         return self.connect() if self.app is None else self
@@ -221,6 +286,7 @@ class LogicBridge:
 
     def focus(self) -> None:
         """Make our project window Logic's key window (menu commands act on it)."""
+        self.need_front()                                    # menus that open sheets and file panels, and Save
         self.clear_popups()
         self.app.make_key(self.main)
 
@@ -428,6 +494,16 @@ class LogicBridge:
     def tempo(self) -> float | None:
         return self.app.tempo(self.main)
 
+    def control_text(self, name: str) -> str | None:
+        """What a control-bar display shows ('Key Signature' -> 'Amin', 'Time Signature' -> '4/4')."""
+        el = self.app.control(name, self.main)
+        if el is None:
+            return None
+        v = AX.attr(el, "AXValue")
+        if v in (None, ""):
+            v = AX.title(el) or " ".join(str(AX.attr(k, "AXValue") or AX.title(k) or "") for k in AX.children(el)).strip()
+        return str(v) if v not in (None, "") else None
+
     def name_tracks_by_regions(self) -> list[str]:
         """Logic names an imported track after the patch it chose; the region keeps the MIDI track's name.
         Tracks area > Functions > 'Name Track by Region/Cell Name' on all regions puts the song's names back."""
@@ -451,9 +527,27 @@ class LogicBridge:
         return self.tracks()
 
     def select_track(self, index: int) -> None:
-        """Select exactly this track (edits to a Mixer strip apply to all selected strips, so keep it to one)."""
+        """Select exactly this track (edits to a Mixer strip apply to all selected strips, so keep it to one). With
+        Logic in the background the track list does not take a selection: the surface's SELECT button does, and
+        failing that Logic is brought to the front when the bridge may."""
         self.app.select_track(index, self.main)
         time.sleep(0.1)
+        if self.only_selected(index) or self.is_front():
+            return
+        if self.mcu is not None and self.mcu.state.last_change > 0:
+            try:
+                self.mcu_select(index)
+            except LogicError:
+                pass
+            if self.only_selected(index):
+                return
+        if self.front:
+            self.to_front()
+            self.app.select_track(index, self.main)
+            time.sleep(0.1)
+
+    def only_selected(self, index: int) -> bool:
+        return self.app.selected_tracks(self.main) == [index]
 
     def delete_track(self, index: int) -> None:
         """Track > Delete Track on exactly this track."""
@@ -479,6 +573,13 @@ class LogicBridge:
     def add_audio_track(self) -> int:
         """Track > New Tracks… > Audio > Create, below the selected track. Returns its index (found by comparing
         the track list before and after: when the selection does not take, Logic puts the track elsewhere)."""
+        return self._add_track("Audio")
+
+    def add_instrument_track(self) -> int:
+        """Track > New Tracks… > Software Instrument > Create, below the last track. Returns its index."""
+        return self._add_track("MIDI")                       # the sheet calls it 'MIDI, Software Instrument'
+
+    def _add_track(self, kind: str) -> int:
         before = self.tracks()
         n = len(before)
         self.select_track(n - 1)
@@ -487,18 +588,87 @@ class LogicBridge:
         sheet = AX.wait_for(lambda: next((c for c in AX.children(self.main) if AX.role(c) == "AXSheet"), None), 5.0)
         if sheet is None:
             raise LogicError("the New Tracks sheet did not open")
-        grp = AX.find(sheet, lambda e: AX.role(e) == "AXGroup" and AX.desc(e).startswith("Audio"), 6)
+        grp = AX.find(sheet, lambda e: AX.role(e) == "AXGroup" and AX.desc(e).startswith(kind), 6)
         rb = AX.find(grp, lambda e: AX.role(e) == "AXRadioButton", 3) if grp is not None else None
+        if rb is None:
+            AX.press(AX.find(sheet, lambda e: AX.role(e) == "AXButton" and AX.title(e) == "Cancel", 3))
+            raise LogicError(f"the New Tracks sheet has no {kind!r} choice")
         AX.press(rb)
-        time.sleep(0.2)
+        time.sleep(0.4)
+        if kind == "MIDI":
+            # Details > Instrument: an empty channel strip. The default patch (an electric piano) brings two reverb
+            # busses and their Aux strips into the project; the instrument wanted is loaded afterwards.
+            label = AX.find(sheet, lambda e: AX.role(e) == "AXStaticText" and str(AX.attr(e, "AXValue") or "") == "Instrument:", 6)
+            pop = None
+            if label is not None:
+                sibs = AX.children(AX.attr(label, "AXParent"))
+                i = next((k for k, e in enumerate(sibs) if e == label), None)
+                pop = next((e for e in sibs[i + 1:] if AX.role(e) == "AXPopUpButton"), None) if i is not None else None
+            try:
+                if pop is None:
+                    raise AX.AXError("the sheet has no Instrument pop-up")
+                if "Empty Channel Strip" not in (AX.desc(pop), str(AX.attr(pop, "AXValue") or "")):
+                    if not self._own_popup_pick(pop, "Empty Channel Strip"):
+                        raise AX.AXError("the Instrument pop-up did not open")
+                    if "Empty Channel Strip" not in (AX.desc(pop), str(AX.attr(pop, "AXValue") or "")):
+                        raise AX.AXError(f"the Instrument pop-up shows {AX.desc(pop)!r}")
+            except AX.AXError as e:
+                AX.press(AX.find(sheet, lambda e: AX.role(e) == "AXButton" and AX.title(e) == "Cancel", 3))
+                raise LogicError(f"New Tracks: could not choose an empty channel strip ({e}); no track was added") from e
+            lib = AX.find(sheet, lambda e: AX.role(e) == "AXCheckBox" and AX.title(e) == "Open Library", 6)
+            if lib is not None:
+                AX.set_checkbox(lib, False)
         count = AX.find(sheet, lambda e: AX.role(e) == "AXTextField" and "Number of tracks" in AX.desc(e), 4)
         if count is not None:
             AX.set_value(count, "1")
         AX.press(AX.find(sheet, lambda e: AX.role(e) == "AXButton" and AX.title(e) == "Create", 3))
         if AX.wait_for(lambda: len(self.tracks()) > n, 8.0) is None:
-            raise LogicError("Logic did not add an audio track")
+            raise LogicError(f"Logic did not add the {'audio' if kind == 'Audio' else 'software instrument'} track")
         self._mixer = None
+        self.close_plugin_windows()                          # a new instrument track may open its instrument's window
         return first_new_index(before, self.tracks())
+
+    def import_midi(self, path: str | Path, bar: int = 1) -> list[int]:
+        """File > Import > MIDI File… with the playhead at `bar`: Logic adds one software-instrument track per MIDI
+        track of the file, its region starting at the playhead's bar. The tempo question, if Logic asks one, is
+        answered so that the project's own tempo stays. Returns the indices of the tracks it added."""
+        path = Path(path).expanduser().resolve()
+        if not path.exists():
+            raise LogicError(f"{path} does not exist")
+        before = self.tracks()
+        self.select_track(len(before) - 1)
+        self.set_playhead(bar, 1)
+        self.focus()
+        self.app.menu("File", "Import", "MIDI File…")
+        panel = AX.wait_for(lambda: next((d for d in self.app.dialogs() if AX.attr(d, "AXIdentifier") == "open-panel"), None), 8.0)
+        if panel is None:
+            raise LogicError("the Import MIDI File panel did not open")
+        self._panel_navigate(panel, path.parent, select_file=path.name)
+        AX.press(AX.find(panel, lambda e: AX.attr(e, "AXIdentifier") == "OKButton", 3))
+        time.sleep(0.8)
+        t_end = time.time() + 4.0
+        while time.time() < t_end:
+            if self._answer_alert(["Don’t Import", "Don't Import", "No"], "tempo", timeout=0.3):
+                t_end = time.time() + 1.5
+        if AX.wait_for(lambda: not any(AX.attr(d, "AXIdentifier") == "open-panel" for d in self.app.dialogs()), 10.0) is None:
+            raise LogicError("the Import MIDI File panel stayed open")
+        left = self.pending_alert()
+        if left:
+            raise LogicError(f"Logic is asking {left[0][:120]!r} ({', '.join(left[1])}) after the MIDI import")
+        after = AX.wait_for(lambda: (lambda t: t if len(t) > len(before) else None)(self.tracks()), 8.0)
+        if after is None:
+            raise LogicError("Logic did not add a track for the MIDI file")
+        self._mixer = None
+        self.close_plugin_windows()
+        # new tracks are the ones the old list does not account for, in order
+        old = list(before)
+        added = []
+        for i, name in enumerate(after):
+            if old and old[0] == name:
+                old.pop(0)
+            else:
+                added.append(i)
+        return added[: len(after) - len(before)] or list(range(len(before), len(after)))
 
     def import_audio(self, track_index: int, path: str | Path, bar: int, beat: int = 1, keep_file_rate: bool = False,
                      division: int = 1, tick: int = 1) -> bool:
@@ -733,22 +903,42 @@ class LogicBridge:
         return mode
 
     def rename_track(self, track_index: int, name: str) -> str:
-        """The track's name, through the text field in its header."""
+        """The track's name: its header's name field is opened for editing (a press on it, or Track > Rename Track
+        when the header is scrolled out of view), the name typed into Logic's process and confirmed. Nothing is
+        typed unless the field that has the focus holds this track's current name: outside a text field Logic
+        reads letters as key commands, and another field would take the text."""
         heads = self.app.track_headers(self.main)
         tf = next((c for c in AX.children(heads[track_index]) if AX.role(c) == "AXTextField"), None) if track_index < len(heads) else None
         if tf is None:
             raise LogicError(f"track {track_index + 1} has no name field")
-        AX.set_value(tf, name)
-        time.sleep(0.2)
-        got = self.tracks()[track_index]
-        if got != name:
-            # Logic may need the field confirmed: focus it and press return in Logic's process
-            AX.set_attr(tf, "AXFocused", True)
-            AX.set_value(tf, name)
-            K.key(self.app.pid, "return")
-            time.sleep(0.3)
-            got = self.tracks()[track_index]
-        return got
+        current = self.tracks()[track_index]
+
+        def name_field():
+            e = AX.attr(self.app.el, "AXFocusedUIElement")
+            return e if e is not None and AX.role(e) == "AXTextField" and str(AX.attr(e, "AXValue") or "") == current else None
+
+        self.need_front()
+        self.select_track(track_index)
+        self.app.make_key(self.main)
+        AX.press(tf)
+        focused = AX.wait_for(name_field, 1.5, 0.1)
+        if focused is None and self.only_selected(track_index):
+            try:
+                self.app.menu("Track", "Rename Track")       # acts on the selected track, and only this one is selected
+            except AX.AXError:
+                pass
+            focused = AX.wait_for(name_field, 2.5, 0.1)
+        if focused is None:
+            other = AX.attr(self.app.el, "AXFocusedUIElement")
+            if other is not None and AX.role(other) == "AXTextField":
+                K.key(self.app.pid, "escape")                # leave whatever field did open, unchanged
+            raise LogicError(f"the name field of track {track_index + 1} did not open for editing, so nothing was typed")
+        K.key(self.app.pid, "a", "cmd")
+        K.type_text(self.app.pid, name)
+        K.key(self.app.pid, "return")
+        time.sleep(0.4)
+        self._mixer = None
+        return self.tracks()[track_index]
 
     def analyze_tempo(self, track_index: int, expect_bpm: float | None = None, timeout: float = 180.0) -> float:
         """Smart Tempo: analyse the tempo of the file under the track's first region (Edit > Open Smart Tempo Editor >
@@ -1027,6 +1217,83 @@ class LogicBridge:
             K.key(self.app.pid, "escape")
             time.sleep(0.25)
 
+    def _own_popup_pick(self, button, text: str) -> bool:
+        """Take an entry of one of Logic's own pop-ups (the New Tracks sheet's Instrument menu, a plug-in window's
+        Settings menu: neither is in the accessibility tree). A press on `button` opens
+        it, the entry is found by typing the start of its name into Logic's process, return takes it. Returns False
+        when the pop-up did not open. The caller checks what Logic shows afterwards. Checked on Logic 11.2.2 with
+        the control surface paused."""
+        self.need_front()
+        self.clear_popups()
+        AX.press(button)                                   # reports failure on some of them, but the menu opens
+        if not self._popup_open(2.0):
+            return False
+        time.sleep(0.25)
+        K.type_text(self.app.pid, text)
+        time.sleep(0.6)
+        K.key(self.app.pid, "return")
+        time.sleep(0.8)
+        if self._popup_open(0.2):                          # nothing matched: leave the menu without choosing
+            K.key(self.app.pid, "escape")
+            time.sleep(0.3)
+        return True
+
+    def load_setting(self, ref, path: str | Path, plugin: str = "instrument", nth: int = 0) -> str:
+        """Load a plug-in setting file (an .aupreset, or Logic's .pst) into the instrument of strip `ref` (or its
+        insert `plugin`), through the plug-in window header's Settings > Load…. The file must be in a visible folder
+        (file panels do not reach hidden ones). Returns the setting name the header shows afterwards."""
+        path = Path(path).expanduser().resolve()
+        if not path.exists():
+            raise LogicError(f"{path} does not exist")
+        if self.mcu is not None and self.mcu.state.last_change > 0:
+            self._press(M.PAN)                                 # leave any edit view: its link to the plug-in window
+            time.sleep(0.3)
+        shown = ""
+        with self.pause_mcu():
+            pw = self.plugin_window(ref, plugin, nth)
+            try:
+                sp = pw.settings_popup()
+                if sp is None:
+                    raise LogicError("the plug-in window has no Settings pop-up")
+                if not self._own_popup_pick(sp, "Load"):
+                    raise LogicError("the Settings menu did not open")
+                panel = AX.wait_for(lambda: next((d for d in self.app.dialogs() if AX.attr(d, "AXIdentifier") == "open-panel"), None), 6.0)
+                if panel is None:
+                    raise LogicError("Settings > Load… did not open a file panel")
+                try:
+                    self._panel_navigate(panel, path.parent, select_file=path.name)
+                except Exception:
+                    AX.press(AX.find(panel, lambda e: AX.role(e) == "AXButton" and AX.title(e) == "Cancel", 4))
+                    raise
+                AX.press(AX.find(panel, lambda e: AX.attr(e, "AXIdentifier") == "OKButton", 3))
+                AX.wait_for(lambda: not any(AX.attr(d, "AXIdentifier") == "open-panel" for d in self.app.dialogs()), 8.0)
+                time.sleep(1.0)
+                left = self.pending_alert()
+                if left:
+                    raise LogicError(f"Logic is asking {left[0][:120]!r} ({', '.join(left[1])}) after loading the setting")
+                shown = str(AX.attr(pw.settings_popup(), "AXValue") or "")
+            except AX.AXError as e:
+                raise LogicError(str(e)) from e
+            finally:
+                self.clear_popups()
+                time.sleep(0.3)
+                pw.close()
+                time.sleep(0.8)
+        if shown != path.stem:
+            raise LogicError(f"the setting was not loaded: the plug-in window shows {shown!r}, not {path.stem!r}")
+        return shown
+
+    def clear_inserts(self, ref) -> bool:
+        """Take every insert off a strip, last first (for a track whose Logic patch chain is not wanted: a patch
+        brings an EQ, a compressor, sometimes a delay). Only for strips of a project the bridge built. Returns
+        whether the strip is empty of inserts."""
+        for _ in range(8):
+            n = len(self.strip_info(ref).inserts)
+            if n == 0:
+                return True
+            self.remove_plugin(ref, min(n, 8))
+        return not self.strip_info(ref).inserts
+
     def _menu_type_and_pick(self, button, text: str, down: int = 1) -> bool:
         self.clear_popups()
         self.app.make_key(self.mixer().window())          # posted keystrokes go to Logic's key window
@@ -1152,6 +1419,55 @@ class LogicBridge:
         self.close_plugin_windows()
         return got[slot] if len(got) > slot else got[-1]
 
+    def remove_plugin(self, ref, slot: int) -> list[str]:
+        """Take the plug-in out of insert `slot` (1..8) of strip `ref`: in the surface's Plug-in Channel view the
+        slot's V-Pot is turned back to the '--' entry at the start of Logic's list and pressed. Returns the strip's
+        inserts afterwards."""
+        before = self.strip_info(ref).inserts
+        if not 1 <= slot <= min(8, len(before)):
+            raise LogicError(f"no plug-in in insert {slot} of {self.strip_info(ref).name!r} (inserts: {before})")
+        self.close_plugin_windows()
+        self.mcu_select(self._strip_index(ref))
+        self.mcu_view(M.PLUGIN)
+        row0, row1 = self._lcd()
+        if not re.search(r"Ins[1-7]Pl Ins[2-8]Pl", row0 + row1):
+            raise LogicError(f"the surface is not in the Plug-in Channel view (LCD {row0!r} / {row1!r})")
+        u = self._need_mcu()
+        col = slot - 1
+
+        def read():
+            self._stable_lcd(0.2, 1.0)
+            return self._presel_text(u.state.line(1), col)
+        cur = read()
+        for _ in range(6):                                    # the list does not wrap: fast back, then check
+            if cur.startswith("--"):
+                break
+            self._tick(col, -60, spacing=0.03)
+            u.settle(0.15, 1.0)
+            cur = read()
+        for _ in range(40):
+            if cur.startswith("--"):
+                break
+            nxt = self._step_until_change(col, -1, read)
+            if nxt == cur:
+                break
+            cur = nxt
+        if not cur.startswith("--"):
+            raise LogicError(f"the plug-in list did not reach its empty entry (shows {cur!r}); nothing was removed")
+        self._press(M.VPOT_PUSH + col, settle=0.8)
+        time.sleep(0.4)
+        self.close_plugin_windows()
+        if AX.wait_for(lambda: len(self.strip_info(ref).inserts) < len(before) or None, 5.0, 0.25) is None:
+            raise LogicError(f"Logic did not take the plug-in out of insert {slot} (inserts: {self.strip_info(ref).inserts})")
+        return list(self.strip_info(ref).inserts)
+
+    def region_transpose(self, track_index: int) -> int:
+        """The Transpose of the track's first region. Logic sets +12 on the region of a bass General MIDI program when
+        it opens a MIDI file (its own bass patches are built for that), so an instrument put on the track afterwards
+        plays an octave above the written notes unless this is brought back to 0."""
+        self.select_region(track_index)
+        return round(float(AX.attr(self.region_param("Transpose:"), "AXValue") or 0))
+
     def load_instrument(self, ref, name: str, index: int | None = None) -> str:
         """Put software instrument `name` ("Retro Synth", "Alchemy", "Serum 2"...) in the instrument slot of track
         strip `ref`, through the Mackie Control's Instrument view (the strip's V-Pot scrolls the instrument list)."""
@@ -1183,6 +1499,9 @@ class LogicBridge:
             low = t.lower()
             if low.startswith(want + " stereo") or low == want or low.startswith(want + " (") and "stereo" in low:
                 return True
+            rest = low[len(want):].strip()
+            if rest.split(" ")[0] in ("fx", "effect"):                # 'Serum 2 FX' is not Serum 2
+                return False
             return low.startswith(want) and "mono" not in low and "multi" not in low and "legacy" not in low
         self._scroll_list(col, read, match, f"instrument {name!r}", kind="instruments")
         self._press(M.VPOT_PUSH + col, settle=1.0)
@@ -1318,6 +1637,8 @@ class LogicBridge:
         """Select channel strip `index` (its position in the Mixer's Tracks view) on the surface."""
         u = self._need_mcu()
         _ = view
+        if index >= len(self.tracks()):
+            self.need_front()                                # Aux and output strips are only selected with Logic in front
         if u.state.leds.get(M.GLOBAL_VIEW):
             self._press(M.GLOBAL_VIEW)                        # always the Arrange view: every strip is a channel there
         self._view = "tracks"
@@ -1510,19 +1831,8 @@ class LogicBridge:
         """Set parameters of the plug-in in insert `slot` (1..) of a strip: {name: value} where value is a number
         in the units Logic shows (dB, ms, Hz, %, ratio) or an option name / on/off. Names are Logic's full
         parameter names or the LCD abbreviations."""
-        self._need_mcu()
         rep = ParamReport()
-        self.mcu_select(self._strip_index(track_index) if isinstance(track_index, str) else track_index)
-        self.mcu_view(M.PLUGIN)
-        row0, row1 = self._lcd()
-        if not re.search(r"Ins[1-7]Pl Ins[2-8]Pl", row0 + row1):
-            raise LogicError(f"the Mackie Control is not in the Plug-in Channel view (LCD: {row0!r} / {row1!r})")
-        self._press(M.VPOT_PUSH + (slot - 1), settle=0.8)       # open the plug-in's edit view (and its window)
-        row0, row1 = self._lcd()
-        if re.search(r"Ins[1-7]Pl Ins[2-8]Pl", row0 + row1):
-            raise LogicError(f"insert slot {slot} did not open an edit view (LCD: {row0!r} / {row1!r})")
-        self._value_mode()
-        plugin = self._edit_view_plugin()
+        plugin = self._open_plugin_edit(track_index, slot)
         for name, val in params.items():
             try:
                 try:
@@ -1539,10 +1849,24 @@ class LogicBridge:
         self.close_plugin_windows()
         return rep
 
-    def set_instrument_params(self, track_index: int, params: dict, instrument: str = "") -> ParamReport:
-        """Set parameters of a track's software instrument by displayed value, in the Instrument Edit view."""
+    def _open_plugin_edit(self, track_index, slot: int) -> str:
+        """The surface's Plug-in Edit view of insert `slot` (1..) on a strip (index, or name for Aux / Stereo Out);
+        returns the plug-in's name as the view's header gives it."""
         self._need_mcu()
-        rep = ParamReport()
+        self.mcu_select(self._strip_index(track_index) if isinstance(track_index, str) else track_index)
+        self.mcu_view(M.PLUGIN)
+        row0, row1 = self._lcd()
+        if not re.search(r"Ins[1-7]Pl Ins[2-8]Pl", row0 + row1):
+            raise LogicError(f"the Mackie Control is not in the Plug-in Channel view (LCD: {row0!r} / {row1!r})")
+        self._press(M.VPOT_PUSH + (slot - 1), settle=0.8)       # open the plug-in's edit view (and its window)
+        row0, row1 = self._lcd()
+        if re.search(r"Ins[1-7]Pl Ins[2-8]Pl", row0 + row1):
+            raise LogicError(f"insert slot {slot} did not open an edit view (LCD: {row0!r} / {row1!r})")
+        self._value_mode()
+        return self._edit_view_plugin()
+
+    def _open_instrument_edit(self, track_index: int) -> None:
+        self._need_mcu()
         self.mcu_select(track_index)
         for _ in range(3):
             self._press(M.INSTRUMENT, settle=0.5)
@@ -1552,6 +1876,56 @@ class LogicBridge:
             if not names_view and not row0.startswith("Volume Pan"):
                 break
         self._value_mode()
+
+    def _read_edit_pages(self, max_pages: int = 40) -> dict[str, str]:
+        """Every parameter of the open edit view as {name on the LCD: displayed value}, page by page (eight per
+        page). Names are the surface's 7-character abbreviations; values are what the plug-in displays. Stops after
+        `max_pages` (a synth can have hundreds: Serum 2 has 328 pages)."""
+        self._name_mode()
+        for _ in range(60):                                    # back to the first page
+            self._stable_lcd(0.5, 2.0)
+            m = re.search(r"Page (\d+)/(\d+)", self._lcd()[0])
+            if m is None or m.group(1) == "1":
+                break
+            self._press(M.CURSOR_LEFT, 0.3)
+        out: dict[str, str] = {}
+        seen: set[tuple] = set()
+        for _ in range(max_pages):
+            names = self._names()
+            m = re.search(r"Page (\d+)/(\d+)", self._lcd()[0])
+            if tuple(names) in seen:
+                break
+            seen.add(tuple(names))
+            values = self._values()
+            for n, v in zip(names, values):
+                if n and n not in out:
+                    out[n] = v
+            if m is not None and m.group(1) == m.group(2):
+                break
+            self._name_mode()
+            self._press(M.CURSOR_RIGHT, 0.15)
+        return out
+
+    def read_plugin_params(self, track_index, slot: int, max_pages: int = 40) -> tuple[str, dict[str, str]]:
+        """(plug-in name, {parameter: displayed value}) of insert `slot` (1..) on a strip, read off the surface."""
+        plugin = self._open_plugin_edit(track_index, slot)
+        try:
+            return plugin, self._read_edit_pages(max_pages)
+        finally:
+            self.close_plugin_windows()
+
+    def read_instrument_params(self, track_index: int, max_pages: int = 40) -> dict[str, str]:
+        """{parameter: displayed value} of a track's software instrument, read off the surface."""
+        self._open_instrument_edit(track_index)
+        try:
+            return self._read_edit_pages(max_pages)
+        finally:
+            self.close_plugin_windows()
+
+    def set_instrument_params(self, track_index: int, params: dict, instrument: str = "") -> ParamReport:
+        """Set parameters of a track's software instrument by displayed value, in the Instrument Edit view."""
+        rep = ParamReport()
+        self._open_instrument_edit(track_index)
         for name, val in params.items():
             try:
                 try:
@@ -1711,6 +2085,7 @@ class LogicBridge:
             out_path.unlink()
         self.stop()
         self.focus()
+        trim: tuple[int, int] | None = None                  # (bars to skip, bars to keep) of the bounced file
         if not self.app.menu("File", "Bounce", "Project or Section…"):
             raise LogicError("File > Bounce is not available")
         dlg = AX.wait_for(lambda: next((d for d in self.app.dialogs() if AX.title(d).startswith("Bounce")), None), 8.0)
@@ -1744,8 +2119,23 @@ class LogicBridge:
                 project_end = AX.disp_number(AX.desc(groups[1]).split("\t")[1]) or end_bar + 1
                 if end_bar + 1 > project_end:
                     self.say(f"the project ends at bar {project_end:g}: bouncing to there, not to bar {end_bar + 1}")
-                self._set_position_group(groups[0], start_bar)
-                self._set_position_group(groups[1], int(min(end_bar + 1, project_end)))
+                want_end = int(min(end_bar + 1, project_end))
+                try:
+                    self._set_position_group(groups[0], start_bar)
+                    self._set_position_group(groups[1], want_end)
+                except LogicError as e:
+                    if "steps by" not in str(e):
+                        raise
+                    # this Logic's position fields move ten bars at a time, so the bars asked for cannot be dialled in:
+                    # bounce the range the dialog holds and cut them out of the file afterwards
+                    got0 = AX.disp_number(AX.desc(groups[0]).split("\t")[1])
+                    got1 = AX.disp_number(AX.desc(groups[1]).split("\t")[1])
+                    if got0 is None or got1 is None or got0 > start_bar or got1 < want_end:
+                        raise LogicError(f"the bounce dialog holds bars {got0:g}-{got1:g}, which does not cover bars {start_bar}-{want_end - 1} "
+                                         "(a cycle or a selection narrows it: clear it in Logic and run it again)") from e
+                    trim = (start_bar - int(got0), want_end - start_bar)
+                    self.say(f"bouncing bars {got0:g}-{got1 - 1:g} and cutting bars {start_bar}-{want_end - 1} out of it "
+                             "(the dialog's positions move ten bars at a time)")
             AX.press(AX.find(dlg, lambda e: AX.role(e) == "AXButton" and AX.title(e) == "OK", 2))
         except Exception:
             AX.press(AX.find(dlg, lambda e: AX.role(e) == "AXButton" and AX.title(e) == "Cancel", 2))
@@ -1793,7 +2183,22 @@ class LogicBridge:
             raise LogicError(f"the bounce did not produce {out_path} (pending: {self.pending_alert()})")
         if got != out_path:
             got.rename(out_path)
+        if trim is not None:
+            self._trim_bars(out_path, *trim)
         return out_path
+
+    def _trim_bars(self, path: Path, skip_bars: int, keep_bars: int) -> None:
+        """Keep `keep_bars` bars of a bounce after its first `skip_bars`, at the project's tempo and time signature."""
+        from ..samples import read_audio, write_wav24
+        bpm = self.tempo() or 120.0
+        sig = self.control_text("Time Signature") or "4/4"
+        m = re.match(r"(\d+)\s*/\s*(\d+)", sig)
+        beats = int(m.group(1)) * 4.0 / int(m.group(2)) if m else 4.0
+        sr, x = read_audio(path)
+        bar = beats * 60.0 / bpm * sr
+        a = int(round(skip_bars * bar))
+        b = min(len(x), int(round((skip_bars + keep_bars) * bar)))
+        write_wav24(path, sr, x[a:b])
 
     @staticmethod
     def _set_position_group(group, bar: int) -> None:

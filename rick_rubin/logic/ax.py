@@ -43,13 +43,69 @@ class AXError(RuntimeError):
     pass
 
 
+def _turn_run_loop() -> None:
+    """NSWorkspace only refreshes its list of running applications when a run loop turns, and a command-line
+    process has none: without this, an app launched after we started is never seen (a cold start of Logic
+    used to time out for that reason)."""
+    try:
+        from Foundation import NSDate, NSRunLoop
+        NSRunLoop.currentRunLoop().runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.02))
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def logic_pid() -> int | None:
     if not HAVE_AX:
         return None
+    _turn_run_loop()
     for a in NSWorkspace.sharedWorkspace().runningApplications():
         if a.bundleIdentifier() == BUNDLE_ID or a.localizedName() == APP_NAME:
             return a.processIdentifier()
     return None
+
+
+# ---- the person at the Mac: is the screen locked, are they typing, which app is in front
+def screen_locked() -> bool:
+    """With the screen locked, Logic's windows are gone from the accessibility tree and `open` does nothing."""
+    try:
+        import Quartz
+        d = Quartz.CGSessionCopyCurrentDictionary()
+        return bool(d and d.get("CGSSessionScreenIsLocked", 0))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def idle_seconds() -> float:
+    """Seconds since the keyboard or mouse was last used (hardware events only: keys the bridge posts to Logic
+    do not count)."""
+    try:
+        import Quartz
+        return float(Quartz.CGEventSourceSecondsSinceLastEventType(Quartz.kCGEventSourceStateHIDSystemState, Quartz.kCGAnyInputEventType))
+    except Exception:  # noqa: BLE001
+        return 1e9
+
+
+def frontmost_pid() -> int | None:
+    """The process that owns the front normal window (the window list is ordered front to back)."""
+    try:
+        import Quartz
+        opts = Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements
+        for w in Quartz.CGWindowListCopyWindowInfo(opts, Quartz.kCGNullWindowID) or []:
+            if w.get("kCGWindowLayer", 0) == 0:
+                return int(w.get("kCGWindowOwnerPID"))
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def activate(pid: int) -> bool:
+    """Bring an application to the front. No keystrokes are involved."""
+    try:
+        from AppKit import NSRunningApplication
+        app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+        return bool(app is not None and app.activateWithOptions_(2))     # NSApplicationActivateIgnoringOtherApps
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def attr(el, name: str):
@@ -588,6 +644,44 @@ def mixer_area(win, min_strips: int = 1):
     return None
 
 
+def frame_of(el) -> tuple[float, float, float, float] | None:
+    """(x, y, width, height) of a window or element on screen."""
+    try:
+        from ApplicationServices import AXValueGetValue, kAXValueCGPointType, kAXValueCGSizeType
+        ok1, pos = AXValueGetValue(attr(el, "AXPosition"), kAXValueCGPointType, None)
+        ok2, size = AXValueGetValue(attr(el, "AXSize"), kAXValueCGSizeType, None)
+        return (pos.x, pos.y, size.width, size.height) if ok1 and ok2 else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def set_frame(el, x: float, y: float, w: float, h: float) -> None:
+    import Quartz
+    from ApplicationServices import AXUIElementSetAttributeValue, AXValueCreate, kAXValueCGPointType, kAXValueCGSizeType
+    AXUIElementSetAttributeValue(el, "AXPosition", AXValueCreate(kAXValueCGPointType, Quartz.CGPointMake(x, y)))
+    AXUIElementSetAttributeValue(el, "AXSize", AXValueCreate(kAXValueCGSizeType, Quartz.CGSizeMake(w, h)))
+
+
+def screen_height() -> float:
+    try:
+        import Quartz
+        return float(Quartz.CGDisplayBounds(Quartz.CGMainDisplayID()).size.height)
+    except Exception:  # noqa: BLE001
+        return 900.0
+
+
+MIXER_HEIGHT = 900.0                  # at 644 px (a new Mixer window) the top insert and the instrument are clipped
+_MIXER_FRAMES: dict[str, tuple] = {}   # project -> the frame a Mixer window had before it was made taller
+
+
+def restore_mixer_frame(app, project: str | None) -> None:
+    """Give a Mixer window that was made taller its old frame back (when it is still open)."""
+    old = _MIXER_FRAMES.pop(project or "", None)
+    w = app.mixer_window(project) if old else None
+    if w is not None:
+        set_frame(w, *old)
+
+
 class Mixer:
     """Logic's Mixer window in 'Tracks' view: one channel strip per track in track order, then the aux
     strips, then Stereo Out and Master. Everything on a strip is an accessibility element."""
@@ -607,15 +701,29 @@ class Mixer:
             def pane(win):
                 # the Mixer shown as a pane of the main window (not the Inspector's channel strips, a 'Mixer' area too)
                 return win if win is not None and mixer_area(win, 1) is not None else None
-            if pane(main) is not None:
-                return main
+            # a Mixer window of its own is wanted even when the pane is open: the pane is short, and Logic stops
+            # naming the plug-in slots that are clipped off its top (the top insert reads 'audio plug-in', the
+            # instrument 'input')
             self.app.make_key(main)
-            if not self.app.menu("Window", "Open Mixer"):
-                raise AXError("could not open the Mixer window")
-            w = wait_for(lambda: self.app.mixer_window(self.project) or pane(self.app.main_window(self.project)), 6.0)
+            opened = self.app.menu("Window", "Open Mixer")
+            w = wait_for(lambda: self.app.mixer_window(self.project), 6.0) if opened else None
             if w is None:
-                raise AXError("the Mixer window did not appear")
+                w = pane(self.app.main_window(self.project))
+            if w is None:
+                raise AXError("the Mixer window did not appear" if opened else "could not open the Mixer window")
+        self._make_tall(w)
         return w
+
+    def _make_tall(self, w) -> None:
+        if " - Mixer" not in title(w) or self.app._is_main(w):
+            return                                           # the pane: its height is the main window's business
+        f = frame_of(w)
+        want = min(MIXER_HEIGHT, screen_height() - 60.0)
+        if f is None or f[3] >= want - 1:
+            return
+        _MIXER_FRAMES.setdefault(self.project or "", f)
+        set_frame(w, f[0], min(f[1], 40.0), f[2], want)
+        time.sleep(0.4)
 
     def ensure_tracks_view(self, w=None) -> None:
         """The Mixer's 'Tracks' view: every track's strip in order, then the aux, output and master strips.
@@ -658,15 +766,17 @@ class Mixer:
         instrument = None
         limit = i_midi if i_midi is not None else len(kids)
         for i, k in enumerate(kids[:limit]):
-            if role(k) != "AXGroup" or k is auto or desc(k) in ("audio plug-in", "insert bar", "send button", "MIDI plug-in", ""):
+            if role(k) != "AXGroup" or k is auto:
                 continue
-            nxt = kids[i + 1] if i + 1 < len(kids) else None
-            if nxt is not None and desc(nxt) == "send knob":
+            parts = [desc(c) for c in children(k)]
+            if "open" in parts:                              # a filled plug-in slot: bypass, open, list
+                if i_midi is not None and i == i_midi - 1:
+                    instrument = desc(k)
+                else:
+                    # a slot clipped off the top of a short Mixer loses its name ('audio plug-in'): it still counts
+                    inserts.append(desc(k) if desc(k) not in ("audio plug-in", "") else "?")
+            elif "bypass" in parts and desc(k):              # a send: bypass, list (the send knobs follow all of them)
                 sends.append(desc(k))
-            elif i_midi is not None and i == i_midi - 1:
-                instrument = desc(k)
-            else:
-                inserts.append(desc(k))
         inserts.reverse()                                  # top to bottom
         nm = str(attr(name_el, "AXValue") or desc(strip)) if name_el is not None else desc(strip)
         kind = "track"
@@ -682,7 +792,16 @@ class Mixer:
                          desc(auto) if auto is not None else "", kind)
 
     def all_info(self) -> list[StripInfo]:
-        return [self.info(s, i) for i, s in enumerate(self.strips())]
+        infos = [self.info(s, i) for i, s in enumerate(self.strips())]
+        # after the tracks come the Aux strips, whatever a patch named them ('Small Room/0.4s Snare Chamber')
+        try:
+            n_tracks = len(self.app.tracks(self.app.main_window(self.project)))
+        except Exception:  # noqa: BLE001
+            n_tracks = len(infos)
+        for inf in infos[n_tracks:]:
+            if inf.kind == "track":
+                inf.kind = "aux"
+        return infos
 
     def strip(self, name: str):
         for s in self.strips():
@@ -829,6 +948,16 @@ class PluginWindow:
 
     def header_popups(self) -> list:
         return [c for c in children(self.el) if role(c) == "AXPopUpButton"]
+
+    def settings_popup(self):
+        """The Settings pop-up of the header (its value is the current setting's name: 'Manual', 'Factory Default',
+        a saved setting): the first header pop-up that is not the side chain selector."""
+        sc = self.side_chain_popup()
+        pops = self.header_popups()
+        rest = [p for p in pops if p is not sc and p != sc]
+        if rest:
+            return rest[0]
+        return pops[0] if pops else None
 
     def side_chain_popup(self):
         """The side chain selector: the header pop-up whose menu offers 'Internal'/'None' and track lists."""
