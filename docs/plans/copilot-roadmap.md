@@ -18,7 +18,7 @@ panels), and the Serum design and matching work. Checked live with a push and a 
 |---|---|
 | `PREFERENCES.md`, `CLAUDE.md` are this fork's: Logic first, session rules, mashup rules, verdicts | done |
 | `SKILL.md` is a 7 KB router; the manual is `skill/*.md`, read by job | done |
-| The skill is linked into `~/.claude/skills/rick-rubin` | done at the end of the session (see the PR) |
+| The skill is linked into `~/.claude/skills/rick-rubin` | done |
 | A song declares which genre checks apply (`song.meta["lint"]`) | done, tests. Which genres Rohil makes is still his to say |
 | `serum index` (626 presets measured) | done |
 | demucs installed for `isolate` | done: a bass part separated from a released mp3 and its notes read |
@@ -38,9 +38,9 @@ panels), and the Serum design and matching work. Checked live with a push and a 
 | `add-audio`, `add-midi`, `bounce` | checked live |
 | `rename` | checked live (capitals, brackets) |
 | `add-instrument` (an empty channel strip, then the instrument) | checked live with Serum 2 |
-| `add-serum`, `serum` (a patch into a live Serum 2) | the patch load was checked live by hand-driven steps; the commands themselves by tests |
+| `add-serum`, `serum` (a patch into a live Serum 2) | tests for the commands; the bridge call under them (`load_setting`) checked live inside `push --serum-live` |
 | `sidechain`, `instrument` on an existing track, `instrument` parameters | tests; the bridge calls under them are the ones `push` has used live |
-| `devices` (a plug-in's parameter names, read in a scratch project) | tests; not yet run for the third-party plug-ins |
+| `devices` (a plug-in's parameter names, read in a scratch project) | not yet run: the screen was locked when it was started. One command: `rick-rubin logic devices OTT ValhallaSupermassive LIMITER BASSROOM MIXROOM STEREOVAULT RESO FUSER ANIMATE` |
 | `backup`, change log, selection and Mixer window put back | checked live |
 
 Safety, in code: nothing opened, closed, saved or deleted; a pending alert stops the command; the saved state is
@@ -72,8 +72,8 @@ incremental push for song projects.
 | Design, compare, fit, save a `.SerumPreset` (was already there) | renders checked |
 | `serum install`: a designed preset in Serum's browser under User / rick-rubin | done, tests. **Rohil: open one in Serum's own window once** (the round trip is tested, a human has not looked) |
 | `serum audition`: a wav, an mp3 and a picture for him to hear; `verdict` and `taste` | done, checked with real renders |
-| A live Serum 2 in Logic carrying the patch (`push --serum-live`, `logic add-serum`) | the Audio Unit preset renders what the VST3 renders (r = 1.000); loaded in Logic live |
-| Sample tracks in Logic play the sample (rendered part), MIDI effects written into the notes | tests; live result in the PR |
+| A live Serum 2 in Logic carrying the patch (`push --serum-live`, `logic add-serum`) | checked live: the bass bounced from Logic matches the offline render in every band within 0.4 dB, level as the fader says |
+| Sample tracks in Logic play the sample (rendered part), MIDI effects written into the notes, the project key | checked live in a push |
 | Parameter or macro movement per section; custom wavetables from audio; Vital | not built |
 
 ## Phase 4. Knowledge from the producers Rohil follows — next
