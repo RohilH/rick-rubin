@@ -126,7 +126,7 @@ def _wait_for_stems(bridge: LogicBridge, roots: list[Path], before: dict[Path, f
 def split_stems(source: str | Path, out_dir: str | Path, stems: list[str] | tuple[str, ...] | str | None = None,
                 submix: bool = False, start_s: float | None = None, end_s: float | None = None, close: bool = False,
                 bridge: LogicBridge | None = None, progress=None, timeout: float | None = None,
-                bpm: float | None = None, transpose: int = 0, source_bpm: float | None = None) -> dict:
+                bpm: float | None = None, transpose: int = 0, source_bpm: float | None = None, flex_mode: str | None = None) -> dict:
     """Separate `source` with Logic's Stem Splitter into `out_dir`/<stem>.wav. `stems`: any of vocals, drums, bass,
     guitar, piano, other (default all six). `submix` adds Logic's mix of the stems not asked for (as submix.wav).
     `bpm` conforms the recording to that tempo with Logic's Smart Tempo (its tempo analysed, the region set to Flex &
@@ -148,7 +148,7 @@ def split_stems(source: str | Path, out_dir: str | Path, stems: list[str] | tupl
             raise LogicError(f"{out_dir} is in a hidden folder, which Logic's file panels cannot reach; use a visible folder (e.g. under ~/Documents)")
         from ..live.client import live_lock
         with live_lock(f"split {name}", progress=say), LogicBridge(progress=say, use_mcu=False) as b:
-            return split_stems(source, out_dir, want, submix, start_s, end_s, close, b, say, timeout, bpm, transpose, source_bpm)
+            return split_stems(source, out_dir, want, submix, start_s, end_s, close, b, say, timeout, bpm, transpose, source_bpm, flex_mode)
 
     package = work / f"{title}.logicx"
     _close_ours(bridge, title, package)
@@ -182,6 +182,9 @@ def split_stems(source: str | Path, out_dir: str | Path, stems: list[str] | tupl
         bridge.set_flex_follow(ti, "On")                  # Logic transposes audio through Flex
         bridge.set_transpose(ti, int(transpose))
         say(f"transposed {int(transpose):+d} semitones")
+    if flex_mode:
+        got = bridge.set_flex_mode(ti, flex_mode)
+        say(f"Flex Mode: {got}")
     region = bridge.select_region(ti).split(",")[0]
     roots = [package, work]
     before = {p: p.stat().st_mtime for r in roots for p in r.rglob("*.wav")}
@@ -243,3 +246,71 @@ def split_stems(source: str | Path, out_dir: str | Path, stems: list[str] | tupl
     return {"stems": out, "levels": levels, "silent": silent, "project": package, "seconds": seconds,
             "split_s": split_s, "sample_rate": sr, "tracks_added": added, "tracks_before": before_tracks,
             "source_bpm": detected, "bpm": bpm, "transpose": int(transpose)}
+
+
+def conform_recording(source: str | Path, out_file: str | Path, bpm: float | None, source_bpm: float | None = None, transpose: int = 0,
+                      flex_mode: str | None = None, close: bool = True, bridge: LogicBridge | None = None, progress=None) -> dict:
+    """Conform `source` to `bpm` with Logic's own tools and bounce it to `out_file` (24-bit WAV at the recording's rate): a project
+    at `bpm`, the recording imported, Smart Tempo analysed (`source_bpm` corrects a half/double detection), the region set to
+    Flex & Follow, `transpose` semitones through the region's Transpose, and `flex_mode` on the track ('Flex Time - Speed (FX)' is
+    a varispeed: pitch follows the tempo change, as a resampled copy would; the default Flex Time modes keep the pitch). The
+    project is saved next to the output as '<name> conform.logicx'. Returns {"file", "seconds", "source_bpm", "bpm", "length", ...}."""
+    say = progress or (lambda *_: None)
+    source = Path(source).expanduser().resolve()
+    if not source.exists():
+        raise LogicError(f"{source} does not exist")
+    out_file = Path(out_file).expanduser().resolve()
+    out_dir = out_file.parent
+    name = safe_name(source.stem)
+    title = f"{safe_name(out_file.stem)} conform"
+    work = out_dir / "logic"
+    if bridge is None:
+        if any(p.startswith(".") for p in out_dir.parts) or str(out_dir).startswith(("/private/", "/tmp/")):
+            raise LogicError(f"{out_dir} is in a hidden folder, which Logic's file panels cannot reach; use a visible folder (e.g. under ~/Documents)")
+        from ..live.client import live_lock
+        with live_lock(f"conform {name}", progress=say), LogicBridge(progress=say, use_mcu=False) as b:
+            return conform_recording(source, out_file, bpm, source_bpm, transpose, flex_mode, close, b, say)
+    package = work / f"{title}.logicx"
+    _close_ours(bridge, title, package)
+    if package.exists():
+        shutil.rmtree(package)
+    wav, sr, seconds = prepare_source(source, work / f"{name}.wav")
+    say(f"{source.name}: {seconds:.1f} s at {sr} Hz")
+    project_bpm = float(bpm or 120.0)                       # no tempo to conform to: the region is left at its own tempo
+    song = Song(title, bpm=project_bpm, key="C major")
+    song.add_track("Source", "pad")
+    song.add_section("all", max(1, int(np.ceil(seconds * 1.25 / (240.0 / project_bpm))) + 2), kind="drop", parts={})
+    smf = export_logic_midi(song, work / f"{name}.mid")
+    say(f"opening a project at {project_bpm:g} BPM in Logic")
+    bridge.open_midi_project(smf["path"], expect_tracks=1)
+    package = bridge.save_project_as(work, title)
+    ti = bridge.add_audio_track()
+    say(f"importing {wav.name}")
+    bridge.import_audio(ti, wav, 1, keep_file_rate=True)
+    bridge.select_region(ti)
+    if bpm:
+        detected = bridge.analyze_tempo(ti, expect_bpm=source_bpm)
+        say(f"Smart Tempo: the recording is {detected:g} BPM; following the project at {project_bpm:g}")
+        bridge.set_flex_follow(ti, "On")
+    else:
+        detected = project_bpm                            # transpose only: Flex on the track, no tempo following
+    if flex_mode:
+        say(f"Flex Mode: {bridge.set_flex_mode(ti, flex_mode)}")
+    if transpose:
+        if not bpm:
+            bridge.set_flex_follow(ti, "On")
+        bridge.set_transpose(ti, int(transpose))
+        say(f"transposed {int(transpose):+d} semitones")
+    length = seconds * detected / project_bpm
+    last_bar = int(np.ceil(length / (240.0 / project_bpm) - 0.05))
+    say(f"bouncing bars 1-{last_bar} ({length:.1f} s)")
+    dest = bridge.bounce(out_file, 1, last_bar, tail=False)
+    sr_b, y = read_audio(dest)
+    write_wav24(dest, sr_b, np.ascontiguousarray(y[:round(length * sr_b)]))
+    bridge.save_project()
+    if close:
+        bridge.close_project()
+    _, y = read_audio(dest)
+    rms = float(20 * np.log10(np.sqrt(np.mean(y.astype(np.float64) ** 2)) + 1e-12))
+    return {"file": dest, "seconds": seconds, "length": length, "source_bpm": detected, "bpm": project_bpm, "transpose": int(transpose),
+            "flex_mode": flex_mode, "project": package, "sample_rate": sr, "rms_db": rms, "peak_db": float(20 * np.log10(np.abs(y).max() + 1e-12))}
