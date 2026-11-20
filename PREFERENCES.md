@@ -89,7 +89,15 @@ or bounced.
 - Decide varispeed against pitch-kept stretching by measuring pitch, not by waveform correlation.
 - Check before presenting: vocal overlaps, the drum and bass source per section, the keys.
 
-## 9. Teach while doing
+## 9. Where Rohil is, and where he wants to go
+
+He is early in his production career (said 2026-11-20). He wants to make **progressive house** eventually, and likes
+**tech house** and **bass house**, which he thinks are easier to start with. So: default to tech house or bass house
+when the genre is open; explain in plain words; prefer a few strong, simple parts over many clever ones; and judge
+"finished" by the checklist in `knowledge/` rather than by how much is in the project. His references for those
+genres are on the shelf (`rick-rubin reference list`: TH, BH and PH prefixes).
+
+## 10. Teach while doing
 
 Rohil wants to get better as a producer, not only to get a result. When a technique is used, name it in a
 line and say why it fits here; when it came from a creator he follows, say who (see `knowledge/` once it

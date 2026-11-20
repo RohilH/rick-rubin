@@ -40,7 +40,7 @@ panels), and the Serum design and matching work. Checked live with a push and a 
 | `add-instrument` (an empty channel strip, then the instrument) | checked live with Serum 2 |
 | `add-serum`, `serum` (a patch into a live Serum 2) | tests for the commands; the bridge call under them (`load_setting`) checked live inside `push --serum-live` |
 | `sidechain`, `instrument` on an existing track, `instrument` parameters | tests; the bridge calls under them are the ones `push` has used live |
-| `devices` (a plug-in's parameter names, read in a scratch project) | not yet run: the screen was locked when it was started. One command: `rick-rubin logic devices OTT ValhallaSupermassive LIMITER BASSROOM MIXROOM STEREOVAULT RESO FUSER ANIMATE` |
+| `devices` (a plug-in's parameter names, read in a scratch project) | run for OTT, Valhalla Supermassive, LIMITER, BASSROOM, MIXROOM, STEREOVAULT (in `.cache/logic-devices.json`). RESO, FUSER, ANIMATE, FASTERMASTER, LEVELS, REFERENCE 3 and Ozone Imager 2 were preselected on the surface but Logic did not insert them: cause not found |
 | `backup`, change log, selection and Mixer window put back | checked live |
 
 Safety, in code: nothing opened, closed, saved or deleted; a pending alert stops the command; the saved state is
@@ -76,19 +76,18 @@ incremental push for song projects.
 | Sample tracks in Logic play the sample (rendered part), MIDI effects written into the notes, the project key | checked live in a push |
 | Parameter or macro movement per section; custom wavetables from audio; Vital | not built |
 
-## Phase 4. Knowledge from the producers Rohil follows — next
+## Phase 4. Knowledge from the producers Rohil follows — first batch done (2026-11-20)
 
-Waiting for the video links. Per video: captions (or a transcript of the audio), plus frames where a setting is
-on screen. From those:
+27 videos by Ryos, Moonboy and Alex Rome (the seven Rohil sent and twenty more from the same channels) are digested in
+`knowledge/`: 27 source digests, 190 technique cards, `PRINCIPLES.md` (17 themes across creators, each with how to
+check it by measurement), `FINISHED.md` (one checklist), three genre guides, `INDEX.md`, `TOOLS.md`. Captions were
+read in full; settings shown on screen were read from frames. Raw transcripts and frames are in
+`~/.rick-rubin/knowledge-raw/`, not in the repo.
 
-- `knowledge/sources/<creator>/<video>.md`: a short digest in our own words, with timestamps.
-- `knowledge/techniques/<topic>/<name>.md`: one card per technique: what it is, when to use it, the settings,
-  how rick-rubin does it (commands, keys), how to check it by measurement, the source.
-- Each card is tried on this Mac (in Serum, or in a Logic bounce) and marked tested, with the numbers, or untested.
-- `knowledge/INDEX.md`, one line per card, read through `SKILL.md`.
-- Where a technique is measurable it also becomes a check or a command.
-
-The library still holds no canned notes or patterns: a card says how and why, the agent writes the part.
+Not done: every card is `status: untested` (Serum commands in them were run and measured, nothing was heard or tried
+in a Logic bounce); mastering has one card; no creator teaches a tech house or bass house arrangement beyond one
+drop; swing amounts, vocal mixing and compressor basics are absent. Next: test the cards Rohil uses, with him
+listening, and write the numbers and his verdict into each.
 
 ## Phase 5. The level-up loop — started
 

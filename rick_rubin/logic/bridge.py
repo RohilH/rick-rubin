@@ -106,10 +106,13 @@ class ParamReport:
     errors: list[str] = field(default_factory=list)
 
 
-def plugin_matches(shown: str, want: str) -> bool:
+def plugin_matches(shown: str, want: str, case: bool = False) -> bool:
     """Is the surface's preselected plug-in `shown` the one called `want`? The LCD keeps only the end of a long name,
-    7 to 14 characters depending on the column ('rackspacer 2.5' and 'start 2' are Trackspacer 2.5 and Kickstart 2)."""
-    shown, want = shown.strip().lower(), want.strip().lower()
+    7 to 14 characters depending on the column ('rackspacer 2.5' and 'start 2' are Trackspacer 2.5 and Kickstart 2).
+    With `case`, capitals count: Mastering The Mix's LIMITER is not Logic's Limiter."""
+    shown, want = shown.strip(), want.strip()
+    if not case:
+        shown, want = shown.lower(), want.lower()
     return shown == want or (len(want) > 3 and shown.startswith(want)) or (len(shown) >= 6 and len(want) > len(shown) and want.endswith(shown))
 
 
@@ -1410,12 +1413,17 @@ class LogicBridge:
             self._stable_lcd(0.2, 1.0)
             return self._presel_text(u.state.line(1), slot)
         want = name.strip().lower()
-        self._scroll_list(slot, read, lambda t: plugin_matches(self._plugin_name(t), want), f"plug-in {name!r}")
+        if len(name.strip()) > 3 and name.strip().isupper():
+            # a name given in capitals is matched with its capitals (LIMITER, not Limiter)
+            self._scroll_list(slot, read, lambda t: plugin_matches(t.split(" (")[0], name, case=True), f"plug-in {name!r}")
+        else:
+            self._scroll_list(slot, read, lambda t: plugin_matches(self._plugin_name(t), want), f"plug-in {name!r}")
         self._press(M.VPOT_PUSH + slot, settle=0.8)                        # inserts it (and opens its window)
         time.sleep(0.5)
-        got = AX.wait_for(lambda: (lambda cur: cur if len(cur) > len(before) else None)(self.strip_info(ref).inserts), 6.0, 0.25)
+        # some Audio Units take a while to come up the first time (licence checks): 6 s was too short for several
+        got = AX.wait_for(lambda: (lambda cur: cur if len(cur) > len(before) else None)(self.strip_info(ref).inserts), 25.0, 0.5)
         if not got:
-            raise LogicError(f"{name!r} was preselected but Logic did not insert it")
+            raise LogicError(f"{name!r} was preselected but Logic did not insert it (pending: {self.pending_alert()})")
         self.close_plugin_windows()
         return got[slot] if len(got) > slot else got[-1]
 
@@ -1882,11 +1890,18 @@ class LogicBridge:
         page). Names are the surface's 7-character abbreviations; values are what the plug-in displays. Stops after
         `max_pages` (a synth can have hundreds: Serum 2 has 328 pages)."""
         self._name_mode()
-        for _ in range(60):                                    # back to the first page
+        # back to the first page: until the header says page 1 or, when a long plug-in name pushes the page count off
+        # the LCD, until a step left no longer changes the names
+        prev = None
+        for _ in range(60):
             self._stable_lcd(0.5, 2.0)
             m = re.search(r"Page (\d+)/(\d+)", self._lcd()[0])
-            if m is None or m.group(1) == "1":
+            if m is not None and m.group(1) == "1":
                 break
+            names = self._names()
+            if m is None and names == prev:
+                break
+            prev = names
             self._press(M.CURSOR_LEFT, 0.3)
         out: dict[str, str] = {}
         seen: set[tuple] = set()
@@ -2121,8 +2136,14 @@ class LogicBridge:
                     self.say(f"the project ends at bar {project_end:g}: bouncing to there, not to bar {end_bar + 1}")
                 want_end = int(min(end_bar + 1, project_end))
                 try:
-                    self._set_position_group(groups[0], start_bar)
-                    self._set_position_group(groups[1], want_end)
+                    # the start can only be moved to before the end, so widen first: end up, then start down
+                    cur_end = AX.disp_number(AX.desc(groups[1]).split("\t")[1]) or want_end
+                    if want_end >= cur_end:
+                        self._set_position_group(groups[1], want_end)
+                        self._set_position_group(groups[0], start_bar)
+                    else:
+                        self._set_position_group(groups[0], start_bar)
+                        self._set_position_group(groups[1], want_end)
                 except LogicError as e:
                     if "steps by" not in str(e):
                         raise
@@ -2202,52 +2223,36 @@ class LogicBridge:
 
     @staticmethod
     def _set_position_group(group, bar: int) -> None:
-        """A bar.beat.div.tick display: bring it to bar `bar` exactly, when its segments allow. Logic 11.2.2's AXIncrement /
-        AXDecrement move a segment by *ten* units (ten bars, ten beats, ten ticks — carrying into the next segment), so a
-        trial step is made first: segments that step by one are set (bar to `bar`, the rest to 1); when the display steps by
-        ten, the bar is reached only if it is a multiple of ten away, and the finer segments are left as they are (the
-        caller trims the bounce to length)."""
+        """A bar.beat.div.tick display of a dialog: bring it to `bar` 1 1 1. On Logic 11.2.2 AXIncrement / AXDecrement move
+        a segment by ten units, and typing is not taken, but giving a segment a value below (or above) its own moves it by
+        exactly one. So each segment is walked one unit at a time: the bar to `bar`, then beat, division and tick to 1."""
         segs = [c for c in AX.children(group) if AX.role(c) == "AXSlider"]
         if not segs:
             return
 
-        def num(seg):
-            v = AX.disp_number(AX.shown(seg))
-            return None if v is None else int(v)
+        def shown() -> list[int]:
+            out = []
+            for part in AX.desc(group).replace("\t", " ").split():
+                v = AX.disp_number(part)
+                out.append(int(v) if v is not None else 0)
+            return out
 
-        def step_size(seg):
-            before = num(seg)
-            AX.do(seg, "AXIncrement")
-            time.sleep(0.12)
-            after = num(seg)
-            AX.do(seg, "AXDecrement")
-            time.sleep(0.12)
-            return None if before is None or after is None else after - before
-
-        cur = num(segs[0])
-        if cur is not None and cur != bar:
-            size = step_size(segs[0]) or 1
-            if size <= 0 or (bar - cur) % size:
-                raise LogicError(f"the bounce position steps by {size} bars: cannot reach bar {bar} from {cur}")
-            for _ in range(400):
-                cur = num(segs[0])
-                if cur is None or cur == bar:
+        for idx, target in enumerate([int(bar), 1, 1, 1][: len(segs)]):
+            for _ in range(4000):
+                cur = shown()
+                if len(cur) <= idx or cur[idx] == target:
                     break
-                AX.do(segs[0], "AXIncrement" if cur < bar else "AXDecrement")
-            got = num(segs[0])
-            if got is None or got != bar:
-                raise LogicError(f"the bounce position stayed at bar {got}, not {bar}")
-        for seg in segs[1:]:
-            cur = num(seg)
-            if cur is None or cur <= 1:
-                continue
-            if step_size(seg) != 1:
-                break                                 # tens: leave beat/division/tick alone
-            for _ in range(20):
-                cur = num(seg)
-                if cur is None or cur <= 1:
-                    break
-                AX.do(seg, "AXDecrement")
+                up = cur[idx] < target
+                edge = AX.attr(segs[idx], "AXMaxValue" if up else "AXMinValue")
+                AX.set_value(segs[idx], float(edge) if edge is not None else (1e18 if up else 1.0))
+                time.sleep(0.03)
+                if shown() == cur:
+                    time.sleep(0.15)
+                    if shown() == cur:
+                        raise LogicError(f"the bounce position steps by something other than one: it stayed at {cur} on the way to bar {bar}")
+        got = shown()
+        if got and got[0] != int(bar):
+            raise LogicError(f"the bounce position steps by something other than one: it reads {got}, not bar {bar}")
 
     # ------------------------------------------------------------------ automation, written in real time
     # Logic's fader law as the Mackie Control sees it: (14-bit position, dB) pairs read back from Logic 11.2

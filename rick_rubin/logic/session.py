@@ -343,6 +343,8 @@ class Session:
         if not isinstance(target, int):
             raise LogicError("sends are set on tracks; give a track name or number")
         want = f"Bus {bus}"
+        if db is None and want not in info.sends:
+            raise LogicError(f"{info.name!r} has no send to {want} (sends: {info.sends or 'none'})")
         slot = info.sends.index(want) + 1 if want in info.sends else len(info.sends) + 1
         self._begin()
         self._single(target)
@@ -480,7 +482,9 @@ class Session:
             for s in self.b.strips():
                 if s.solo != was.get(s.name, False):
                     self.b.set_solo(s.name if s.kind != "track" else s.index, was.get(s.name, False))
-        return {"path": str(path), "bars": list(bars) if bars else None, "tracks": [i.name for _t, i in targets]}
+        # with nothing asked to be soloed, strips that were soloed already stay soloed: the file holds only those
+        return {"path": str(path), "bars": list(bars) if bars else None, "tracks": [i.name for _t, i in targets],
+                "soloed_already": [] if targets else [n for n, on in was.items() if on]}
 
 
 def _try(fn):
@@ -765,6 +769,8 @@ def run(a, say=None) -> int:
                 r = s.bounce(args[0], bars, a.tracks)
                 print(f"bounced {r['path']}" + (f" (bars {bars[0]}-{bars[1]})" if bars else "") + (f", soloed {r['tracks']}" if r["tracks"] else "")
                       + f" in {time.time() - t0:.0f} s")
+                if r.get("soloed_already"):
+                    print(f"note: {r['soloed_already']} were soloed in the project, so the bounce holds only those")
                 return 0
             for c in changes:
                 print(c.line())

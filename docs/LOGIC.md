@@ -84,6 +84,14 @@ field has the focus (outside one, Logic reads letters as key commands).
   insert reads `audio plug-in` and the instrument reads `input`. A new Mixer window opens 644 px high, which
   clips them. The bridge opens a Mixer window of its own (not the pane) and makes it 900 px high. A slot whose
   name is still hidden is listed as `?` so that slot numbers stay right.
+- **A wide Mixer window.** Strips beyond the window's right edge are not named either. With more strips than fit
+  (a 38-strip project needs about 2,700 px) the window is widened to hold them all, hanging off the left of the
+  screen: a window may be wider than the screen once its left edge is off it. When macOS puts it back at x = 0
+  and it hangs off the right instead, Logic names the strip controls by identifier (`volumeFader`, `midiPlugIn`,
+  `sendKnob`); the reader takes both spellings. The old frame is restored when the bridge closes.
+- **Track names.** A muted track's header reads `Track 5 “Audio 30”, mute`; an output track shown at the bottom
+  of the Tracks area (`Stereo Out`) is not a track strip. Collapsed stacks hide their inner tracks from both the
+  track list and the Mixer, so `#n` counts the tracks that are visible.
 - **Slots are told apart by what they hold**: a plug-in slot has `bypass`, `open`, `list`; a send has `bypass`,
   `list`, and all send knobs follow all sends (so the second of two sends is not followed by its knob).
 
@@ -194,10 +202,13 @@ command again into the same folder replaces its project and stems. Other open pr
 same name in another folder stops the command (the bridge finds project windows by name), rather than being closed. The
 recording's copy next to the project is the project's source file — keep it with the project.
 
-A bar range (`--bars 33-40`) is dialled into the bounce dialog when its position fields allow it. On Logic 11.2.2
-they move ten bars at a time, so the bounce is made over the range the dialog holds (the project, unless a cycle
-or selection narrows it) and the bars are cut out of the file afterwards at the project's tempo and time
-signature. A range the dialog does not cover is an error that says what to clear.
+A bar range (`--bars 33-40`) is dialled into the bounce dialog. On Logic 11.2.2 its position fields do not take
+typed numbers and their increment and decrement actions move ten units, but giving a segment a value below (or
+above) its own moves it by exactly one, so each field is walked one unit at a time (end first when the range
+grows). This works with a cycle or a region selection in place, which otherwise narrow what the dialog offers
+(a project with seven regions selected offered bars 25-43). If a field ever refuses to move, the bounce is made
+over the range the dialog holds and the bars are cut out of the file afterwards. A bounce without `--tracks`
+keeps whatever solos the project has and says so.
 
 ## What differs from Live, and what is missing
 
