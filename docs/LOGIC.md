@@ -66,7 +66,10 @@ calls on it, mirroring `live/client.py`.
 | pattern / section parts | one region per track per section with the notes (swing and groove baked in, as for Live) |
 | drum track on a single-voice instrument (Drum Synth, Quick Sampler, `sample=`) | every hit sent on C3, like Live's Simpler one-shots (those instruments pitch by note) |
 | `effects` | Logic plug-ins by name in the insert slots, in order, after the patch's own inserts; `params` set by displayed value |
+| `serum="<preset>"` | the part rendered through Serum 2 offline (at the song's tempo, section filter/volume baked in), imported at bar 1 onto an audio track named after the track; its effects, sends and mixer as for any track |
 | `sidechain: true` | a Compressor keyed from the Kick (side chain input = the Kick's channel strip) |
+| `sidechain: "kickstart"` | Kickstart 2 on the track (no routing: a tempo-locked volume shape), its Loop Length from the kick pattern: 0.00 every beat, 0.33 every 2 beats, 1.00 every bar (measured on bounces at 126 BPM), Mix 1.0 (≈ 47 dB deep) |
+| `effects=[{"device": "Trackspacer 2.5", "sidechain": "Vocal", ...}]` | Trackspacer on the track, its side chain input = the named track's strip; it carves that track's spectrum out of this one |
 | `returns` A, B … and `sends` | Bus 1, 2 … with an Aux each, the return's plug-ins on the Aux, sends in dB |
 | `master_effects` | plug-ins on Stereo Out |
 | section automation `volume`, `filter` | written as track automation in real time with `--automation` (the automated bars are played once per parameter): the fader for volume, the Cutoff of an AutoFilter the push inserts for filter |
@@ -133,10 +136,11 @@ recording's copy next to the project is the project's source file — keep it wi
 - A re-push closes the project it saved earlier (same title) without saving; any other open project is
   left alone and Logic keeps both open. If Logic asks about an unsaved project that is not ours, the bridge
   answers "Don't Close".
-- Audio-loop tracks (`audio=True`) get an audio track after the MIDI tracks with each loop segment imported at
-  its bar (File > Import > Audio File, driven through the panel's column browser). Sample one-shot tracks
-  (`sample=`) are not built yet: their tracks exist and play the role's patch. Serum stems are not placed;
-  use `instrument="Serum 2"` to play the part live.
+- Audio-loop tracks (`audio=True`) and Serum tracks (`serum=`) get audio tracks after the MIDI tracks: each loop
+  segment imported at its bar, the Serum stem at bar 1 (File > Import > Audio File, driven through the panel's
+  column browser). The MIDI file has an empty placeholder track for each of them (so the import keeps the song's
+  order); the push deletes those (Track > Delete Track). Sample one-shot tracks (`sample=`) are not built yet:
+  their tracks exist and play the role's patch. `instrument="Serum 2"` instead puts a live Serum on its init patch.
 - MIDI effects are not built; notes are sent as written.
 - Automation needs `--automation` because it plays the automated bars: a 16-bar volume ride at 126 BPM takes
   30 seconds. Filter automation rides the Cutoff of an AutoFilter the push inserts on the track.
@@ -157,6 +161,8 @@ recording's copy next to the project is the project's source file — keep it wi
 | Faders or plug-ins changed on *every* track | Several tracks were selected in Logic: it applies strip edits to all selected strips. The bridge selects one track before each edit; do not select tracks by hand during a push. |
 | `Stem Splitter is not available` | The Stem Splitter needs Logic Pro 11 and a Mac with Apple silicon. On Logic 11.0/11.1 only four stems exist (vocals, drums, bass, other): ask for those. |
 | `the Stem Splitter did not finish in … s` | Logic was still working (a long recording on a busy Mac) or asked something; the message says what is pending. The project stays open: wait for its progress window, then run again. |
+| A push stalls after an audio import, every strip edit failing | Logic was asking a question the bridge did not expect. Known ones are answered: the file's tempo ("Don't Import"), its sample rate ("Convert File", keeping the project's rate: stems are 44.1 kHz, new projects may be 48 kHz), "Delete Track and Regions?" ("Delete", for the placeholder tracks). Anything else is reported by name; answer it in Logic and push again. |
+| `no plug-in called X` for a third-party plug-in that is installed | The surface shows only the end of a long name (7 to 14 characters by column: `rackspacer 2.5`, `start 2`); the bridge matches those tails. If it still fails, check the name in Logic's own plug-in menu. |
 | A file dialog does not find the folder | File panels are navigated by column; hidden folders (`/private/tmp`, dot folders) cannot be reached. Keep projects somewhere visible, e.g. under `~/Documents`. |
 
 ## Logic's instrument choices per role (for reference)

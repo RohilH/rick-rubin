@@ -146,9 +146,11 @@ def _main(argv: list[str] | None = None) -> int:
     s.add_argument("--port", type=int, default=9889)
 
     s = sub.add_parser("reference", help="measure a mix against released tracks: loudness, punch, balance, width, pump, movement")
-    s.add_argument("action", choices=["add", "list", "compare"])
+    s.add_argument("action", choices=["add", "list", "compare", "stems"])
     s.add_argument("paths", nargs="*", help="add: audio files of released tracks in the genre · compare: a project folder, "
-                                            "optionally followed by a wav (default: its live.wav, else preview.wav)")
+                                            "optionally followed by a wav (default: its live.wav, else preview.wav) · stems: the "
+                                            "reference part (from `isolate`) then your track's captured/bounced part(s)")
+    s.add_argument("--bpm", type=float, help="stems: the tempo both are at (for the pump measure)")
 
     s = sub.add_parser("transcribe", help="syllables of a vocal sample with bar.beat.sixteenth positions and ms offsets (cached; shown in score.md)")
     s.add_argument("dir")
@@ -181,6 +183,18 @@ def _main(argv: list[str] | None = None) -> int:
     s.add_argument("--bpm", type=float, help="tempo to map onto (default: the song's)")
     s.add_argument("--fmin", type=float, default=65.0, help="lowest pitch to look for in Hz (lower it for bass: 30)")
     s.add_argument("--fmax", type=float, default=1000.0)
+
+    s = sub.add_parser("isolate", help="cut one part (bass, lead, pad, vocals, drums) out of a reference recording, to match a synth against it")
+    s.add_argument("dir")
+    s.add_argument("source", help="the reference recording (any path)")
+    s.add_argument("--part", default="bass", help="bass | lead | pad | chords | keys | vocals | drums | other")
+    s.add_argument("--bars", type=_bars, help="bar range at the reference's tempo, e.g. 33-36 (tempo: --bpm, else estimated)")
+    s.add_argument("--bpm", type=float, help="the reference's tempo")
+    s.add_argument("--from", dest="start_s", type=float, help="start, seconds (instead of --bars)")
+    s.add_argument("--to", dest="end_s", type=float, help="end, seconds")
+    s.add_argument("--method", default="auto", help="auto (demucs when installed, else band-pass) | demucs | bandpass | none")
+    s.add_argument("--stem", help="a stem you already have: only cut it")
+    s.add_argument("--out", help="where to write it (default samples/raw/ref_<part>.wav in the project)")
 
     s = sub.add_parser("retime", help="audio-quantize a vocal loop: slide each word (or syllable) so its vowel lands on the grid")
     s.add_argument("dir")
@@ -216,16 +230,40 @@ def _main(argv: list[str] | None = None) -> int:
     s.add_argument("--out", help="output WAV (default: samples/<source name>-<bpm>.wav in the project)")
     s.add_argument("--keep-open", action="store_true", help="leave the Logic project open")
 
-    s = sub.add_parser("serum", help="read Serum 2 presets: `serum list` to find one, `serum show NAME` for its patch sheet")
-    s.add_argument("action", choices=["list", "search", "index", "show", "params", "render", "view"])
-    s.add_argument("words", nargs="*", help="show/params/render/view: the preset's name (or words from it, or a path); "
-                                            "search/list: words that must all match")
+    s = sub.add_parser("serum", help="Serum 2: find presets (list, search), read them (show, patch, params), hear them by measurement "
+                                     "(render, describe, ab), design and save patches (set)")
+    s.add_argument("action", choices=["list", "search", "index", "show", "params", "render", "view", "patch", "set", "describe", "ab", "tables", "shapes",
+                                      "match", "fit"])
+    s.add_argument("words", nargs="*", help="show/params/render/view/patch/describe/ab: the preset's name (or words from it, or a path; 'init' = "
+                                            "Serum's init patch); set: the preset, then KEY=VALUE settings (osc_a.detune=0.18 filter_1.cutoff_hz=800); "
+                                            "describe: a .wav also works; search/list/tables/shapes: words that must all match")
+    s.add_argument("--group", help="params: one group of the producer-facing map (osc filter env lfo mod macro fx global routing noise sub random "
+                                   "osc-sample arp), with the preset's values when one is named")
+    s.add_argument("--menus", action="store_true", help="params --group: also list every option of the group's menus")
+    s.add_argument("--mod", action="append", default=[], metavar="SRC:DEST:AMOUNT", help="set/ab: add a mod routing, e.g. lfo_1:filter_1.cutoff_hz:25")
+    s.add_argument("--unmod", action="append", default=[], metavar="DEST|SLOT", help="set: clear the mod slots that target DEST (or slot N)")
+    s.add_argument("--fx-add", action="append", default=[], metavar="UNIT[:bus1]", help="set: add an FX unit (distortion reverb delay chorus eq compressor ...)")
+    s.add_argument("--fx-remove", action="append", default=[], metavar="LABEL", help="set: remove an FX unit, e.g. fx.chorus or fx.reverb#2")
+    s.add_argument("--try", dest="tries", action="append", default=[], metavar="'KEY=VALUE ...'", help="ab: one variant (several settings in one quoted string); repeat for more")
+    s.add_argument("--save", metavar="NAME|PATH", help="set: save the result as a .SerumPreset (a bare name goes to <project>/serum/presets/)")
+    s.add_argument("--project", help="set: the song project the preset belongs to (default: the current folder)")
+    s.add_argument("--install", action="store_true", help="set --save: also copy the preset into Serum's User preset folder (outside the project: ask the owner first)")
+    s.add_argument("--author", default=None, help="set --save: preset author")
+    s.add_argument("--description", default=None, help="set --save: preset description")
+    s.add_argument("--bpm", type=float, help="render/describe/ab/set: tempo for synced LFOs and delays (default: Serum's offline 120), and for rates in beats")
+    s.add_argument("--out-dir", help="ab: also write each variant's render here")
+    s.add_argument("--like-audio", help="search: rank presets by closeness in sound to this recording (a wav of one part)")
+    s.add_argument("--target", help="fit: the recording to match (e.g. samples/raw/ref_bass.wav from `isolate`)")
+    s.add_argument("--params", help="fit: the patch keys to move, comma-separated (pick the few that matter from `serum patch`)")
+    s.add_argument("--iters", type=int, default=30, help="fit: how many renders to spend (about a second each)")
+    s.add_argument("--no-render", action="store_true", help="set: do not render before/after")
     s.add_argument("--sort", help="search: attack decay bright dark sub bass wide loud length")
     s.add_argument("--like", nargs="+", help="search: rank by closeness in sound to this preset (its name, or words from it)")
     s.add_argument("--not", dest="exclude", nargs="+", default=[], metavar="WORD", help="search: leave out anything matching these words")
     s.add_argument("--limit", type=int, default=25)
     s.add_argument("--note", action="append", default=[], help="render: note(s) to play, e.g. --note C1 --note G1 (default C2); Ableton naming")
-    s.add_argument("--secs", type=float, default=1.0, help="render: how long each note is held")
+    s.add_argument("--secs", type=float, default=None, help="render/describe/ab/set: how long the note is held (default 1 s); describe FILE.wav: "
+                                                            "when the note-off happened, for the release")
     s.add_argument("--set", action="append", default=[], metavar="PARAM=VALUE", help="render/params: set a Serum parameter first, e.g. --set macro_1=80")
     s.add_argument("--out", help="render: the wav to write (e.g. <project>/samples/raw/reese_C1.wav); view: the png to write")
     s.add_argument("--search", help="list: words that must appear in the name, description, author or folder")
@@ -460,6 +498,11 @@ def _main(argv: list[str] | None = None) -> int:
             added = ref.add_references(a.paths, progress=lambda m: print("·", m, file=sys.stderr))
             print(ref.SUMMARY_HEAD + "\n" + "\n".join(ref.summary_row(x) for x in added))
             print(f"{len(ref.load_shelf())} references on the shelf ({ref.shelf_path()}); only measurements are stored, not audio")
+        elif a.action == "stems":
+            if len(a.paths) < 2:
+                ap.error("reference stems needs the reference part and at least one part to compare with it")
+            profs = [ref.profile(Path(x), Path(x).name, bpm=a.bpm) for x in a.paths]
+            print(ref.compare_stems(profs[0], profs[1:]))
         elif a.action == "list":
             shelf = ref.load_shelf()
             print(ref.SUMMARY_HEAD + "\n" + "\n".join(ref.summary_row(x) for x in shelf))
@@ -541,6 +584,18 @@ def _main(argv: list[str] | None = None) -> int:
         notes = sample_notes(p.root / a.sample, a.bpm or song.bpm, song.key_obj, fmin=a.fmin, fmax=a.fmax)
         print(f"{a.sample} at {a.bpm or song.bpm:g} BPM, song key {song.key} ('!' = outside it)")
         print(table(notes, load_words(p.root / a.sample)))
+    elif a.cmd == "isolate":
+        from .isolate import isolate
+        from .pitch import table
+        p = Project(a.dir)
+        out = Path(a.out) if a.out else p.root / "samples" / "raw" / f"ref_{a.part}.wav"
+        r = isolate(a.source, out, a.part, a.bars, a.bpm, a.start_s, a.end_s, a.method, a.stem)
+        print(f"{r['path']}: {a.part}, {r['start_s']:.2f}-{r['end_s']:.2f} s of {Path(a.source).name}" + (f" at {r['bpm']:.1f} BPM" if r["bpm"] else "")
+              + f", by {r['method']}")
+        if r["warning"]:
+            print("note:", r["warning"])
+        print(table(r["notes"]))
+        print("next: `rick-rubin serum describe " + str(r["path"]) + "`, `serum search --like-audio ...`, `serum fit ... --target ...`")
     elif a.cmd == "retime":
         from .transcribe import load_words, retime_loop
         p = Project(a.dir)
@@ -571,14 +626,14 @@ def _main(argv: list[str] | None = None) -> int:
             from .samples import FEATURE_HEAD, feature_row
             words = list(a.words) + (a.search.split() if a.search else []) + ["-" + w for w in a.exclude]
             a.like = " ".join(a.like) if a.like else None
-            hits = serum.search(words, a.folder, a.tag, a.sort, a.like, a.limit)
+            hits = serum.search(words, a.folder, a.tag, a.sort, a.like, a.limit, like_audio=a.like_audio)
             print("each preset measured on the key that makes it sound around C2 (so registers are comparable); 'oct' is the patch's own "
                   "octave offset: -2 means playing C2 sounds as C0 — write its notes two octaves higher than you want to hear")
             print(FEATURE_HEAD)
             for _, d in hits:
                 label = f"{d['folder']}/{d['name']}" + (f" [{d['voices']}; oct {d.get('patch_octave', 0):+d}; fx {' '.join(d['fx']) or '-'}]")
                 print(feature_row(d, label))
-            print(f"{len(hits)} shown" + (f" (closest to {a.like!r} first)" if a.like else "") + " — words can be character (snappy dark subby wide sustained ...), "
+            print(f"{len(hits)} shown" + (f" (closest to {a.like or a.like_audio!r} first)" if a.like or a.like_audio else "") + " — words can be character (snappy dark subby wide sustained ...), "
                   "folder, tag, mono/poly, engine (wavetable sample granular spectral sub noise), fx (reverb delay distortion ...) or macro names")
         elif a.action == "view":
             from .pictures import serum_png
@@ -586,6 +641,43 @@ def _main(argv: list[str] | None = None) -> int:
                 ap.error("serum view needs a preset name and --out FILE.png")
             vals = {k: (float(v) if v.replace(".", "", 1).replace("-", "", 1).isdigit() else v) for k, _, v in (kv.partition("=") for kv in a.set)}
             print(serum_png(a.name, a.out, (a.note or ["C2"])[0], vals or None))
+        elif a.action == "params" and a.group:
+            from . import serum_params as sp
+            values = None
+            if a.name:
+                from .serum_patch import Patch
+                pt = Patch.open(a.name, a.root)
+                values = {k: pt.get(k) for k in sp.all_params() if sp.all_params()[k].group == a.group}
+                print(f"# {pt.name}")
+            print(sp.view(a.group, values, a.menus))
+            if a.group == "fx" and a.name:
+                print("in this patch: " + (" → ".join(f"{lab} ({', '.join(f'{k} {sp.fmt(v)}' for k, v in prm.items()) or 'init'})" for lab, _, _, prm in pt.fx()) or "no FX"))
+        elif a.action in ("patch", "set", "describe", "ab", "fit"):
+            _serum_design(a, ap)
+        elif a.action == "match":
+            from .samples import read_audio
+            from .soundmatch import distance, features, parts_text
+            from .sounddesign import describe_table
+            if len(a.words) < 2:
+                ap.error("serum match needs a target wav and one or more candidate wavs")
+            feats = []
+            for w in a.words:
+                sr, x = read_audio(w)
+                feats.append((w, features(sr, x, a.secs)))
+            for f in feats:
+                f[1]["describe"]["name"] = Path(f[0]).name
+            print(describe_table([f["describe"] for _, f in feats]))
+            print("")
+            for w, f in feats[1:]:
+                d, parts = distance(feats[0][1], f)
+                print(f"- {Path(w).name}: distance {d:.2f} ({parts_text(parts)})")
+        elif a.action in ("tables", "shapes"):
+            root = serum.preset_root().parent / ("Tables" if a.action == "tables" else "LFO Shapes")
+            ext = "*.wav" if a.action == "tables" else "*.XferShape"
+            rows = [str(f.relative_to(root)).rsplit(".", 1)[0] for f in sorted(root.rglob(ext))]
+            rows = [r for r in rows if all(w.lower() in r.lower() for w in a.words)]
+            print("\n".join(rows))
+            print(f"{len(rows)} {'wavetables (osc_a.wavetable=FOLDER/NAME.wav)' if a.action == 'tables' else 'LFO shapes (lfo_1.shape=FOLDER/NAME)'} under {root}")
         elif a.action in ("params", "render"):
             if not a.name:
                 ap.error(f"serum {a.action} needs a preset name")
@@ -608,9 +700,13 @@ def _main(argv: list[str] | None = None) -> int:
                 if not a.out:
                     ap.error("serum render needs --out FILE.wav")
                 pitches = [parse_note(n) for n in (a.note or ["C2"])]
+                a.secs = a.secs or 1.0
                 tail = 1.5
                 notes = [(p_, i * (a.secs + tail), a.secs, 100) for i, p_ in enumerate(pitches)]
-                audio = host.render(notes, len(pitches) * (a.secs + tail))
+                if a.bpm:
+                    _, audio = serum.render_preset(a.name, notes, len(pitches) * (a.secs + tail), vals, root=a.root, bpm=a.bpm)
+                else:
+                    audio = host.render(notes, len(pitches) * (a.secs + tail))
                 Path(a.out).parent.mkdir(parents=True, exist_ok=True)
                 write_wav24(a.out, 44100, audio)
                 print(f"{name!r} playing {' '.join(a.note or ['C2'])} -> {a.out}")
@@ -666,6 +762,93 @@ def _main(argv: list[str] | None = None) -> int:
         with LiveBridge(port=a.port) as b:
             print(json.dumps(b.call("ping")))
     return 0
+
+
+def _serum_design(a, ap) -> None:
+    """serum patch / set / describe / ab: read a patch by the producer-facing map, change it, hear the change by measurement."""
+    from .serum_patch import Patch, apply_edits, audition, parse_assignments, render_note
+    from .sounddesign import describe_file, describe_sound, describe_table
+    words = [w for w in a.words if "=" not in w]
+    settings = parse_assignments([w for w in a.words if "=" in w] + list(a.set))
+    name = " ".join(words) or None
+    note = (a.note or ["C2"])[0]
+    if a.action == "describe" and name and name.lower().endswith(".wav"):
+        print(describe_table([describe_file(name, a.secs, a.bpm)]))
+        return
+    a.secs = a.secs or 1.0
+    if not name:
+        ap.error(f"serum {a.action} needs a preset name (or 'init')")
+    base = Patch.open(name, a.root)
+    if a.action == "patch":
+        print(base.summary(), end="")
+        return
+    edits = dict(settings, mod=list(a.mod), unmod=list(a.unmod), fx_add=list(getattr(a, "fx_add")), fx_remove=list(getattr(a, "fx_remove")))
+    if a.action == "describe":
+        p = apply_edits(base.copy(), edits)
+        sr, audio, held = render_note(p, note, a.secs, a.bpm)
+        print(f"{p.name} playing {note} for {a.secs:g} s" + (f" at {a.bpm:g} BPM" if a.bpm else ""))
+        print(describe_table([describe_sound(sr, audio, p.name, held, a.bpm)]))
+        return
+    if a.action == "fit":
+        from .soundmatch import fit, parts_text
+        from .samples import read_audio
+        if not a.target or not a.params:
+            ap.error("serum fit needs --target FILE.wav and --params key,key,...")
+        start = apply_edits(base.copy(), edits)
+        keys = [k.strip() for k in a.params.split(",") if k.strip()]
+        notes = None
+        if a.note:
+            from .theory import note as parse_note
+            notes = [(parse_note(n), 0.0, a.secs, 100) for n in a.note[:1]]
+        r = fit(start, a.target, keys, a.iters, notes, a.bpm, progress=lambda m: print("·", m, file=sys.stderr))
+        print(f"{start.name} fitted to {Path(a.target).name}: distance {r.start:.2f} -> {r.best:.2f} in {r.renders} renders"
+              + (f" (played {r.transpose:+d} semitones to sound in the target's register)" if r.transpose else ""))
+        print(f"  before: {parts_text(r.parts_start)}\n  after:  {parts_text(r.parts_best)}")
+        print("  kept: " + (", ".join(f"{s_.key}={s_.value:.4g}" for s_ in r.steps if s_.kept) or "nothing improved it"))
+        print("  values: " + ", ".join(f"{k}={v:.4g}" for k, v in r.values.items()))
+        sr, tx = read_audio(a.target)
+        tgt = describe_sound(sr, tx, "target")
+        from .soundmatch import _render, target_notes
+        nn = notes or target_notes(a.target, a.bpm)
+        rows = [tgt] + [describe_sound(44100, _render(pp, nn, len(tx) / sr, a.bpm, r.transpose), lab) for lab, pp in (("start", start), ("fitted", r.patch))]
+        print(describe_table(rows))
+        if a.save:
+            dest = Path(a.save)
+            if dest.parent == Path("."):
+                dest = Path(a.project or ".") / "serum" / "presets" / dest.name
+            out = r.patch.save(dest, name=dest.stem, author=a.author, description=a.description or f"fitted to {Path(a.target).name}")
+            print(f"saved {out}")
+        return
+    if a.action == "ab":
+        if not a.tries:
+            ap.error("serum ab needs at least one --try 'KEY=VALUE ...'")
+        start = apply_edits(base.copy(), edits)
+        variants = [(t, parse_assignments([t])) for t in a.tries]
+        rows = audition(start, variants, note, a.secs, a.bpm, a.out_dir)
+        print(f"{start.name} playing {note} for {a.secs:g} s; base" + (f" = {', '.join(f'{k}={v}' for k, v in settings.items())}" if settings else "") +
+              (f"; renders in {a.out_dir}" if a.out_dir else ""))
+        print(describe_table(rows))
+        return
+    # set
+    after = apply_edits(base.copy(), edits)
+    print("changed: " + ("; ".join(after.log[len(base.log):]) or "nothing"))
+    if not a.no_render:
+        rows = audition(base, [("after", edits)], note, a.secs, a.bpm)
+        rows[0]["name"], rows[1]["name"] = f"before ({base.name})", "after"
+        print(describe_table(rows))
+    if a.save:
+        dest = Path(a.save)
+        if dest.parent == Path(".") and not a.save.startswith("."):
+            dest = Path(a.project or ".") / "serum" / "presets" / dest.name
+        out = after.save(dest, name=dest.stem.removesuffix(".SerumPreset") if dest.suffix.lower() != ".serumpreset" else dest.stem,
+                         author=a.author, description=a.description)
+        print(f"saved {out}" + (f"  — use it with serum=\"{os.path.relpath(out, a.project)}\"" if a.project else ""))
+        if a.install:
+            import shutil
+            from . import serum
+            user = serum.preset_root().parent / "User"
+            shutil.copy2(out, user / out.name)
+            print(f"copied to {user / out.name}")
 
 
 def main(argv: list[str] | None = None) -> int:

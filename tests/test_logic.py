@@ -1,9 +1,11 @@
 """The Logic Pro render target, tested without Logic: the MIDI file it opens, the readings of the Mackie Control
 emulation, the number parsing, and a whole push against a fake bridge. (The real bridge is exercised by hand:
 see docs/LOGIC.md.)"""
+import json
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -59,6 +61,13 @@ def test_display_numbers_and_abbreviations():
     assert F(-1.0) > F(-2.0)
 
 
+def test_clipped_plugin_names_on_the_surface():
+    m = B.plugin_matches
+    assert m("rackspacer 2.5", "Trackspacer 2.5") and m("start 2", "Kickstart 2") and m("aptive limiter", "Adaptive Limiter")
+    assert m("Compressor", "compressor") and m("channel eq", "Channel EQ")
+    assert not m("aptive limiter", "Limiter") and not m("ver compressor", "Compressor") and not m("leDelay", "Tape Delay")
+
+
 def test_surface_state_reads_lcd_and_clock():
     st = SurfaceState()
     text = "Kick   Hats   PulsBs ThFiLe St Out Master               "
@@ -110,6 +119,55 @@ def test_push_song_into_fake_logic(tmp_path):
     # a second push closes our earlier project first
     rep2 = C.push_song(s, fake, replace=True)
     assert "Fake Push" in fake.closed and rep2.clips == rep.clips
+
+
+def test_push_places_serum_stems_kickstart_and_trackspacer(tmp_path, monkeypatch):
+    from rick_rubin import serum
+    from rick_rubin.samples import write_wav24
+
+    def fake_stem(song, track, clips):                    # the real one renders through Serum 2
+        out = tmp_path / "serum" / f"{track.name}.abc.wav"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        write_wav24(out, 44100, np.zeros((44100, 2), np.float32))
+        return out
+    monkeypatch.setattr(serum, "track_stem", fake_stem)
+    s = Song("Stems", bpm=126, key="F minor")
+    s.base_dir = tmp_path
+    kick = s.add_track("Kick", "kick")
+    bass = s.add_track("Bass", "bass", serum="serum/presets/night-bass.SerumPreset", sidechain=True, volume_db=-7)
+    lead = s.add_track("Lead", "lead")
+    pad = s.add_track("Pad", "pad", sidechain="kickstart",
+                      effects=[{"device": "Trackspacer 2.5", "sidechain": "Lead", "params": {"Ratio": 60, "Release": 120}}])
+    s.pattern("four", kick, "x...x...x...x...")
+    s.pattern("line", bass, "1.3 F0 0.4; 2.3 F0 0.4")
+    s.pattern("hook", lead, "1.1 C4 1; 3.1 Ab3 1")
+    s.pattern("hold", pad, "1.1 [F2 C3] 4")
+    s.add_section("drop", 8, kind="drop", parts={kick: "four", bass: "line", lead: "hook", pad: "hold"})
+    fake = FakeLogicBridge()
+    rep = C.push_song(s, fake, replace=True)
+    assert fake.deleted == ["Bass"]                                   # the empty MIDI track the import made for it
+    assert fake.tracks() == ["Kick", "Lead", "Pad", "Bass"]           # the stem's audio track comes after the MIDI tracks
+    ti, path, bar, beat = fake.imports[0]
+    assert (ti, path.name, bar, beat) == (3, "Bass.wav", 1, 1) and path.parent == tmp_path / "logic" / "audio"
+    k, lead_s, pad_s, bass_s = fake._strips[:4]
+    assert bass_s.volume == -7.0 and bass_s.inserts == ["Compressor"] and bass_s.side_chains == {0: "Kick"}
+    assert pad_s.inserts == ["Trackspacer 2.5", "Kickstart 2"] and pad_s.side_chains == {0: "Lead"}
+    assert pad_s.params[1] == {"Ratio": "60", "Release": "120"} and pad_s.params[2] == {"Loop Length": "0.0", "Mix": "1.0"}
+    assert rep.tracks["Bass"]["instrument"].startswith("Serum 2 'serum/presets/night-bass.SerumPreset'")
+    assert not [w for w in rep.warnings if "Serum" in w or "empty MIDI" in w]
+    rec = json.loads((tmp_path / "logic" / ".logic-push.json").read_text())
+    assert rec["tracks"] == {"Kick": 0, "Lead": 1, "Pad": 2, "Bass": 3}
+
+
+def test_kickstart_length_follows_the_kick():
+    from rick_rubin.live.client import kick_period_beats, kickstart_device
+    for steps, beats in (("x...x...x...x...", 1.0), ("x.......x.......", 2.0), ("x...............", 4.0), ("x..x..x...x.x...", 1.0)):
+        s = Song("K", bpm=126, key="F minor")
+        k = s.add_track("Kick", "kick")
+        s.pattern("p", k, steps)
+        s.add_section("a", 4, kind="drop", parts={k: "p"})
+        assert kick_period_beats(s, "Kick") == beats, steps
+    assert kickstart_device(s, "Kick")["params"] == {"Loop Length": 0.0, "Mix": 1.0}
 
 
 def test_capture_is_a_bounce(tmp_path):

@@ -381,11 +381,24 @@ class LogicApp:
         return children(hdr) if hdr is not None else []
 
     def select_track(self, index: int, w=None) -> bool:
+        """Select exactly this track (and give it the focus). Pressing a header's 'Has Focus' button alone moves the
+        focus but leaves the selection where it was (measured on Logic 11.2); the header list's AXSelectedChildren
+        sets the selection itself."""
         heads = self.track_headers(w)
         if index >= len(heads):
             raise AXError(f"no track {index + 1} (the project has {len(heads)})")
         foc = next((k for k in children(heads[index]) if desc(k) == "Has Focus"), None)
-        return press(foc)
+        press(foc)
+        set_attr(attr(heads[index], "AXParent"), "AXSelectedChildren", [heads[index]])
+        t_end = time.time() + 1.0
+        while time.time() < t_end:
+            if [bool(attr(h, "AXSelected")) for h in heads] == [i == index for i in range(len(heads))]:
+                return True
+            time.sleep(0.05)
+        return False
+
+    def selected_tracks(self, w=None) -> list[int]:
+        return [i for i, h in enumerate(self.track_headers(w)) if attr(h, "AXSelected")]
 
     def tracks_functions_menu(self, w=None):
         w = w or self.main_window()
