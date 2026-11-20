@@ -173,6 +173,11 @@ class LogicBridge:
         if self.mcu is not None:
             self.mcu.close()
             self.mcu = None
+        if self.app is not None:
+            try:
+                AX.restore_mixer_frame(self.app, self.project)
+            except Exception:  # noqa: BLE001
+                pass
         if self._front_prev is not None and self.app is not None and self._front_prev != self.app.pid:
             AX.activate(self._front_prev)                    # give the front back to whoever had it
         self._front_prev = None
@@ -566,7 +571,7 @@ class LogicBridge:
 
     def add_instrument_track(self) -> int:
         """Track > New Tracks… > Software Instrument > Create, below the last track. Returns its index."""
-        return self._add_track("Software Instrument")
+        return self._add_track("MIDI")                       # the sheet calls it 'MIDI, Software Instrument'
 
     def _add_track(self, kind: str) -> int:
         before = self.tracks()
@@ -583,13 +588,46 @@ class LogicBridge:
             AX.press(AX.find(sheet, lambda e: AX.role(e) == "AXButton" and AX.title(e) == "Cancel", 3))
             raise LogicError(f"the New Tracks sheet has no {kind!r} choice")
         AX.press(rb)
-        time.sleep(0.2)
+        time.sleep(0.4)
+        if kind == "MIDI":
+            # Details > Instrument: an empty channel strip. The default patch (an electric piano) brings two reverb
+            # busses and their Aux strips into the project; the instrument wanted is loaded afterwards.
+            label = AX.find(sheet, lambda e: AX.role(e) == "AXStaticText" and str(AX.attr(e, "AXValue") or "") == "Instrument:", 6)
+            pop = None
+            if label is not None:
+                sibs = AX.children(AX.attr(label, "AXParent"))
+                i = next((k for k, e in enumerate(sibs) if e == label), None)
+                pop = next((e for e in sibs[i + 1:] if AX.role(e) == "AXPopUpButton"), None) if i is not None else None
+            try:
+                if pop is None:
+                    raise AX.AXError("the sheet has no Instrument pop-up")
+                if "Empty Channel Strip" not in (AX.desc(pop), str(AX.attr(pop, "AXValue") or "")):
+                    # one of Logic's own pop-ups (not in the accessibility tree): a press opens it, the entry is found
+                    # by typing its name into Logic's process, return takes it (checked on Logic 11.2.2)
+                    AX.press(pop)
+                    if not self._popup_open(2.0):
+                        raise AX.AXError("the Instrument pop-up did not open")
+                    K.type_text(self.app.pid, "Empty Channel Strip")
+                    time.sleep(0.5)
+                    K.key(self.app.pid, "return")
+                    time.sleep(0.6)
+                    if self._popup_open(0.2):
+                        K.key(self.app.pid, "escape")
+                        time.sleep(0.3)
+                    if "Empty Channel Strip" not in (AX.desc(pop), str(AX.attr(pop, "AXValue") or "")):
+                        raise AX.AXError(f"the Instrument pop-up shows {AX.desc(pop)!r}")
+            except AX.AXError as e:
+                AX.press(AX.find(sheet, lambda e: AX.role(e) == "AXButton" and AX.title(e) == "Cancel", 3))
+                raise LogicError(f"New Tracks: could not choose an empty channel strip ({e}); no track was added") from e
+            lib = AX.find(sheet, lambda e: AX.role(e) == "AXCheckBox" and AX.title(e) == "Open Library", 6)
+            if lib is not None:
+                AX.set_checkbox(lib, False)
         count = AX.find(sheet, lambda e: AX.role(e) == "AXTextField" and "Number of tracks" in AX.desc(e), 4)
         if count is not None:
             AX.set_value(count, "1")
         AX.press(AX.find(sheet, lambda e: AX.role(e) == "AXButton" and AX.title(e) == "Create", 3))
         if AX.wait_for(lambda: len(self.tracks()) > n, 8.0) is None:
-            raise LogicError(f"Logic did not add {'an' if kind[0] in 'AEIOU' else 'a'} {kind.lower()} track")
+            raise LogicError(f"Logic did not add the {'audio' if kind == 'Audio' else 'software instrument'} track")
         self._mixer = None
         self.close_plugin_windows()                          # a new instrument track may open its instrument's window
         return first_new_index(before, self.tracks())
@@ -869,22 +907,41 @@ class LogicBridge:
         return mode
 
     def rename_track(self, track_index: int, name: str) -> str:
-        """The track's name, through the text field in its header."""
+        """The track's name: its header's name field is pressed (which opens it for editing), the name typed into
+        Logic's process and confirmed. Nothing is typed unless a text field really has the focus: outside one,
+        Logic reads letters as key commands."""
         heads = self.app.track_headers(self.main)
         tf = next((c for c in AX.children(heads[track_index]) if AX.role(c) == "AXTextField"), None) if track_index < len(heads) else None
         if tf is None:
             raise LogicError(f"track {track_index + 1} has no name field")
-        AX.set_value(tf, name)
-        time.sleep(0.2)
-        got = self.tracks()[track_index]
-        if got != name:
-            # Logic may need the field confirmed: focus it and press return in Logic's process
-            AX.set_attr(tf, "AXFocused", True)
-            AX.set_value(tf, name)
-            K.key(self.app.pid, "return")
-            time.sleep(0.3)
-            got = self.tracks()[track_index]
-        return got
+        self.need_front()
+        self.select_track(track_index)                       # brings the header into view
+        focused = None
+        for _ in range(3):
+            self.app.make_key(self.main)
+            heads = self.app.track_headers(self.main)
+            tf = next((c for c in AX.children(heads[track_index]) if AX.role(c) == "AXTextField"), tf)
+            AX.press(tf)
+            focused = AX.wait_for(lambda: (lambda e: e if e is not None and AX.role(e) == "AXTextField" else None)(AX.attr(self.app.el, "AXFocusedUIElement")), 1.5, 0.1)
+            if focused is not None:
+                break
+            time.sleep(0.5)
+        if focused is None and self.only_selected(track_index):
+            # a header scrolled out of view does not take the press: Track > Rename Track opens the field of the
+            # selected track (and only this one is selected)
+            try:
+                self.app.menu("Track", "Rename Track")
+            except AX.AXError:
+                pass
+            focused = AX.wait_for(lambda: (lambda e: e if e is not None and AX.role(e) == "AXTextField" else None)(AX.attr(self.app.el, "AXFocusedUIElement")), 2.0, 0.1)
+        if focused is None:
+            raise LogicError(f"the name field of track {track_index + 1} did not open for editing, so nothing was typed")
+        K.key(self.app.pid, "a", "cmd")
+        K.type_text(self.app.pid, name)
+        K.key(self.app.pid, "return")
+        time.sleep(0.4)
+        self._mixer = None
+        return self.tracks()[track_index]
 
     def analyze_tempo(self, track_index: int, expect_bpm: float | None = None, timeout: float = 180.0) -> float:
         """Smart Tempo: analyse the tempo of the file under the track's first region (Edit > Open Smart Tempo Editor >
@@ -1319,6 +1376,9 @@ class LogicBridge:
             low = t.lower()
             if low.startswith(want + " stereo") or low == want or low.startswith(want + " (") and "stereo" in low:
                 return True
+            rest = low[len(want):].strip()
+            if rest.split(" ")[0] in ("fx", "effect"):                # 'Serum 2 FX' is not Serum 2
+                return False
             return low.startswith(want) and "mono" not in low and "multi" not in low and "legacy" not in low
         self._scroll_list(col, read, match, f"instrument {name!r}", kind="instruments")
         self._press(M.VPOT_PUSH + col, settle=1.0)

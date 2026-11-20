@@ -33,9 +33,27 @@ class Issue:
 
 
 # ============================================================================ symbolic lint
+def lint_profile(song: Song) -> dict:
+    """The checks a song asks to be judged by. The defaults are club house (118-130 BPM, DJ-friendly edges, drops).
+    A song in another genre says so in `song.meta["lint"]`:
+
+        song.meta["lint"] = {"tempo": [85, 100], "off": ["H3-dj-friendly", "H8-energy"], "why": "a hip-hop beat, not a club track"}
+
+    `tempo` is the expected range; `off` lists rule ids (or their prefix, "H3") that do not apply. Structure errors
+    (S0) and the rules about the file itself cannot be switched off. This changes what is checked, never what is written."""
+    prof = dict(song.meta.get("lint") or {}) if isinstance(song.meta, dict) else {}
+    t = prof.get("tempo") or [118, 130]
+    return {"tempo": (float(t[0]), float(t[1])), "off": [str(x) for x in prof.get("off", [])], "why": str(prof.get("why", "")),
+            "default": "lint" not in (song.meta or {})}
+
+
 def lint(song: Song) -> list[Issue]:
     I: list[Issue] = []
-    add = lambda sev, rule, where, msg: I.append(Issue(sev, rule, where, msg))  # noqa: E731
+    prof = lint_profile(song)
+
+    def add(sev: str, rule: str, where: str, msg: str) -> None:
+        if rule.startswith("S0") or not any(rule == o or rule.startswith(o + "-") for o in prof["off"]):
+            I.append(Issue(sev, rule, where, msg))
 
     for e in song.validate():
         add("error", "S0-structure", "song", e)
@@ -44,8 +62,12 @@ def lint(song: Song) -> list[Issue]:
 
     key = song.key_obj
     # H1 tempo
-    if not 118 <= song.bpm <= 130:
-        add("warn", "H1-tempo", "song", f"{song.bpm:g} BPM is outside the usual house range 118-130")
+    lo, hi = prof["tempo"]
+    if not lo <= song.bpm <= hi:
+        add("warn", "H1-tempo", "song", f"{song.bpm:g} BPM is outside " + ("the usual house range 118-130" if prof["default"] else f"this song's range {lo:g}-{hi:g}"))
+    if prof["off"]:
+        I.append(Issue("info", "L0-profile", "song", f"not checked, by the song's own profile: {', '.join(prof['off'])}"
+                       + (f" ({prof['why']})" if prof["why"] else " (no reason given: say why in song.meta['lint']['why'])")))
     if not 50 <= song.swing <= 66:
         add("warn", "H1-tempo", "song", f"swing {song.swing:g}% outside 50-66%")
 

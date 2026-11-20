@@ -1,8 +1,10 @@
-# Logic Pro as a render target
+# Logic Pro
 
-`rick-rubin --daw logic push <dir>` builds the song as a Logic Pro project; `--daw logic capture` bounces it
-offline. Everything else (writing the song, `score`, `eval`, `view`, samples) is unchanged. Set
-`RICK_RUBIN_DAW=logic` to make it the default.
+Two ways in. `rick-rubin logic ...` (**session mode**) works inside the project that is open: it reads it and
+makes one change at a time. `rick-rubin --daw logic push <dir>` builds a song written as code into a **new**
+project, and `--daw logic capture` bounces it offline. Set `RICK_RUBIN_DAW=logic` to make Logic the default for
+`push` and `capture`. How to use both is in `skill/logic.md`; this file is how they work, what is built, and what
+to do when something goes wrong.
 
 Checked against Logic Pro 11.2.2 on macOS 15. Nothing is installed into Logic: no remote script, no
 plug-in, no control-surface setup by hand.
@@ -25,6 +27,58 @@ Surface Setup window the first time; the bridge closes it). If a push says Logic
 port, open Logic Pro > Control Surfaces > Setup and check that a Mackie Control is listed with the
 `rick-rubin MCU` input and output ports; if not, New > Install… > Mackie Designs > Mackie Control and pick
 those ports.
+
+## Session mode: inside the open project
+
+`rick_rubin/logic/session.py`. A `Session` wraps a connected bridge that points at an open project (the front
+one, or `--project`), and keeps these rules in code:
+
+- **Nothing is opened, closed or saved**, and no alert is answered: when Logic is asking something as a command
+  starts, the command stops and says what Logic asks.
+- **Backup first.** Before the first change, every alternative's `ProjectData` and plists (the saved state, not
+  the audio: a few MB) are copied to `~/.rick-rubin/backups/<project>/<time>/`, once per saved state. A project
+  that was never saved has nothing to copy, and the command says so. To restore: close the project, copy the
+  backup's `Alternatives` folder over the one inside the `.logicx` package, reopen.
+- **Every change is read back** from Logic and logged with the value before and after in
+  `~/.rick-rubin/sessions/<project>.jsonl`. A readback that differs from what was asked is reported
+  (`NOT AS ASKED`, exit code 1), not smoothed over.
+- **One track selected** before a channel-strip edit, verified, because Logic applies strip edits to every
+  selected strip. If the track cannot be selected on its own, nothing is changed. The selection the person had
+  comes back when the command ends.
+- **A Mixer window the session opened is closed again**; one that was already open and had to be made taller
+  gets its old frame back.
+
+What it can read: tempo, key and time signature (the control bar), the playhead, and per strip the name, fader,
+pan, mute, solo, instrument, inserts in order, sends, output, automation mode and region names. Plug-in and
+instrument parameters are read off the control surface's edit view, eight per page, as the names and values the
+surface shows. What it cannot read: markers, region positions and lengths, automation curves, notes inside
+regions. Those are not in Logic's accessibility tree.
+
+### Front or background
+
+With Logic in the background (another app in front), two things do not work on Logic 11.2.2 / macOS 15.6: the
+File > Save commands are disabled, and Aux and Stereo Out strips are not selected by the control surface (a
+plug-in meant for the master landed on the selected track). Tracks, their plug-ins, parameters and sends do work
+there. So the bridge takes a `front` argument:
+
+- `front=True` (session mode): Logic is brought forward only by the steps that need it (`need_front`: menus
+  that open sheets and file panels, Aux / output strips, renaming), after the keyboard and mouse have been still
+  for 1.5 s, and the app that was in front gets the front back when the bridge closes. If nobody stops typing
+  for 30 s the step fails with a message instead.
+- `front="start"` (push, capture, split, conform): forward for the whole run.
+- `RICK_RUBIN_LOGIC_BACKGROUND=1` or `logic --background`: never.
+
+No keystroke is ever posted to anything but Logic's process, and text is only typed after checking that a text
+field has the focus (outside one, Logic reads letters as key commands).
+
+### Two things the strip reader depends on
+
+- **A tall Mixer window.** Logic stops naming plug-in slots that are clipped off the top of the Mixer: the top
+  insert reads `audio plug-in` and the instrument reads `input`. A new Mixer window opens 644 px high, which
+  clips them. The bridge opens a Mixer window of its own (not the pane) and makes it 900 px high. A slot whose
+  name is still hidden is listed as `?` so that slot numbers stay right.
+- **Slots are told apart by what they hold**: a plug-in slot has `bypass`, `open`, `list`; a send has `bypass`,
+  `list`, and all send knobs follow all sends (so the second of two sends is not followed by its knob).
 
 ## How a push works
 
@@ -64,7 +118,10 @@ calls on it, mirroring `live/client.py`.
 | `instrument="Deep House Kit"` (not an instrument name) | the first Library patch the search finds |
 | `instrument_params` | the instrument's parameters by displayed value, set in the surface's Instrument Edit view (e.g. Drum Synth: `{"Sound Category": "Kicks", "Sound Model": "Punch Kick", "Decay": 42}`) |
 | pattern / section parts | one region per track per section with the notes (swing and groove baked in, as for Live) |
-| drum track on a single-voice instrument (Drum Synth, Quick Sampler, `sample=`) | every hit sent on C3, like Live's Simpler one-shots (those instruments pitch by note) |
+| drum track on a single-voice instrument (Drum Synth, Quick Sampler) | every hit sent on C3, like Live's Simpler one-shots (those instruments pitch by note) |
+| `sample="samples/kick.wav"` | the part played from the sample offline (`render/stems.py`: whole file per hit for drum roles, repitched from `sample_root` for melodic ones, Simpler's velocity law, `Ve Attack`), imported at bar 1 onto an audio track named after the track |
+| `midi_effects` | Chord, Pitch, Note Length and Velocity are written into the region's notes; Arpeggiator, Random, Scale are named in the report and not applied |
+| `key` | the project's key signature (a mode shows as its relative major) |
 | `effects` | Logic plug-ins by name in the insert slots, in order, after the patch's own inserts; `params` set by displayed value |
 | `serum="<preset>"` | the part rendered through Serum 2 offline (at the song's tempo, section filter/volume baked in), imported at bar 1 onto an audio track named after the track; its effects, sends and mixer as for any track |
 | `sidechain: true` | a Compressor keyed from the Kick (side chain input = the Kick's channel strip) |
@@ -139,9 +196,13 @@ recording's copy next to the project is the project's source file — keep it wi
 - Audio-loop tracks (`audio=True`) and Serum tracks (`serum=`) get audio tracks after the MIDI tracks: each loop
   segment imported at its bar, the Serum stem at bar 1 (File > Import > Audio File, driven through the panel's
   column browser). The MIDI file has an empty placeholder track for each of them (so the import keeps the song's
-  order); the push deletes those (Track > Delete Track). Sample one-shot tracks (`sample=`) are not built yet:
-  their tracks exist and play the role's patch. `instrument="Serum 2"` instead puts a live Serum on its init patch.
-- MIDI effects are not built; notes are sent as written.
+  order); the push deletes those (Track > Delete Track). Sample tracks (`sample=`) take the same road: their part
+  is rendered from the sample and imported as audio, so their notes are not editable in Logic.
+  `instrument="Serum 2"` instead puts a live Serum on its init patch.
+- MIDI effects are not Logic MIDI plug-ins: the deterministic ones are written into the notes, the others are
+  reported and skipped.
+- The MIDI file carries no volume or pan controllers. It used to (CC7 and CC10 as a first guess at the mixer), and
+  Logic moved each fader to them whenever playback started: a track written at -14 dB played at -21 dB.
 - Automation needs `--automation` because it plays the automated bars: a 16-bar volume ride at 126 BPM takes
   30 seconds. Filter automation rides the Cutoff of an AutoFilter the push inserts on the track.
 - A push takes one to four minutes, most of it scrolling Logic's plug-in list on the control surface
@@ -163,6 +224,12 @@ recording's copy next to the project is the project's source file — keep it wi
 | `the Stem Splitter did not finish in … s` | Logic was still working (a long recording on a busy Mac) or asked something; the message says what is pending. The project stays open: wait for its progress window, then run again. |
 | A push stalls after an audio import, every strip edit failing | Logic was asking a question the bridge did not expect. Known ones are answered: the file's tempo ("Don't Import"), its sample rate ("Convert File", keeping the project's rate: stems are 44.1 kHz, new projects may be 48 kHz), "Delete Track and Regions?" ("Delete", for the placeholder tracks). Anything else is reported by name; answer it in Logic and push again. |
 | `no plug-in called X` for a third-party plug-in that is installed | The surface shows only the end of a long name (7 to 14 characters by column: `rackspacer 2.5`, `start 2`); the bridge matches those tails. If it still fails, check the name in Logic's own plug-in menu. |
+| `Logic Pro has to be in front for this step, and the keyboard or mouse was in use for the last 30 s` | The step needs Logic in front (see "Front or background") and never found a pause. Stop typing for a moment, or click on Logic, and run it again. |
+| `track #n could not be selected on its own, so nothing was changed` | The track list did not take the selection (Logic in the background and no control surface, or several tracks held selected). Click on Logic's window and run it again. |
+| `Logic is asking '...'. Answer it in Logic first` | An alert or sheet is up in Logic. A session never answers one it did not cause. |
+| An insert is listed as `?`, or an instrument as `input` | That slot is clipped off the top of the Mixer and Logic does not name it. The bridge makes its Mixer window 900 px high; on a small screen, or with many inserts, close the Mixer pane and run it again. |
+| `'X' was preselected but Logic did not load it` for an instrument | The surface's list held a longer name that begins the same way (`Serum 2 FX` before `Serum 2`). Names ending in `FX` are skipped now; for another clash, give the full name as Logic's instrument menu shows it. |
+| `New Tracks: could not choose an empty channel strip` | The sheet's Instrument pop-up did not take the choice; the sheet is cancelled and no track is added. Run it again with Logic in front. |
 | A file dialog does not find the folder | File panels are navigated by column; hidden folders (`/private/tmp`, dot folders) cannot be reached. Keep projects somewhere visible, e.g. under `~/Documents`. |
 
 ## Logic's instrument choices per role (for reference)

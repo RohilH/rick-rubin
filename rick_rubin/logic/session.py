@@ -369,13 +369,21 @@ class Session:
         self._begin()
         before = len(self.b.tracks())
         ti = self.b.add_instrument_track()
-        label = self.b.tracks()[ti]
-        if name:
-            label = self.b.rename_track(ti, name)
-        c = self._done(Change("add track", label, f"{before} tracks", f"{len(self.b.tracks())} tracks", True, f"software instrument, track #{ti + 1}"))
+        label, note = self._name(ti, name)
+        c = self._done(Change("add track", label, f"{before} tracks", f"{len(self.b.tracks())} tracks", True, f"software instrument, track #{ti + 1}{note}"))
         if instrument:
             self.instrument(f"#{ti + 1}", instrument, params)
         return c
+
+    def _name(self, ti: int, name: str | None) -> tuple[str, str]:
+        """Name a track that was just added. The track exists either way: a name that did not take is said, not raised."""
+        if not name:
+            return self.b.tracks()[ti], ""
+        try:
+            got = self.b.rename_track(ti, name)
+            return got, "" if got == name else f"; Logic shows the name as {got!r}"
+        except LogicError as e:
+            return self.b.tracks()[ti], f"; not renamed ({e})"
 
     def add_audio(self, file: str | Path, bar: int = 1, name: str | None = None) -> Change:
         """A new audio track at the bottom holding `file`, its region starting on bar `bar` (Logic places an imported
@@ -387,9 +395,9 @@ class Session:
         before = len(self.b.tracks())
         ti = self.b.add_audio_track()
         self.b.import_audio(ti, path, int(bar), 1)
-        label = self.b.rename_track(ti, name) if name else self.b.tracks()[ti]
+        label, note = self._name(ti, name)
         return self._done(Change("add audio", label, f"{before} tracks", f"{len(self.b.tracks())} tracks", True,
-                                 f"{path.name} at bar {bar}, track #{ti + 1}"))
+                                 f"{path.name} at bar {bar}, track #{ti + 1}{note}"))
 
     def add_midi(self, file: str | Path, bar: int = 1, names: list[str] | None = None) -> Change:
         """The tracks of a MIDI file as new software-instrument tracks, regions starting on bar `bar`."""
@@ -397,11 +405,13 @@ class Session:
         self._begin()
         before = len(self.b.tracks())
         added = self.b.import_midi(path, int(bar))
-        labels = []
+        labels, notes = [], ""
         for k, ti in enumerate(added):
-            labels.append(self.b.rename_track(ti, names[k]) if names and k < len(names) else self.b.tracks()[ti])
+            label, note = self._name(ti, names[k] if names and k < len(names) else None)
+            labels.append(label)
+            notes += note
         return self._done(Change("add midi", ", ".join(labels), f"{before} tracks", f"{len(self.b.tracks())} tracks", bool(added),
-                                 f"{path.name} at bar {bar}, track{'s' if len(added) != 1 else ''} {', '.join('#' + str(i + 1) for i in added)}"))
+                                 f"{path.name} at bar {bar}, track{'s' if len(added) != 1 else ''} {', '.join('#' + str(i + 1) for i in added)}{notes}"))
 
     def rename(self, ref: str, name: str) -> Change:
         target, info = self.resolve(ref)

@@ -236,7 +236,10 @@ def _main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("serum", help="Serum 2: find presets (list, search), read them (show, patch, params), hear them by measurement "
                                      "(render, describe, ab), design and save patches (set)")
     s.add_argument("action", choices=["list", "search", "index", "show", "params", "render", "view", "patch", "set", "describe", "ab", "tables", "shapes",
-                                      "match", "fit"])
+                                      "match", "fit", "audition", "install"])
+    s.add_argument("--track", help="audition: play this track's own part from the project's song (with --bars) instead of single notes")
+    s.add_argument("--bars", type=_bars, help="audition --track: the bar range to play, e.g. 33-40")
+    s.add_argument("--as", dest="as_name", help="audition: the name of the files (default: the preset's name)")
     s.add_argument("words", nargs="*", help="show/params/render/view/patch/describe/ab: the preset's name (or words from it, or a path; 'init' = "
                                             "Serum's init patch); set: the preset, then KEY=VALUE settings (osc_a.detune=0.18 filter_1.cutoff_hz=800); "
                                             "describe: a .wav also works; search/list/tables/shapes: words that must all match")
@@ -273,6 +276,17 @@ def _main(argv: list[str] | None = None) -> int:
     s.add_argument("--tag", help="list: Wavetable | Poly | Mono | Multisample | Sample | Granular | Spectral | Arp | Clip")
     s.add_argument("--folder", help="list: e.g. Pads, Bass, Leads")
     s.add_argument("--root", help="preset folder (default: Serum 2's own)")
+
+    s = sub.add_parser("verdict", help="write down what a person said after listening (to an audition, a bounce, a mix): "
+                                       "kept in the project and in the taste file every session reads")
+    s.add_argument("dir")
+    s.add_argument("what", help="what was listened to: an audition's name, or any label ('drop 2 bounce v3')")
+    s.add_argument("words", nargs="?", default="", help="what they said, in their words")
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--keep", action="store_true")
+    g.add_argument("--reject", action="store_true")
+
+    s = sub.add_parser("taste", help="print the taste file: every verdict a person has given, across projects")
 
     s = sub.add_parser("remember", help="append a session entry to project.md")
     s.add_argument("dir")
@@ -657,6 +671,25 @@ def _main(argv: list[str] | None = None) -> int:
                 print("in this patch: " + (" → ".join(f"{lab} ({', '.join(f'{k} {sp.fmt(v)}' for k, v in prm.items()) or 'init'})" for lab, _, _, prm in pt.fx()) or "no FX"))
         elif a.action in ("patch", "set", "describe", "ab", "fit"):
             _serum_design(a, ap)
+        elif a.action == "audition":
+            from .hear import serum_audition
+            from .serum_patch import parse_assignments
+            words = [w for w in a.words if "=" not in w]
+            if not words:
+                ap.error("serum audition needs a preset: a name, a path, or serum/presets/<name>.SerumPreset in the project")
+            r = serum_audition(" ".join(words), a.project or ".", a.note, a.secs or 1.0, a.track, a.bars, a.bpm, a.as_name,
+                               parse_assignments([w for w in a.words if "=" in w] + list(a.set)))
+            print(f"# audition {r['name']} — {r['played']}\n{r['table']}")
+            for f in r["files"]:
+                print(f)
+            print(f"waiting for a verdict: rick-rubin verdict {a.project or '.'} {r['name']} \"what they said\" --keep | --reject")
+        elif a.action == "install":
+            from .hear import install_preset
+            if not a.words:
+                ap.error("serum install needs a .SerumPreset file")
+            for w in a.words:
+                src = Path(w) if Path(w).is_file() else Path(a.project or ".") / w
+                print(f"installed {install_preset(src)}  — in Serum's browser under User / rick-rubin")
         elif a.action == "match":
             from .samples import read_audio
             from .soundmatch import distance, features, parts_text
@@ -758,6 +791,17 @@ def _main(argv: list[str] | None = None) -> int:
         print(f"Logic project: {r['project']}")
     elif a.cmd == "logic":
         return logic_session.run(a, say=lambda m: print("·", m, file=sys.stderr))
+    elif a.cmd == "verdict":
+        from .hear import record_verdict
+        if not a.words and not (a.keep or a.reject):
+            ap.error("verdict needs what they said, and/or --keep / --reject")
+        r = record_verdict(a.dir, a.what, a.words or ("kept" if a.keep else "rejected"), True if a.keep else (False if a.reject else None))
+        print(f"{a.what}: {r['line']}")
+        for w in r["written"]:
+            print(f"  -> {w}")
+    elif a.cmd == "taste":
+        from .hear import taste_path
+        print(taste_path().read_text() if taste_path().exists() else f"no verdicts yet ({taste_path()}); record one with `rick-rubin verdict`")
     elif a.cmd == "status" and a.daw == "logic":
         from .logic import LogicBridge
         with LogicBridge(progress=lambda m: print("·", m, file=sys.stderr)) as b:
@@ -849,11 +893,8 @@ def _serum_design(a, ap) -> None:
                          author=a.author, description=a.description)
         print(f"saved {out}" + (f"  — use it with serum=\"{os.path.relpath(out, a.project)}\"" if a.project else ""))
         if a.install:
-            import shutil
-            from . import serum
-            user = serum.preset_root().parent / "User"
-            shutil.copy2(out, user / out.name)
-            print(f"copied to {user / out.name}")
+            from .hear import install_preset
+            print(f"installed {install_preset(out)}  — in Serum's browser under User / rick-rubin")
 
 
 def main(argv: list[str] | None = None) -> int:

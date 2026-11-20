@@ -149,8 +149,9 @@ def export_logic_midi(song: Song, path: str | Path) -> dict:
         ev: list[tuple[int, int, bytes]] = [(0, 0, _meta(0x03, t.name.encode("utf-8")))]
         if prog is not None and not as_audio(t):
             ev.append((0, 1, bytes([0xC0 | ch, prog & 0x7F])))
-        ev.append((0, 1, bytes([0xB0 | ch, 7, cc7_for_db(t.volume_db)])))
-        ev.append((0, 1, bytes([0xB0 | ch, 10, max(0, min(127, int(round(64 + t.pan * 63))))])))
+        # No CC7 / CC10 here. Logic chases a region's volume and pan controllers every time playback starts and moves
+        # the fader to them, so the exact dB the bridge sets afterwards was overwritten by this first guess at the next
+        # play or bounce (measured: -14 dB written came back as -21 dB, -12 as -16). The bridge alone sets the mixer.
         n_notes = 0
         if not as_audio(t):
             for c in (sounding if t.midi_effects else clips):
