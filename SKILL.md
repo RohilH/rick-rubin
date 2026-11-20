@@ -59,6 +59,8 @@ rick-rubin init <dir> --title "..." --bpm 126 --key "A minor"   # a song project
 rick-rubin audition <dir> samples/raw/kick_*.wav [--png name]   # candidates side by side: punch, decay, spectrum, pitch+octave, width, character
 rick-rubin samples <dir> [words] [--sort bright] [--like samples/x.wav]   # the project's sample library, searchable by measured character
 rick-rubin serum search [words] [--folder Bass] [--sort sub] [--like "<preset>"]   # Serum presets by how they sound (run `serum index` once)
+rick-rubin serum ab "<preset>" --try "filter_1.cutoff_hz=600" --try "..."   # patch variants measured side by side (see Designing a Serum sound)
+rick-rubin serum set "<preset>" KEY=VALUE ... --save NAME --project <dir>  # design and save a .SerumPreset
 rick-rubin browse "sounds/Bass" [--search sub]     # what Live offers: instruments, presets, effects, plug-ins
 rick-rubin check <dir> [--audio]             # ruff + mypy on song.py, build, music lint — run after every edit
 rick-rubin build <dir>                       # run song.py -> song.json + score.md (every other command does this when song.py changed)
@@ -67,7 +69,7 @@ rick-rubin transcribe <dir> samples/vocal.wav [--text "lyric"]   # syllables -> 
 rick-rubin retime <dir> samples/vocal.wav --name vocal_q          # audio-quantize a loose vocal loop, word by word
 rick-rubin notes <dir> samples/vocal.wav                          # the notes inside a sample: pitch+octave, cents, position
 rick-rubin width <dir> [file]                # stereo image: correlation, side %, mono loss, per band and section
-rick-rubin split <dir> refs/track.wav [--stems vocals,bass] [--from 60 --to 90]   # a recording's stems with Logic Pro's Stem Splitter -> stems/track/<stem>.wav
+rick-rubin split <dir> refs/track.wav [--stems vocals,bass] [--bpm 128] [--transpose N]   # a recording's stems with Logic Pro's Stem Splitter (conformed with Smart Tempo) -> stems/track/<stem>.wav
 rick-rubin sample <dir> <file> --name N --oneshot [--melodic]                       # Simpler one-shot; --melodic measures its pitch
 rick-rubin sample <dir> <file> --name N --loop --src-bpm B [--bars N] [--align end] [--end-at S] # audio loop, conformed to the song tempo
 rick-rubin eval <dir>                        # lint + preview render + measurements -> eval.md (exit 1 on errors)
@@ -259,11 +261,25 @@ measurements. What changes for you:
 - Effects and parameters use Logic's names: `{"device": "Compressor", "params": {"Threshold": -28, "Ratio": 4,
   "Attack": 0.5, "Release": 120}}`, `"Channel EQ"`, `"AutoFilter"`, `"Limiter"`, `"ChromaVerb"`, `"Tape Delay"`.
   Units are the displayed ones. `sidechain: true` is a Compressor keyed from the Kick, as in Live.
+- Serum tracks (`serum=`) arrive as their rendered stem on an audio track named after the track, from bar 1, with
+  their effects, sends and mixer settings (checked: a Logic bounce of the track matches the offline stem, r = 0.985).
+- Pumping without routing: `sidechain="kickstart"` puts Kickstart 2 on the track, its shape repeating as often as
+  the kick lands on the beat (every beat, every 2 beats, every bar). Explicitly: `{"device": "Kickstart 2",
+  "params": {"Loop Length": 0.0, "Used Wave": 0.2, "Mix": 0.8}}` — Loop Length is a switch: 0.00 every beat, 0.33
+  every 2 beats, 1.00 every bar; Used Wave picks one of 16 curves (steps of 1/15); Mix is the depth (1.0 ≈ 47 dB
+  duck). Prefer it for pads and chords that should breathe with the kick; keep a kick-keyed compressor on the bass,
+  which should duck only when the kick actually hits (fills, gaps, half-time bars).
+- Spectral ducking: `{"device": "Trackspacer 2.5", "sidechain": "Vocal", "params": {"Ratio": 60, "Attack": 5,
+  "Release": 120, "Low-cut": 200, "High-cut": 8000}}` carves the keying track's spectrum out of this one (Ratio is the
+  amount, 0-100). Measured: a pad under a lead lost 12 dB in the lead's band (300-1200 Hz) while the lead played, and
+  nothing between its phrases. Uses: pads/chords under a vocal or lead, a bass under the kick instead of a
+  compressor. Check it with `--daw logic capture --tracks <the ducked track>` before/after; the side chain still
+  feeds while the keying track is muted by the solo.
 - Returns become Bus 1, 2… with an Aux each; sends are in dB; `master_effects` go on Stereo Out.
 - Every push is a full push (no `--update`, no `watch`); it takes one to four minutes. Section `volume` and
   `filter` automation is written only with `--automation` (it plays the automated bars in real time).
-- Not built yet in Logic: sample one-shot tracks, Serum stems, MIDI effects. Their tracks exist and play the
-  role's patch; the report lists each one. Audio loops are imported onto an audio track.
+- Not built yet in Logic: sample one-shot tracks and MIDI effects. Their tracks exist and play the role's patch;
+  the report lists each one. Audio loops are imported onto an audio track.
 - Do not click in Logic during a push: it applies strip edits to every selected track, and the control
   surface state must not change. Keep projects in a visible folder (file panels cannot reach hidden ones).
 
@@ -271,7 +287,9 @@ measurements. What changes for you:
   no `--daw` needed): vocals, drums, bass, guitar, piano and other as `stems/track/<stem>.wav`, at the recording's
   rate, with each stem's level; one near silent means the recording has none of it. Use it to read a reference's
   parts on their own — `notes` on its bass stem, `transcribe` on its vocal, `width` and `reference` on its drums —
-  instead of guessing them from the full mix. A 3-minute song takes about 40 s.
+  instead of guessing them from the full mix. A 3-minute song takes about 40 s. `--bpm 128 [--transpose N]` brings a
+  second song to this one's tempo and key with Logic's Smart Tempo and Transpose (for a mashup): its stems come out
+  conformed.
 
 Details, setup (Accessibility permission, `pip install -e ".[logic]"`) and troubleshooting: `docs/LOGIC.md`.
 
@@ -288,7 +306,7 @@ A track's `effects` is an ordered list of Live audio effects placed after the in
               "Model": "Peak", "LookAhead": "1 ms", "Makeup": false, "S/C EQ On": false, "Dry/Wet": 100}}]}}
 ```
 
-Numbers are dB, ms, Hz, % or the ratio's first figure (`"inf"` for a limiter); switches take true/false; menus take the option's name. Compressor parameters: Threshold, Ratio, Expansion Ratio, Attack, Release, Auto Release On/Off, Output, Makeup, Dry/Wet, Model (Peak | RMS | Expand), Env Mode (Lin | Log), Knee, LookAhead (0 ms | 1 ms | 10 ms), S/C Listen, S/C EQ On, S/C EQ Type, S/C EQ Freq, S/C EQ Q, S/C EQ Gain, S/C On, S/C Gain, S/C Mix. `sidechain` names the track that keys the device (a Compressor on the bass keyed from the kick is the house pump); `sidechain_tap` is Pre FX, Post FX or Post Mixer. The push report echoes what Live shows after setting each value and lists any name it did not find — an unknown parameter name is reported with the device's full parameter list, which is also how to discover the parameters of any other device (EQ Eight, Saturator, Reverb, Glue Compressor...). `sidechain: true` on a track remains the shorthand for a default kick-keyed Compressor (−28 dB, 4:1, 0.5 ms, 120 ms). The offline preview only models the ducking, not the compressor's exact curve: tune compressors against `capture`.
+Numbers are dB, ms, Hz, % or the ratio's first figure (`"inf"` for a limiter); switches take true/false; menus take the option's name. Compressor parameters: Threshold, Ratio, Expansion Ratio, Attack, Release, Auto Release On/Off, Output, Makeup, Dry/Wet, Model (Peak | RMS | Expand), Env Mode (Lin | Log), Knee, LookAhead (0 ms | 1 ms | 10 ms), S/C Listen, S/C EQ On, S/C EQ Type, S/C EQ Freq, S/C EQ Q, S/C EQ Gain, S/C On, S/C Gain, S/C Mix. `sidechain` names the track that keys the device (a Compressor on the bass keyed from the kick is the house pump); `sidechain_tap` is Pre FX, Post FX or Post Mixer. The push report echoes what Live shows after setting each value and lists any name it did not find — an unknown parameter name is reported with the device's full parameter list, which is also how to discover the parameters of any other device (EQ Eight, Saturator, Reverb, Glue Compressor...). `sidechain: true` on a track remains the shorthand for a default kick-keyed Compressor (−28 dB, 4:1, 0.5 ms, 120 ms); `sidechain: "kickstart"` puts Kickstart 2 there instead (a tempo-locked volume shape, no routing; see the Logic section for its parameters — in Live, read them with `rick-rubin devices "Kickstart 2"` first: the VST3's names and values have only been checked in Logic). The offline preview only models the ducking, not the compressor's exact curve: tune compressors against `capture`.
 
 ## MIDI effects
 
@@ -357,7 +375,57 @@ Workflow:
 
   The part is rendered through the plug-in (cached in `<project>/serum/`), so `eval`, `view`, `width` and the preview all measure Serum's real sound, and `push` places it in Live as one audio clip on an audio track — with the track's effects, sidechain and volume live in Live, and any `filter`/`volume` automation rendered in. Changing notes, preset or parameters re-renders on the next build.
 - **Explore with it** like with samples: several presets per part, several macro settings per preset, compared by `audition` and in context.
-- Limits: it reaches Live as audio, not as an editable Serum device (Live exposes no way to script a plug-in's preset); one preset and one set of parameter values per track (no parameter automation over time yet — use two tracks, or `filter`/`volume` automation on the result); macOS path of the VST3 is assumed.
+- **Tempo:** the offline host gives Serum no tempo, so on its own Serum runs at 120 BPM. Song stems (and `serum render/describe/ab/set --bpm N`) rewrite tempo-synced LFOs and delays as free-running at the song's tempo, so a 1/4 LFO at 126 BPM really moves at 2.1 Hz.
+- Limits: it reaches Live and Logic as audio, not as an editable Serum device; one preset and one set of parameter values per track (no parameter automation over time yet — use two tracks, or `filter`/`volume` automation on the result, or build the movement into the patch: an LFO or envelope on the filter); macOS path of the VST3 is assumed.
+
+### Designing a Serum sound
+
+A brief ("a warm tech house bass, rounder than this one, with the filter opening over two bars") becomes a saved `.SerumPreset` that you have heard by measurement. **You write the patch.** The tools read, change, measure and save; there are no style presets in this library and none should be added.
+
+```
+rick-rubin serum params --group filter ["<preset>"]     # the map: key, unit, range, init, (the preset's value), what it does
+rick-rubin serum params --group fx | mod | env | lfo | osc | sub | noise | routing | macro | global   # one screen each
+rick-rubin serum patch "<preset>"                        # the patch as key=value by group, its mod routings, its FX chain
+rick-rubin serum describe "<preset>" [KEY=VALUE ...] --note F3 --secs 1 --bpm 126   # what one note does, in numbers
+rick-rubin serum describe samples/raw/ref_bass.wav --secs 0.5   # the same numbers for any recording of one note
+rick-rubin serum ab "<preset>" --note F3 --bpm 126 --try "filter_1.cutoff_hz=600" --try "osc_a.detune=0.1 osc_a.unison=3"
+rick-rubin serum set "<preset>" KEY=VALUE ... [--mod SRC:DEST:AMOUNT] [--unmod DEST] [--fx-add UNIT] [--fx-remove fx.UNIT]
+                     [--set KEY=VALUE] --save night-bass-round --project <dir>      # -> <dir>/serum/presets/night-bass-round.SerumPreset
+rick-rubin serum tables [words] / serum shapes [words]   # wavetables (osc_a.wavetable=...) and LFO shapes (lfo_1.shape=...)
+```
+
+Settings come right after the preset name (or anywhere as `--set KEY=VALUE`); `init` is Serum's init patch. Keys are producer-facing: `osc_a.detune`, `osc_a.unison`, `osc_a.wavetable`, `osc_a.wt_pos`, `osc_a.warp_mode`, `sub.on`, `sub.shape`, `filter_1.type` ("MG Low 24"), `filter_1.cutoff_hz`, `filter_1.res`, `filter_1.drive`, `env_1.*` (amp: `attack_ms`, `decay_ms`, `sustain_db`, `release_ms`), `env_2..4.*` (`sustain_pct`), `lfo_1.rate` ("1/4", "2 bar"), `lfo_1.mode`, `lfo_1.shape` ("Basic/Saw Down" or points "0:1,1:0"), `macro_1.value`, `global.mono`, `global.glide_ms`, `global.volume_db`, and FX units as `fx.<unit>.<param>` (`fx.distortion.drive`, `fx.reverb#2.wet`, `fx_bus1.delay.wet`). Mod sources: `env_1..4`, `lfo_1..10`, `velocity`, `note`, `mod_wheel`, `random_1/2`, `alternate_1/2`, `macro_1..8`; the amount is −100..100 % of the destination's range. The same keys work in a track's `serum_params` (`{"filter_1.cutoff_hz": 900, "mod": ["lfo_2:filter_1.cutoff_hz:20"]}`) next to the plug-in's own names (`macro_1`).
+
+`describe` measures what a brief talks about: attack, decay, sustain (dB under the peak), release; brightness early → late in the note (a filter opening or closing), spectral tilt, harmonic-to-noise ratio, how many harmonics stand within 30 dB and the odd−even balance (saturation and square-ish waves lift the odd ones; a saw is about −2.5 dB); energy per band and stereo side % per band; movement while held and its rate (Hz and, with `--bpm`, beats); pitch with octave, cents, wobble, pitch drop. It adds words to the shared vocabulary: `opens`/`closes`, `moving`, `noisy`, `pure`/`rich`, `odd-heavy`/`even-heavy`, `plucky`, `pitch-drop`, `drifting`. `ab` and `set` print a second table of what changed against the base (`bright early -18%, sustain -2.1 dB, side(low) +12pt, words +wide-low-end -mono`).
+
+The process:
+
+1. **Start from what is closest, not from nothing.** `serum search` by words and `--like "<preset>"`; shortlist three; `serum patch` and `serum show` each; `serum describe` each on the notes the part will play (mind the patch's own octave: `oct -2` means play two octaves higher than you want to hear). A brief that names a reference sound: `describe` the reference too, so you compare like with like.
+2. **Decide what to change from the numbers**, then change one or two things at a time: `serum ab "<start>" --try ... --try ...` with 5–10 variants per decision (renders take about a second). Keep what moves the numbers the way the brief asks, and check what else moved (a wider unison often widens the low end; drive adds odd harmonics and loudness).
+3. **Build the movement into the patch** when the brief asks for it: an envelope or a slow LFO (`lfo_1.rate="2 bar"`, `lfo_1.mode=Envelope`) on `filter_1.cutoff_hz` via `--mod`; check it with `describe --secs` long enough to hear it and `--bpm` set to the song's tempo.
+4. **Keep a log in `project.md`**: what was tried, the numbers, what won and why, what was rejected.
+5. **Save** with `serum set ... --save <name> --project <dir>`: a real `.SerumPreset` in `<project>/serum/presets/` (it opens in Serum's own browser too). Copying it into Serum's User folder (`--install`) writes outside the project: only when the owner asks.
+6. **Use it and judge it in context:** `serum="serum/presets/<name>.SerumPreset"` on the track, `eval`, then push and capture (Live) or push and bounce (Logic). A sound that measures right alone can still fight the kick or the pad; the capture decides.
+
+Honesty: report the before/after numbers, what still differs from the brief, and anything you could not do with Serum's controls.
+
+### Matching a sound from a record ("make a synth that sounds like this")
+
+```
+rick-rubin isolate <dir> refs/track.wav --part bass --bars 33-36 [--bpm 124] [--stem stems/bass.wav]   # -> samples/raw/ref_bass.wav + its notes
+rick-rubin serum describe samples/raw/ref_bass.wav --secs 0.4          # the target in the same numbers as any patch
+rick-rubin serum search --like-audio samples/raw/ref_bass.wav --folder Bass   # the presets that measure closest
+rick-rubin serum fit "<preset>" --target samples/raw/ref_bass.wav --params filter_1.cutoff_hz,filter_1.res,env_2.decay_ms,fx.distortion.drive --iters 30 \
+                     --save ref-bass-match --project <dir>
+rick-rubin serum match samples/raw/ref_bass.wav samples/raw/try1.wav samples/raw/try2.wav   # distances and what differs
+rick-rubin reference stems samples/raw/ref_bass.wav zoom/live_bars_9-16_Bass.wav --bpm 126   # the part in context, against the reference part
+```
+
+1. **Isolate** the part: a bar range (at the reference's tempo, estimated when not given) or `--from/--to` seconds. With demucs installed (`pip install -e ".[separate]"`, large) the part is separated; without it the fallback is a band-pass (bass 30–250 Hz, lead 300 Hz–8 kHz, pad 150 Hz–6 kHz), which keeps whatever else is in the band — the kick under a bass — and says so. A stem you already have (`--stem`) is only cut. It prints the notes the part plays.
+2. **Describe** the target, then **shortlist** with `serum search --like-audio` (the index's measurements, on whatever register the recording plays). Read the sheets of the closest few.
+3. **Fit**: pick the handful of keys the sheet says matter, and `serum fit` moves only those, by coordinate descent on a distance that compares the average spectrum, the level envelope, brightness early/late, width and the odd/even balance, after levelling both (loudness is a fader). Each step renders the target's notes (found from its onsets and pitch) through Serum, about a second each; the patch is played in the register the target sounds in. It prints the path, the distance before/after and its parts, and the describe table target / start / fitted. Never ask it to fit everything: 2–5 keys per run, then look, then decide the next keys.
+4. **Finish by hand** with `serum ab`, then judge **in context**: put the patch on the track, capture or bounce, and `reference stems` the reference part against your track's part (`capture --tracks` / `--daw logic capture --tracks`). Pump and transient rows only mean something for a part with content in those bands.
+5. **Say what was reached**: the distance and its parts, and what is still different and why (e.g. "the reference's filter moves with a slower LFO than any envelope here; added LFO 1 → cutoff at 1/4 bar").
 
 Plug-ins: an `instrument` name is looked up in Live's instruments and sounds, then your User Library, then VST/AU plug-ins, so `instrument="Serum 2"` puts a live Serum device on the track — but on its init patch, since Live exposes no plug-in presets or parameters to scripts. To actually use a Serum sound, use `serum=` as above.
 

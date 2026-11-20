@@ -338,15 +338,19 @@ class LogicApp:
         return (int(bar), int(beat)) if bar is not None and beat is not None else None
 
     def set_playhead(self, bar: int, beat: int = 1, w=None) -> tuple[int, int] | None:
-        g = self.control("Playhead Position", w)
-        if g is None:
-            raise AXError("no playhead display in the control bar")
-        for c in children(g):
-            if desc(c) == "bar":
-                set_value(c, float(bar))
-            elif desc(c) == "beat":
-                set_value(c, float(beat))
-        time.sleep(0.1)
+        """Move the playhead to bar.beat. The control bar's bar and beat sliders only take a value one step from where
+        they are (their AXMinValue/AXMaxValue are the current value -1/+1), so each is stepped until it reads the target."""
+        for name, target in (("bar", bar), ("beat", beat)):
+            for _ in range(2000):
+                g = self.control("Playhead Position", w)
+                if g is None:
+                    raise AXError("no playhead display in the control bar")
+                el = next((c for c in children(g) if desc(c) == name), None)
+                cur = attr(el, "AXValue") if el is not None else None
+                if cur is None or round(float(cur)) == target:
+                    break
+                set_value(el, float(target))
+        time.sleep(0.05)
         return self.playhead(w)
 
     def is_playing(self, w=None) -> bool | None:
@@ -377,11 +381,24 @@ class LogicApp:
         return children(hdr) if hdr is not None else []
 
     def select_track(self, index: int, w=None) -> bool:
+        """Select exactly this track (and give it the focus). Pressing a header's 'Has Focus' button alone moves the
+        focus but leaves the selection where it was (measured on Logic 11.2); the header list's AXSelectedChildren
+        sets the selection itself."""
         heads = self.track_headers(w)
         if index >= len(heads):
             raise AXError(f"no track {index + 1} (the project has {len(heads)})")
         foc = next((k for k in children(heads[index]) if desc(k) == "Has Focus"), None)
-        return press(foc)
+        press(foc)
+        set_attr(attr(heads[index], "AXParent"), "AXSelectedChildren", [heads[index]])
+        t_end = time.time() + 1.0
+        while time.time() < t_end:
+            if [bool(attr(h, "AXSelected")) for h in heads] == [i == index for i in range(len(heads))]:
+                return True
+            time.sleep(0.05)
+        return False
+
+    def selected_tracks(self, w=None) -> list[int]:
+        return [i for i, h in enumerate(self.track_headers(w)) if attr(h, "AXSelected")]
 
     def tracks_functions_menu(self, w=None):
         w = w or self.main_window()
@@ -559,6 +576,18 @@ class StripInfo:
     kind: str = ""                     # 'track' | 'aux' | 'output' | 'master'
 
 
+def mixer_area(win, min_strips: int = 1):
+    """The Mixer's strip area in a window — not the Inspector's two channel strips (the selected track and its
+    output), which are a 'Mixer' layout area too."""
+    for c in children(win):
+        if role(c) == "AXGroup" and desc(c) == "Inspector":
+            continue
+        area = find(c, lambda e: role(e) == "AXLayoutArea" and desc(e) == "Mixer" and len(children(e)) >= min_strips, 7)
+        if area is not None:
+            return area
+    return None
+
+
 class Mixer:
     """Logic's Mixer window in 'Tracks' view: one channel strip per track in track order, then the aux
     strips, then Stereo Out and Master. Everything on a strip is an accessibility element."""
@@ -576,9 +605,8 @@ class Mixer:
             if main is None:
                 raise AXError("no project window to open a Mixer for")
             def pane(win):
-                # the Mixer shown as a pane of the main window (the Inspector's channel strips are a 'Mixer' area too, but empty)
-                area = find(win, lambda e: role(e) == "AXLayoutArea" and desc(e) == "Mixer" and len(children(e)) > 1, 7) if win is not None else None
-                return win if area is not None else None
+                # the Mixer shown as a pane of the main window (not the Inspector's channel strips, a 'Mixer' area too)
+                return win if win is not None and mixer_area(win, 1) is not None else None
             if pane(main) is not None:
                 return main
             self.app.make_key(main)
@@ -603,7 +631,7 @@ class Mixer:
         self.ensure_tracks_view(w)
 
         def read():
-            area = find(w, lambda e: role(e) == "AXLayoutArea" and desc(e) == "Mixer" and len(children(e)) > 0, 7)
+            area = mixer_area(w, 1)
             return [c for c in children(area)] if area is not None else []
         return wait_for(read, 4.0, 0.2) or []
 

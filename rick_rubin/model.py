@@ -246,6 +246,14 @@ class Pattern:
 
 
 # ============================================================================ tracks & sections
+def _sidechain_value(v: Any) -> bool | str:
+    """True/False, or one of the shorthand names ('compressor', 'kickstart'); other strings are kept for validate()."""
+    if isinstance(v, str):
+        low = v.strip().lower()
+        return False if low in ("", "false", "off", "no") else True if low in ("true", "on", "yes") else low
+    return bool(v)
+
+
 @dataclass
 class Track:
     name: str
@@ -253,7 +261,9 @@ class Track:
     instrument: list[str] = field(default_factory=list)  # Live browser queries, first match wins
     volume_db: float = 0.0
     pan: float = 0.0          # -1..1
-    sidechain: bool = False   # duck against the kick (preview + note for Live)
+    # duck against the kick: True / "compressor" = a Compressor keyed from the kick track; "kickstart" = Kickstart 2
+    # (a tempo-locked volume shape, no routing), its length taken from the kick pattern. The preview ducks either way.
+    sidechain: bool | str = False
     swing: bool = False       # apply Song.swing to 16th offbeats
     color: int | None = None  # Live color index 0-69
     mute: bool = False
@@ -305,7 +315,7 @@ class Track:
         inst = d.get("instrument", [])
         return cls(name=name, role=d["role"], instrument=[inst] if isinstance(inst, str) else list(inst),
                    volume_db=float(d.get("volume_db", 0)), pan=float(d.get("pan", 0)),
-                   sidechain=bool(d.get("sidechain", False)), swing=bool(d.get("swing", False)),
+                   sidechain=_sidechain_value(d.get("sidechain", False)), swing=bool(d.get("swing", False)),
                    color=d.get("color"), mute=bool(d.get("mute", False)), sample=d.get("sample"),
                    sample_root=None if d.get("sample_root") is None else float(d["sample_root"]),
                    audio=bool(d.get("audio", False)), effects=[dict(e) for e in d.get("effects", [])],
@@ -569,7 +579,7 @@ class Song:
                   audio: bool = False, serum: str | None = None, serum_params: dict | None = None,
                   instrument: str | list[str] | None = None, instrument_params: dict | None = None,
                   volume_db: float = 0.0, pan: float = 0.0, delay_ms: float = 0.0, swing: bool = False,
-                  groove: dict | None = None, sidechain: bool = False, effects: list[dict] | None = None,
+                  groove: dict | None = None, sidechain: bool | str = False, effects: list[dict] | None = None,
                   midi_effects: list[dict] | None = None, sends: dict[str, float] | None = None,
                   color: int | None = None, mute: bool = False) -> Track:
         """A new track. role: kick clap snare hat openhat perc crash fx (drums) · bass chords pad lead keys vocal ...
@@ -580,7 +590,7 @@ class Song:
         if any(t.name == name for t in self.tracks):
             raise ValueError(f"track {name!r} already exists")
         inst = [] if instrument is None else [instrument] if isinstance(instrument, str) else list(instrument)
-        t = Track(name=name, role=role, instrument=inst, volume_db=float(volume_db), pan=float(pan), sidechain=sidechain,
+        t = Track(name=name, role=role, instrument=inst, volume_db=float(volume_db), pan=float(pan), sidechain=_sidechain_value(sidechain),
                   swing=swing, color=color, mute=mute, sample=sample, sample_root=sample_root, audio=audio,
                   sends={str(k).upper(): float(v) for k, v in (sends or {}).items()},
                   midi_effects=list(midi_effects or []), effects=list(effects or []), groove=dict(groove or {}),
@@ -762,6 +772,8 @@ class Song:
                     errs.append(f"track {t.name}: {e['device']} cannot be sidechained from its own track")
             if abs(t.delay_ms) > 100:
                 errs.append(f"track {t.name}: delay_ms {t.delay_ms:g} is more than 100 ms — that is a different rhythm, not a track delay")
+            if t.sidechain and t.sidechain not in (True, "compressor", "kickstart"):
+                errs.append(f"track {t.name}: sidechain is true, 'compressor' or 'kickstart' (got {t.sidechain!r})")
             if t.serum and (t.sample or t.audio):
                 errs.append(f"track {t.name}: a Serum track cannot also have sample= or audio=True")
             if t.sample and not t.is_drum and t.sample_root is None:

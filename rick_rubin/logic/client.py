@@ -18,11 +18,12 @@ Differences from Live that a reader of the push report should know:
 from __future__ import annotations
 
 import json
+import shutil
 import time
 from pathlib import Path
 from typing import Any
 
-from ..live.client import DEFAULT_SIDECHAIN, PushReport
+from ..live.client import DEFAULT_SIDECHAIN, PushReport, kickstart_device
 from ..model import Song
 from .bridge import LOGIC_INSTRUMENTS, LogicBridge, LogicError
 from .smf import export_logic_midi
@@ -81,19 +82,29 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
     say("opening the MIDI file in Logic")
     proj = bridge.open_midi_project(smf["path"], expect_tracks=len(song.tracks), ours=tuple(ours))
     say(f"Logic project {proj!r}")
-    midi_tracks = [t for t in song.tracks if not t.audio]
+    midi_tracks = [t for t in song.tracks if not (t.audio or t.serum)]
     try:
         names = bridge.name_tracks_by_regions()
     except LogicError as e:
         rep.warnings.append(f"track names: {e}")
         names = bridge.tracks()
-    if names[: len(midi_tracks)] != [t.name for t in midi_tracks]:
-        rep.warnings.append(f"Logic shows the tracks as {names[:len(midi_tracks)]}, not {[t.name for t in midi_tracks]}; strips are addressed by order")
+    # audio-loop and Serum tracks came in as empty MIDI tracks (so the import kept the song's order); their audio goes
+    # on audio tracks below, so the placeholders go, bottom up
+    order = [t.name for t in song.tracks]
+    for i in reversed([i for i, t in enumerate(song.tracks) if t.audio or t.serum]):
+        try:
+            bridge.delete_track(i)
+            order.pop(i)
+        except LogicError as err:
+            rep.warnings.append(f"{song.tracks[i].name}: the empty MIDI track the import made is still there ({err})")
+    names = bridge.tracks()
+    if [n for n in names if n in {t.name for t in midi_tracks}] != [t.name for t in midi_tracks]:
+        rep.warnings.append(f"Logic shows the tracks as {names}, not {[t.name for t in midi_tracks]}; strips are addressed by order")
 
     # the Mixer strips follow the track order; name -> index (by name when Logic shows ours, else by order)
     index: dict[str, int] = {}
-    for i, t in enumerate(midi_tracks):
-        index[t.name] = names.index(t.name) if t.name in names else i
+    for t in midi_tracks:
+        index[t.name] = names.index(t.name) if t.name in names else order.index(t.name)
 
     def strip_of(name: str) -> int:
         bridge.select_track(index[name])                     # only this strip selected, so edits land on it alone
@@ -137,11 +148,43 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
                 rep.warnings.append(f"{t.name}: instrument parameters not set ({err})")
         if t.sample:
             rep.warnings.append(f"{t.name}: sample tracks (Simpler one-shots) are not yet built in Logic; the role's patch plays the notes")
-        if t.serum:
-            rep.warnings.append(f"{t.name}: Serum stems are not yet placed in Logic; use instrument=\"Serum 2\" to play the part live")
         if t.midi_effects:
             rep.warnings.append(f"{t.name}: MIDI effects are not built in Logic (notes are sent as written)")
         rep.tracks[t.name] = info
+    # Serum tracks: the part as Serum plays it (rendered offline through the plug-in, at the song's tempo, with any
+    # filter/volume automation baked in, as for Live) on an audio track of its own, from bar 1
+    serum_tracks = [t for t in song.tracks if t.serum]
+    if serum_tracks:
+        from ..live.client import _baked_stem
+        from ..serum import track_stem
+        sounding, _ = song.flatten(sounding=True)
+        stems_dir = out_dir / "audio"
+        stems_dir.mkdir(parents=True, exist_ok=True)
+        for t in serum_tracks:
+            mine = [c for c in sounding if c.track == t.name]
+            try:
+                say(f"rendering {t.name} through Serum 2 ({t.serum})")
+                stem = track_stem(song, t, sounding)
+                regions = [(c.start, {k: v for k, v in c.envelopes.items() if k in ("filter", "cutoff", "volume")}) for c in mine]
+                baked = _baked_stem(song, stem, [(st, env) for st, env in regions if env])
+                path = stems_dir / f"{safe_name(t.name)}.wav"            # the region (and then the track) takes the file's name
+                shutil.copyfile(baked, path)
+                ti = bridge.add_audio_track()
+                bridge.import_audio(ti, path, 1, 1)
+                index[t.name] = ti
+                rep.tracks[t.name] = {"index": ti, "instrument": f"Serum 2 '{t.serum}' (rendered to audio)"}
+                rep.notes += sum(len(c.notes) for c in mine)
+            except (LogicError, OSError, RuntimeError, FileNotFoundError, ValueError) as err:
+                rep.warnings.append(f"{t.name}: Serum stem not placed ({err})")
+        if any(t.name in index for t in serum_tracks):
+            try:
+                names = bridge.name_tracks_by_regions()
+            except LogicError as err:
+                rep.warnings.append(f"Serum track names: {err}")
+                names = bridge.tracks()
+            for t in serum_tracks:
+                if t.name in index and names[index[t.name]] != t.name:
+                    rep.warnings.append(f"{t.name}: Logic shows the track as {names[index[t.name]]!r}")
     # audio-loop tracks: an audio track appended after the MIDI tracks, each loop segment imported at its bar
     audio_tracks = [t for t in song.tracks if t.audio]
     for t in audio_tracks:
@@ -154,7 +197,7 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
                     from ..live.client import _segment_file
                     path = _segment_file(song, c.audio, off, ln, {k: v for k, v in c.envelopes.items() if k in ("filter", "cutoff", "volume")})
                     beat = c.start + s0
-                    bridge.import_audio(ti, path, int(beat // 4) + 1, int(beat % 4) + 1)
+                    bridge.import_audio(ti, path, int(beat // 4) + 1, int(beat % 4) + 1, keep_file_rate=True)
                     placed += 1
             rep.tracks[t.name] = {"index": ti, "instrument": f"audio track ({placed} regions)"}
             rep.warnings += [f"{t.name}: Logic shows the track as {bridge.tracks()[ti]!r}"] if bridge.tracks()[ti] != t.name else []
@@ -177,11 +220,12 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
     kick = next((t.name for t in song.tracks if t.role == "kick"), None)
     clips_all, _ = song.flatten()
     filtered = {c.track for c in clips_all if any(k in ("filter", "cutoff") for k in c.envelopes)}
-    for t in midi_tracks:
+    placed = [t for t in song.tracks if t.name in index]
+    for t in placed:
         chain = [dict(e) for e in t.effects]
-        if sidechain and t.sidechain and kick and not any(e.get("sidechain") for e in chain):
-            chain.append(dict(LOGIC_SIDECHAIN, sidechain=kick))
-        if t.name in filtered and not any(e["device"].lower() == "autofilter" for e in chain):
+        if sidechain and t.sidechain and kick and not any(e.get("sidechain") == kick or e["device"].lower() == "kickstart 2" for e in chain):
+            chain.append(kickstart_device(song, kick) if t.sidechain == "kickstart" else dict(LOGIC_SIDECHAIN, sidechain=kick))
+        if t.name in filtered and not (t.serum or t.audio) and not any(e["device"].lower() == "autofilter" for e in chain):
             chain.append({"device": "AutoFilter", "params": {}})          # the device the filter automation rides on
         if not chain:
             continue
@@ -224,7 +268,7 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
         say("returns and sends")
     bus_of = {x: BUS_LETTERS.index(x) + 1 for x in letters}
     aux_made: dict[str, str] = {}
-    for t in midi_tracks:
+    for t in placed:
         for k, (letter, db) in enumerate(sorted(t.sends.items())):
             if letter not in bus_of:
                 continue
@@ -285,7 +329,7 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
 
     clips, markers = song.flatten()
     rep.clips = sum(1 for c in clips if not song.track(c.track).audio)
-    rep.notes = sum(len(c.notes) for c in clips)
+    rep.notes = sum(len(c.notes) for c in clips if not song.track(c.track).serum) + rep.notes
     if automation:
         try:
             n = write_automation(song, bridge, index, progress=say)
@@ -309,7 +353,7 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
     except LogicError as err:
         rep.warnings.append(f"playhead: {err}")
     _save_record(song, {"title": song.title, "project": bridge.project, "projects": sorted(ours | {bridge.project or ""}),
-                        "saved": str(saved) if saved else None, "tracks": {t.name: index[t.name] for t in midi_tracks},
+                        "saved": str(saved) if saved else None, "tracks": {t.name: index[t.name] for t in placed},
                         "aux": aux_made, "time": time.time()})
     rep.mode = (rep.mode + "; " if rep.mode else "") + (f"saved as {saved.name}" if saved else "not saved")
     return rep
@@ -382,8 +426,8 @@ def write_automation(song: Song, bridge: LogicBridge, index: dict[str, int], pro
     clips, _ = song.flatten()
     done = 0
     for c in clips:
-        if not c.envelopes or c.track not in index:
-            continue
+        if not c.envelopes or c.track not in index or song.track(c.track).serum or song.track(c.track).audio:
+            continue                                   # Serum stems and audio loops carry their automation in the audio
         for prm, pts in c.envelopes.items():
             if prm not in params:
                 say(f"{c.track}: {prm} automation in {c.name} is not written (only {', '.join(params)})")

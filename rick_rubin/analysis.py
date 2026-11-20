@@ -99,7 +99,7 @@ def lint(song: Song) -> list[Issue]:
         for n in c.notes:
             if not key.contains(n.pitch):
                 out_key[c.track].add(pname(n.pitch))
-        if role in ("bass", "sub"):
+        if role in ("bass", "sub") and c.notes:          # an audio bass (a stem, a loop) has no notes to range-check
             lo, hi = min(n.pitch for n in c.notes), max(n.pitch for n in c.notes)
             if lo < 24 or hi > 55:
                 add("warn", "H5-bass", c.section, f"{c.track} spans {pname(lo)}-{pname(hi)}; keep house bass ~C0-G2 (24-55)")
@@ -149,7 +149,7 @@ def lint(song: Song) -> list[Issue]:
                 add("warn", "H8-energy", s.name, "drop is not preceded by a build/breakdown — no tension to release")
             if s.energy < max(energies) - 2:
                 add("info", "H8-energy", s.name, "drop energy well below the track peak")
-            if "kick" not in playing_roles(starts[i], starts[i] + 1):
+            if not {"kick", "drums"} & playing_roles(starts[i], starts[i] + 1):      # a full drum loop or stem carries the kick
                 add("error", "H8-energy", s.name, "no kick on the first bar of the drop")
         if s.kind == "build" and s.bars > 16:
             add("warn", "H8-energy", s.name, "build longer than 16 bars loses tension")

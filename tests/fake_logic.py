@@ -22,6 +22,7 @@ class FakeStrip:
     sends: dict[int, float] = field(default_factory=dict)
     side_chains: dict[int, str] = field(default_factory=dict)
     params: dict[int, dict] = field(default_factory=dict)
+    region: str = ""                     # the name of the track's (first) region
 
     def info(self, i: int) -> StripInfo:
         return StripInfo(i, self.name, f"{self.volume:.1f} dB", str(self.pan), self.mute, self.solo, list(self.inserts), self.instrument,
@@ -43,7 +44,8 @@ class _App:
 
 
 class FakeLogicBridge:
-    PLUGINS = {"compressor", "channel eq", "autofilter", "limiter", "chromaverb", "tape delay", "stereo delay", "space designer", "adaptive limiter"}
+    PLUGINS = {"compressor", "channel eq", "autofilter", "limiter", "chromaverb", "tape delay", "stereo delay", "space designer", "adaptive limiter",
+               "kickstart 2", "trackspacer 2.5"}
     INSTRUMENTS = {"retro synth", "alchemy", "es2", "quick sampler", "drum machine designer", "serum 2"}
 
     def __init__(self):
@@ -72,9 +74,27 @@ class FakeLogicBridge:
         self.project = title
         notes = read_midi_notes(path)
         n_tracks = max(t for t, *_ in notes) if notes else 0
-        self._strips = [FakeStrip(f"Patch {i}") for i in range(n_tracks)]
-        self._region_names = []
+        names = self._smf_names(path)
+        self._strips = [FakeStrip(f"Patch {i}", region=names[i] if i < len(names) else "") for i in range(n_tracks)]
+        self.imports: list[tuple[int, Path, int, int]] = []
+        self.deleted: list[str] = []
         return title
+
+    @staticmethod
+    def _smf_names(path) -> list[str]:
+        import struct
+        data = Path(path).read_bytes()
+        names, pos = [], 14
+        ntrk = struct.unpack(">H", data[10:12])[0]
+        for _ in range(ntrk):
+            ln = struct.unpack(">I", data[pos + 4:pos + 8])[0]
+            chunk = data[pos + 8:pos + 8 + ln]
+            i = chunk.find(b"\xff\x03")
+            if i >= 0:
+                n = chunk[i + 2]
+                names.append(chunk[i + 3:i + 3 + n].decode())
+            pos += 8 + ln
+        return names[1:]                                 # the first chunk is the conductor track
 
     def close_project(self, title=None, save=False):
         t = title or self.project
@@ -94,23 +114,29 @@ class FakeLogicBridge:
         return [s.name for s in self._strips if s.kind == "track"]
 
     def name_tracks_by_regions(self):
-        # Logic names tracks after their regions, which carry the MIDI track names
-        import struct
-        data = self.opened[-1].read_bytes()
-        names, pos = [], 14
-        ntrk = struct.unpack(">H", data[10:12])[0]
-        for _ in range(ntrk):
-            ln = struct.unpack(">I", data[pos + 4:pos + 8])[0]
-            chunk = data[pos + 8:pos + 8 + ln]
-            i = chunk.find(b"\xff\x03")
-            if i >= 0:
-                n = chunk[i + 2]
-                names.append(chunk[i + 3:i + 3 + n].decode())
-            pos += 8 + ln
-        for s, nm in zip(self._strips, names[1:]):
-            s.name = nm
-        self.tracks_named = list(names[1:])
+        # Logic names tracks after their regions: MIDI regions carry the MIDI track names, audio regions the file's
+        for s in self._strips:
+            if s.kind == "track" and s.region:
+                s.name = s.region
+        self.tracks_named = self.tracks()
         return self.tracks()
+
+    def delete_track(self, index):
+        t = [s for s in self._strips if s.kind == "track"][index]
+        self.deleted.append(t.name)
+        self._strips.remove(t)
+
+    def add_audio_track(self):
+        n = len(self.tracks())
+        self._strips.insert(n, FakeStrip(f"Audio {n + 1}", instrument=None))
+        return n
+
+    def import_audio(self, track_index, path, bar, beat=1):
+        if not Path(path).exists():
+            raise LogicError(f"{path} does not exist")
+        self.imports.append((track_index, Path(path), bar, beat))
+        self._strips[track_index].region = self._strips[track_index].region or Path(path).stem
+        return True
 
     def select_track(self, index):
         self.selected = index
