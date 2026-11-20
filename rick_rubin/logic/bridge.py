@@ -191,12 +191,18 @@ class LogicBridge:
         if self.front and not self.is_front():
             self.to_front()
 
-    def to_front(self, idle: float = 1.5, timeout: float = 30.0) -> bool:
+    def to_front(self, idle: float = 1.5, timeout: float | None = None) -> bool:
         """Bring Logic to the front if it is not there. Waits until the keyboard and mouse have been still for
-        `idle` seconds first, so nobody's typing lands in Logic (where single keys are commands). Returns whether
-        it had to move. The app that was in front is remembered and gets the front back in close()."""
+        `idle` seconds first, so nobody's typing lands in Logic (where single keys are commands), for at most
+        `timeout` seconds (default 30, or RICK_RUBIN_FRONT_WAIT). Returns whether it had to move. The app that was
+        in front is remembered and gets the front back in close()."""
         if self.is_front():
             return False
+        if timeout is None:
+            try:
+                timeout = float(os.environ.get("RICK_RUBIN_FRONT_WAIT", "30"))
+            except ValueError:
+                timeout = 30.0
         if AX.screen_locked():
             raise LogicError("the screen is locked: Logic's windows cannot be reached until it is unlocked")
         t_end = time.time() + timeout
@@ -602,18 +608,8 @@ class LogicBridge:
                 if pop is None:
                     raise AX.AXError("the sheet has no Instrument pop-up")
                 if "Empty Channel Strip" not in (AX.desc(pop), str(AX.attr(pop, "AXValue") or "")):
-                    # one of Logic's own pop-ups (not in the accessibility tree): a press opens it, the entry is found
-                    # by typing its name into Logic's process, return takes it (checked on Logic 11.2.2)
-                    AX.press(pop)
-                    if not self._popup_open(2.0):
+                    if not self._own_popup_pick(pop, "Empty Channel Strip"):
                         raise AX.AXError("the Instrument pop-up did not open")
-                    K.type_text(self.app.pid, "Empty Channel Strip")
-                    time.sleep(0.5)
-                    K.key(self.app.pid, "return")
-                    time.sleep(0.6)
-                    if self._popup_open(0.2):
-                        K.key(self.app.pid, "escape")
-                        time.sleep(0.3)
                     if "Empty Channel Strip" not in (AX.desc(pop), str(AX.attr(pop, "AXValue") or "")):
                         raise AX.AXError(f"the Instrument pop-up shows {AX.desc(pop)!r}")
             except AX.AXError as e:
@@ -907,34 +903,35 @@ class LogicBridge:
         return mode
 
     def rename_track(self, track_index: int, name: str) -> str:
-        """The track's name: its header's name field is pressed (which opens it for editing), the name typed into
-        Logic's process and confirmed. Nothing is typed unless a text field really has the focus: outside one,
-        Logic reads letters as key commands."""
+        """The track's name: its header's name field is opened for editing (a press on it, or Track > Rename Track
+        when the header is scrolled out of view), the name typed into Logic's process and confirmed. Nothing is
+        typed unless the field that has the focus holds this track's current name: outside a text field Logic
+        reads letters as key commands, and another field would take the text."""
         heads = self.app.track_headers(self.main)
         tf = next((c for c in AX.children(heads[track_index]) if AX.role(c) == "AXTextField"), None) if track_index < len(heads) else None
         if tf is None:
             raise LogicError(f"track {track_index + 1} has no name field")
+        current = self.tracks()[track_index]
+
+        def name_field():
+            e = AX.attr(self.app.el, "AXFocusedUIElement")
+            return e if e is not None and AX.role(e) == "AXTextField" and str(AX.attr(e, "AXValue") or "") == current else None
+
         self.need_front()
-        self.select_track(track_index)                       # brings the header into view
-        focused = None
-        for _ in range(3):
-            self.app.make_key(self.main)
-            heads = self.app.track_headers(self.main)
-            tf = next((c for c in AX.children(heads[track_index]) if AX.role(c) == "AXTextField"), tf)
-            AX.press(tf)
-            focused = AX.wait_for(lambda: (lambda e: e if e is not None and AX.role(e) == "AXTextField" else None)(AX.attr(self.app.el, "AXFocusedUIElement")), 1.5, 0.1)
-            if focused is not None:
-                break
-            time.sleep(0.5)
+        self.select_track(track_index)
+        self.app.make_key(self.main)
+        AX.press(tf)
+        focused = AX.wait_for(name_field, 1.5, 0.1)
         if focused is None and self.only_selected(track_index):
-            # a header scrolled out of view does not take the press: Track > Rename Track opens the field of the
-            # selected track (and only this one is selected)
             try:
-                self.app.menu("Track", "Rename Track")
+                self.app.menu("Track", "Rename Track")       # acts on the selected track, and only this one is selected
             except AX.AXError:
                 pass
-            focused = AX.wait_for(lambda: (lambda e: e if e is not None and AX.role(e) == "AXTextField" else None)(AX.attr(self.app.el, "AXFocusedUIElement")), 2.0, 0.1)
+            focused = AX.wait_for(name_field, 2.5, 0.1)
         if focused is None:
+            other = AX.attr(self.app.el, "AXFocusedUIElement")
+            if other is not None and AX.role(other) == "AXTextField":
+                K.key(self.app.pid, "escape")                # leave whatever field did open, unchanged
             raise LogicError(f"the name field of track {track_index + 1} did not open for editing, so nothing was typed")
         K.key(self.app.pid, "a", "cmd")
         K.type_text(self.app.pid, name)
@@ -1219,6 +1216,86 @@ class LogicBridge:
                 return
             K.key(self.app.pid, "escape")
             time.sleep(0.25)
+
+    def _own_popup_pick(self, button, text: str) -> bool:
+        """Take an entry of one of Logic's own pop-ups (the New Tracks sheet's Instrument menu, a plug-in window's
+        Settings menu, a strip's Setting button: none of them in the accessibility tree). A press on `button` opens
+        it, the entry is found by typing the start of its name into Logic's process, return takes it. Returns False
+        when the pop-up did not open. The caller checks what Logic shows afterwards. Checked on Logic 11.2.2 with
+        the control surface paused."""
+        self.need_front()
+        self.clear_popups()
+        AX.press(button)                                   # reports failure on some of them, but the menu opens
+        if not self._popup_open(2.0):
+            return False
+        time.sleep(0.25)
+        K.type_text(self.app.pid, text)
+        time.sleep(0.6)
+        K.key(self.app.pid, "return")
+        time.sleep(0.8)
+        if self._popup_open(0.2):                          # nothing matched: leave the menu without choosing
+            K.key(self.app.pid, "escape")
+            time.sleep(0.3)
+        return True
+
+    def load_setting(self, ref, path: str | Path, plugin: str = "instrument", nth: int = 0) -> str:
+        """Load a plug-in setting file (an .aupreset, or Logic's .pst) into the instrument of strip `ref` (or its
+        insert `plugin`), through the plug-in window header's Settings > Load…. The file must be in a visible folder
+        (file panels do not reach hidden ones). Returns the setting name the header shows afterwards."""
+        path = Path(path).expanduser().resolve()
+        if not path.exists():
+            raise LogicError(f"{path} does not exist")
+        if self.mcu is not None and self.mcu.state.last_change > 0:
+            self._press(M.PAN)                                 # leave any edit view: its link to the plug-in window
+            time.sleep(0.3)
+        shown = ""
+        with self.pause_mcu():
+            pw = self.plugin_window(ref, plugin, nth)
+            try:
+                sp = pw.settings_popup()
+                if sp is None:
+                    raise LogicError("the plug-in window has no Settings pop-up")
+                if not self._own_popup_pick(sp, "Load"):
+                    raise LogicError("the Settings menu did not open")
+                panel = AX.wait_for(lambda: next((d for d in self.app.dialogs() if AX.attr(d, "AXIdentifier") == "open-panel"), None), 6.0)
+                if panel is None:
+                    raise LogicError("Settings > Load… did not open a file panel")
+                try:
+                    self._panel_navigate(panel, path.parent, select_file=path.name)
+                except Exception:
+                    AX.press(AX.find(panel, lambda e: AX.role(e) == "AXButton" and AX.title(e) == "Cancel", 4))
+                    raise
+                AX.press(AX.find(panel, lambda e: AX.attr(e, "AXIdentifier") == "OKButton", 3))
+                AX.wait_for(lambda: not any(AX.attr(d, "AXIdentifier") == "open-panel" for d in self.app.dialogs()), 8.0)
+                time.sleep(1.0)
+                left = self.pending_alert()
+                if left:
+                    raise LogicError(f"Logic is asking {left[0][:120]!r} ({', '.join(left[1])}) after loading the setting")
+                shown = str(AX.attr(pw.settings_popup(), "AXValue") or "")
+            except AX.AXError as e:
+                raise LogicError(str(e)) from e
+            finally:
+                self.clear_popups()
+                time.sleep(0.3)
+                pw.close()
+                time.sleep(0.8)
+        if shown != path.stem:
+            raise LogicError(f"the setting was not loaded: the plug-in window shows {shown!r}, not {path.stem!r}")
+        return shown
+
+    def reset_strip(self, ref) -> bool:
+        """The strip's Setting button > Reset Channel Strip: an empty strip (no instrument, no inserts), for a track
+        whose Logic patch is not wanted. Only for strips of a project the bridge built. Returns whether it is empty."""
+        with self.pause_mcu():
+            strip = self.strip(ref)
+            btn = self.mixer().control(strip, "setting")
+            if btn is None:
+                return False
+            self.app.make_key(self.mixer().window())
+            self._own_popup_pick(btn, "Reset Channel Strip")
+            time.sleep(0.6)
+        self._mixer = None
+        return not self.strip_info(ref).inserts
 
     def _menu_type_and_pick(self, button, text: str, down: int = 1) -> bool:
         self.clear_popups()

@@ -115,6 +115,17 @@ class FakeLogicBridge:
         self._strips.insert(n, FakeStrip(f"Inst {n + 1}", region=Path(path).stem))
         return [n]
 
+    def load_setting(self, ref, path, plugin="instrument", nth=0):
+        if not Path(path).exists():
+            raise LogicError(f"{path} does not exist")
+        self._strip(ref).params.setdefault(0, {})["setting"] = Path(path).stem
+        return Path(path).stem
+
+    def reset_strip(self, ref):
+        s = self._strip(ref)
+        s.inserts, s.instrument = [], None
+        return True
+
     def read_plugin_params(self, track_index, slot, max_pages=40):
         s = self._strip(track_index)
         return s.inserts[slot - 1], dict(s.params.get(slot, {"Thrshld": "-20.0 dB", "Ratio": "2.0:1"}))

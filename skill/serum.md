@@ -15,7 +15,8 @@
   The part is rendered through the plug-in (cached in `<project>/serum/`), so `eval`, `view`, `width` and the preview all measure Serum's real sound, and `push` places it in Live as one audio clip on an audio track — with the track's effects, sidechain and volume live in Live, and any `filter`/`volume` automation rendered in. Changing notes, preset or parameters re-renders on the next build.
 - **Explore with it** like with samples: several presets per part, several macro settings per preset, compared by `audition` and in context.
 - **Tempo:** the offline host gives Serum no tempo, so on its own Serum runs at 120 BPM. Song stems (and `serum render/describe/ab/set --bpm N`) rewrite tempo-synced LFOs and delays as free-running at the song's tempo, so a 1/4 LFO at 126 BPM really moves at 2.1 Hz.
-- Limits: it reaches Live and Logic as audio, not as an editable Serum device; one preset and one set of parameter values per track (no parameter automation over time yet — use two tracks, or `filter`/`volume` automation on the result, or build the movement into the patch: an LFO or envelope on the filter); macOS path of the VST3 is assumed.
+- In Logic the patch can also arrive inside a live Serum 2, editable: `push --serum-live` for a song, `rick-rubin logic add-serum` / `logic serum` in a project that is open (`skill/logic.md`).
+- Limits: by default it reaches the DAW as audio, not as an editable Serum device (Live always; Logic unless asked as above); one preset and one set of parameter values per track (no parameter automation over time yet — use two tracks, or `filter`/`volume` automation on the result, or build the movement into the patch: an LFO or envelope on the filter); macOS path of the VST3 is assumed.
 
 ### Designing a Serum sound
 

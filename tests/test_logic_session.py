@@ -244,3 +244,49 @@ def test_push_places_sample_parts_as_audio_and_writes_midi_effects_into_the_note
     assert any("Arp" in w and "Arpeggiator" in w for w in rep.warnings)        # not emulated: said, not hidden
     assert not any("not yet built" in w for w in rep.warnings)
     assert key_signature("A minor") == (0, 1) and key_signature("F# minor") == (3, 1) and key_signature("nonsense scale") is None
+
+
+def test_push_can_put_a_live_serum_on_the_track(tmp_path, monkeypatch):
+    from rick_rubin import serum
+    (tmp_path / "serum" / "presets").mkdir(parents=True)
+    (tmp_path / "serum" / "presets" / "round.SerumPreset").write_bytes(b"x")
+
+    def fake_aupreset(src, dst, params=None, root=None):
+        Path(dst).parent.mkdir(parents=True, exist_ok=True)
+        Path(dst).write_bytes(b"au")
+        return Path(dst)
+    monkeypatch.setattr(serum, "write_aupreset", fake_aupreset)
+    s = Song("Live Serum", bpm=124, key="A minor")
+    s.base_dir = tmp_path
+    kick = s.add_track("Kick", "kick")
+    bass = s.add_track("Bass", "bass", serum="serum/presets/round.SerumPreset", volume_db=-9)
+    four = s.pattern("four", kick, "x...x...x...x...")
+    line = s.pattern("line", bass, ["1.3 A0 0.35; 2.3 A0 0.35; 3.3 G0 0.35"])
+    s.arrange(s.add_section("a", 8, kind="drop", energy=7, parts={kick: four, bass: line}))
+    fake = FakeLogicBridge()
+    rep = C.push_song(s, fake, save=False, serum_live=True)
+    assert fake.tracks() == ["Kick", "Bass"] and not fake.imports                 # MIDI on the track, nothing rendered to audio
+    strip = fake._strips[1]
+    assert strip.instrument == "Serum 2" and strip.params[0]["setting"] == "Bass" and strip.inserts == [] and strip.volume == -9.0
+    assert (tmp_path / "logic" / "presets" / "Bass.aupreset").exists() and "live" in rep.tracks["Bass"]["instrument"]
+    notes = [n for n in read_midi_notes(tmp_path / "logic" / "Live Serum.mid") if n[0] == 2 and n[4] > 1]
+    assert len(notes) == 8 * 3                                                    # the part is in the MIDI file
+    # without the option the part is rendered: an audio track, as before (needs the real plug-in, so only the plan is checked)
+    assert C.as_audio(bass) and not C.as_audio(bass, True)
+
+
+def test_a_serum_patch_goes_onto_a_track_that_holds_serum(fake, tmp_path, monkeypatch):
+    from rick_rubin import serum
+    pre = tmp_path / "proj" / "serum" / "presets"
+    pre.mkdir(parents=True)
+    (pre / "round.SerumPreset").write_bytes(b"x")
+    monkeypatch.setattr(serum, "write_aupreset", lambda src, dst, params=None, root=None: (Path(dst).parent.mkdir(parents=True, exist_ok=True), Path(dst).write_bytes(b"au"), Path(dst))[2])
+    with S.Session(fake) as s:
+        with pytest.raises(LogicError, match="not Serum 2"):
+            s.serum("Bass", "serum/presets/round.SerumPreset", project_dir=tmp_path / "proj")
+        fake._strips[1].instrument = "Serum 2"
+        c = s.serum("Bass", "serum/presets/round.SerumPreset", project_dir=tmp_path / "proj")
+        assert c.ok and c.after == "round" and (tmp_path / "proj" / "serum" / "aupresets" / "round.aupreset").exists()
+        fake._strips[1].instrument = "Serum 2 FX"
+        with pytest.raises(LogicError, match="not Serum 2"):
+            s.serum("Bass", "serum/presets/round.SerumPreset", project_dir=tmp_path / "proj")

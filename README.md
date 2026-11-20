@@ -1,5 +1,13 @@
 # rick-rubin
 
+> **This fork (RohilH/rick-rubin)** turns the toolkit into a copilot for Logic Pro: besides writing a track as code and
+> rendering it into a new project, it works **inside the Logic project that is open** (`rick-rubin logic ...`: read it,
+> make one change, read the change back), designs and matches Serum 2 sounds, splits stems and conforms tempo and key
+> with Logic's own tools, and keeps what the person at the Mac said after listening. Start with [`SKILL.md`](SKILL.md)
+> (a short router into `skill/*.md`) and [`docs/LOGIC.md`](docs/LOGIC.md); the plan is in
+> [`docs/plans/copilot-roadmap.md`](docs/plans/copilot-roadmap.md). The rest of this page is upstream's description of
+> the Ableton Live toolkit, which still works.
+
 **A toolkit that lets coding agents (Claude Code, Codex, …) produce house tracks by conversation and render them straight into Ableton Live.** There is no custom agent harness: your coding agent is the harness. It reads `SKILL.md` and drives the `rick-rubin` CLI / Python API with its own shell and file tools.
 
 Describe a track ("deep house, 121 BPM, dub chords, long DJ intro, big second drop"), the agent proposes a plan, builds the arrangement, checks its own work, and pushes a full Arrangement View into Live. That includes tracks, instruments, MIDI clips, section locators, filter automation and kick-keyed sidechain.
@@ -134,6 +142,22 @@ dialogs are driven through macOS accessibility plus a Mackie Control that Logic 
 bass, guitar, piano and other stems. `pip install -e ".[logic]"`, grant your terminal Accessibility permission, and
 read [`docs/LOGIC.md`](docs/LOGIC.md) for what is built, what differs from Live and troubleshooting.
 
+### Inside the project you have open
+
+```
+rick-rubin logic inspect                                  # tempo, key, every strip: fader, pan, instrument, inserts, sends, regions
+rick-rubin logic set Bass volume=-8                        # [ok] volume Bass: -6.0 dB -> -8.0 dB
+rick-rubin logic insert Pad "Kickstart 2" Mix=0.6
+rick-rubin logic tweak Bass Compressor Threshold=-24 Ratio=4
+rick-rubin logic send Vocal 1 -14
+rick-rubin logic add-audio take.wav --bar 17 --name "Vocal take"
+rick-rubin logic bounce drop.wav --bars 33-48 --tracks Bass Kick
+```
+
+A session never opens, closes or saves a project and never answers a question Logic is asking. The saved state is
+backed up before the first change, every change is read back and logged with the value before and after, and Logic
+only comes to the front for the steps that need it, once nobody is typing. See `skill/logic.md`.
+
 ## Use it
 
 ### With Claude Code (or any coding agent) — the intended way
@@ -152,7 +176,7 @@ The agent follows `SKILL.md`: inventory → questions → plan → confirm → e
 
 ```
 rick-rubin init ~/music/night-bus --title "Night Bus" --bpm 126 --key "A minor"
-# write the song in ~/music/night-bus/song.py (see "Writing a song" in SKILL.md), then:
+# write the song in ~/music/night-bus/song.py (see `skill/compose.md`), then:
 rick-rubin score ~/music/night-bus            # the song as a compact text score
 rick-rubin eval ~/music/night-bus             # lint + offline render + measurements
 rick-rubin view ~/music/night-bus --bars 33-48
@@ -208,7 +232,7 @@ Each command prints the edit op that wires the sample into the song. One-shots p
 track (melodic ones are tuned from their *measured* pitch — filenames lie about octaves); loops sit unwarped on
 audio tracks because they are conformed to the song tempo on import (needs `ffmpeg`). The preview render and the
 self-eval use the same files, so what you measure is what Live will play for those tracks. An agent with the
-Splice MCP connected can search, download and import in one go — see "Using Splice / samples" in `SKILL.md`.
+Splice MCP connected can search, download and import in one go — see `skill/samples.md`.
 
 ## Reading tools for vocals and width
 
@@ -264,6 +288,10 @@ rick_rubin/
   logic/mcu.py    a Mackie Control emulated on a virtual MIDI port (LCD, faders, clock) that Logic auto-detects
   logic/bridge.py the Logic bridge: open/save projects, strips, inserts, sends, parameters, side chains, bounce
   logic/client.py push_song / capture_logic for Logic (the counterpart of live/client.py)
+  logic/session.py session mode: read the open project, single changes read back and logged, backups (`rick-rubin logic ...`)
+  logic/stems.py  Logic's Stem Splitter, and conforming a recording to a tempo and key with Smart Tempo / Flex
+  render/stems.py a sample track's part as audio, for render targets that take it as audio (Logic)
+  hear.py         auditions for a person to listen to, presets installed into Serum's browser, verdicts and the taste file
   logic/stems.py  split_stems: a recording's stems through Logic's Stem Splitter
   serum.py        Serum 2: preset catalog, patch sheets, and the plug-in hosted in-process (load presets, render parts)
   serum_params.py Serum's parameters as a producer-facing map (keys, units, ranges, menus), read off the plug-in
@@ -277,7 +305,9 @@ rick_rubin/
   options.py      option(): named choices in song.py, switched by `ab` / `--set` for A/B runs
   samples.py      sample import: pitch detection, tempo-conforming loops, 24-bit WAV io
   project.py      project folder, history/undo, project.md memory
-SKILL.md          agent instructions: principles, hard rules, process, house craft
+SKILL.md          the agent's router: which job, which file to read, the command index
+skill/*.md        the manual by topic: logic, serum, compose, explore, mix, samples, mashups, genres, live
+PREFERENCES.md    standing preferences, imported by every project's CLAUDE.md
 install.md        setup prompt + steps for your coding agent
 docs/HOUSE.md     research notes behind the defaults
 ```

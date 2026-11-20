@@ -81,6 +81,8 @@ def _main(argv: list[str] | None = None) -> int:
                    "its track, a changed device parameter / fader / send is set in place (full replace if the set no longer matches)")
     s.add_argument("--no-instruments", action="store_true")
     s.add_argument("--automation", action="store_true", help="Logic: also write the sections' volume automation (played in real time)")
+    s.add_argument("--serum-live", action="store_true", help="Logic: Serum tracks get Serum 2 itself with the patch loaded and their notes as MIDI "
+                                                             "(editable in Logic), instead of the part rendered to audio")
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=9889)
 
@@ -306,7 +308,7 @@ def _main(argv: list[str] | None = None) -> int:
 
     if a.cmd == "init":
         p = Project.init(a.dir, a.title, a.bpm, a.key)
-        print(f"created {p.source_path}\nWrite the song there (SKILL.md, 'Writing a song'), then: rick-rubin score {a.dir}")
+        print(f"created {p.source_path}\nWrite the song there (skill/compose.md, 'Writing a song'), then: rick-rubin score {a.dir}")
     elif a.cmd == "check":
         stages, errors = Project(a.dir).check(audio=a.audio)
         for name, ok, out in stages:
@@ -371,7 +373,7 @@ def _main(argv: list[str] | None = None) -> int:
         print(Project(a.dir).view(a.bars, a.tracks))
     elif a.cmd == "push":
         rep = Project(a.dir).push(a.host, a.port, a.replace, not a.no_instruments, clean=a.clean, update=a.update, daw=a.daw,
-                                  automation=a.automation, progress=lambda m: print("·", m, file=sys.stderr))
+                                  automation=a.automation, serum_live=a.serum_live, progress=lambda m: print("·", m, file=sys.stderr))
         print(rep.text())
     elif a.cmd == "watch":
         try:

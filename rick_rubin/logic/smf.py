@@ -70,9 +70,10 @@ DRUM_PROGRAM = 0                      # on channel 10 Logic 11.2 answers this wi
                                       # instrument track; the electronic programs (16, 24, 25) give single Drum Machine Designer pads
 
 
-def as_audio(track: Track) -> bool:
-    """Does this track reach Logic as audio (loops, a Serum part, a sample part rendered offline) rather than as MIDI?"""
-    return bool(track.audio or track.serum or track.sample)
+def as_audio(track: Track, serum_live: bool = False) -> bool:
+    """Does this track reach Logic as audio (loops, a Serum part, a sample part rendered offline) rather than as MIDI?
+    With `serum_live` a Serum track stays MIDI: Serum 2 itself goes on the track with the patch loaded."""
+    return bool(track.audio or track.sample or (track.serum and not serum_live))
 
 
 _MODE_STEP = {"major": 0, "dorian": 2, "phrygian": 4, "lydian": 5, "mixolydian": 7, "minor": 9, "locrian": 11}
@@ -117,7 +118,7 @@ def drum_pitch(track: Track) -> int:
     return DRUM_MAP.get(track.role, 60)
 
 
-def export_logic_midi(song: Song, path: str | Path) -> dict:
+def export_logic_midi(song: Song, path: str | Path, serum_live: bool = False) -> dict:
     """Write `song` as the SMF Logic opens as a project. Returns {"path", "tracks": [{name, channel, program,
     notes}], "markers": n}. Audio-loop tracks and Serum tracks get an (empty) MIDI track too, so that Logic's
     track order equals the song's; their audio is placed by the bridge afterwards."""
@@ -147,13 +148,13 @@ def export_logic_midi(song: Song, path: str | Path) -> dict:
             non_drum += 1
         prog = program_for(t)
         ev: list[tuple[int, int, bytes]] = [(0, 0, _meta(0x03, t.name.encode("utf-8")))]
-        if prog is not None and not as_audio(t):
+        if prog is not None and not as_audio(t, serum_live):
             ev.append((0, 1, bytes([0xC0 | ch, prog & 0x7F])))
         # No CC7 / CC10 here. Logic chases a region's volume and pan controllers every time playback starts and moves
         # the fader to them, so the exact dB the bridge sets afterwards was overwritten by this first guess at the next
         # play or bounce (measured: -14 dB written came back as -21 dB, -12 as -16). The bridge alone sets the mixer.
         n_notes = 0
-        if not as_audio(t):
+        if not as_audio(t, serum_live):
             for c in (sounding if t.midi_effects else clips):
                 if c.track != t.name:
                     continue

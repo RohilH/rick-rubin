@@ -385,6 +385,36 @@ class Session:
         except LogicError as e:
             return self.b.tracks()[ti], f"; not renamed ({e})"
 
+    def serum(self, ref: str, preset: str, settings: dict | None = None, project_dir: str | Path | None = None) -> Change:
+        """Load a Serum preset (a name, a path, or a designed preset in `project_dir`) into the Serum 2 on a track.
+        The patch is written as an Audio Unit preset in a visible folder (`project_dir`/serum/aupresets, else
+        ~/Music/rick-rubin/presets) and loaded through Serum's window: Settings > Load…"""
+        from .. import serum as S
+        target, info = self.resolve(ref)
+        if not isinstance(target, int):
+            raise LogicError(f"{info.name!r} is not a track")
+        if "serum" not in (info.instrument or "").lower() or "fx" in (info.instrument or "").lower():
+            raise LogicError(f"{info.name!r} holds {info.instrument or 'no instrument'}, not Serum 2. Put Serum on it first "
+                             f"(`rick-rubin logic instrument \"{info.name}\" \"Serum 2\"`), or make a new track with `logic add-serum`")
+        base = Path(project_dir).expanduser() if project_dir else None
+        try:
+            src = base / preset if base is not None and (base / preset).is_file() else S.find(preset)
+        except (FileNotFoundError, ValueError) as e:
+            raise LogicError(str(e)) from e
+        out_dir = base / "serum" / "aupresets" if base is not None else Path.home() / "Music" / "rick-rubin" / "presets"
+        au = S.write_aupreset(src, out_dir / f"{_safe(Path(src).stem)}.aupreset", settings or None)
+        self._begin()
+        self._single(target)
+        shown = self.b.load_setting(target, au)
+        return self._done(Change("serum patch", info.name, None, shown, shown == au.stem, str(au)))
+
+    def add_serum(self, preset: str, name: str | None = None, settings: dict | None = None, project_dir: str | Path | None = None) -> list[Change]:
+        """A new software-instrument track with Serum 2 on it and the preset loaded."""
+        self.add_instrument("Serum 2", name)
+        ti = len(self.b.tracks()) - 1
+        self.serum(f"#{ti + 1}", preset, settings, project_dir)
+        return list(self.changes)
+
     def add_audio(self, file: str | Path, bar: int = 1, name: str | None = None) -> Change:
         """A new audio track at the bottom holding `file`, its region starting on bar `bar` (Logic places an imported
         file on the bar line). A file at another sample rate is converted: the project's rate stays."""
@@ -587,6 +617,8 @@ ACTIONS = {
     "send": "TRACK BUS DB|off — a send to a bus",
     "instrument": "TRACK NAME [KEY=VALUE ...] — load an instrument, Audio Unit or Library patch on a track",
     "add-instrument": "NAME [KEY=VALUE ...] [--name TRACK] — a new software-instrument track",
+    "serum": "TRACK PRESET [KEY=VALUE ...] [--dir PROJECT] — load a Serum preset into the Serum 2 on a track",
+    "add-serum": "PRESET [KEY=VALUE ...] [--name TRACK] [--dir PROJECT] — a new track with Serum 2 and the preset loaded",
     "add-audio": "FILE [--bar N] [--name TRACK] — a new audio track holding the file",
     "add-midi": "FILE [--bar N] [--name TRACK ...] — the file's tracks as new instrument tracks",
     "rename": "TRACK NAME",
@@ -595,7 +627,7 @@ ACTIONS = {
     "devices": "PLUGIN ... [--refresh] — a plug-in's parameters, read in a scratch project and remembered",
 }
 READ_ONLY = {"inspect"}
-NEEDS_SURFACE = {"params", "insert", "tweak", "sidechain", "send", "instrument", "add-instrument", "devices"}
+NEEDS_SURFACE = {"params", "insert", "tweak", "sidechain", "send", "instrument", "add-instrument", "add-serum", "devices"}
 
 
 def add_parser(sub) -> None:
@@ -608,6 +640,7 @@ def add_parser(sub) -> None:
     s.add_argument("--json", action="store_true", help="inspect/params/devices: print JSON")
     s.add_argument("--bar", type=int, default=1, help="add-audio/add-midi: the bar the region starts on")
     s.add_argument("--name", action="append", default=[], help="add-*: the new track's name (repeat for several MIDI tracks)")
+    s.add_argument("--dir", help="serum/add-serum: the song project a designed preset belongs to (presets are looked up there first)")
     s.add_argument("--bars", help="bounce: A-B")
     s.add_argument("--tracks", nargs="+", help="bounce: only these strips (soloed for the bounce)")
     s.add_argument("--sidechain", help="insert: the track that keys the plug-in")
@@ -690,6 +723,14 @@ def run(a, say=None) -> int:
             elif act == "add-instrument":
                 need(1, "NAME [KEY=VALUE ...] [--name TRACK]")
                 changes = [s.add_instrument(args[0], a.name[0] if a.name else None, parse_settings(args[1:]))] + s.changes[1:]
+            elif act == "serum":
+                need(2, "TRACK PRESET [KEY=VALUE ...] [--dir PROJECT]")
+                words = [w for w in args[1:] if "=" not in w]
+                changes = [s.serum(args[0], " ".join(words), parse_settings([w for w in args[1:] if "=" in w]), a.dir)]
+            elif act == "add-serum":
+                need(1, "PRESET [KEY=VALUE ...] [--name TRACK] [--dir PROJECT]")
+                words = [w for w in args if "=" not in w]
+                changes = s.add_serum(" ".join(words), a.name[0] if a.name else None, parse_settings([w for w in args if "=" in w]), a.dir)
             elif act == "add-audio":
                 need(1, "FILE [--bar N] [--name TRACK]")
                 changes = [s.add_audio(args[0], a.bar, a.name[0] if a.name else None)]

@@ -263,7 +263,7 @@ class Project:
         return export_midi(self.load(), self.root / "midi")
 
     def push(self, host: str = "127.0.0.1", port: int = 9889, replace: bool = False, load_instruments: bool = True, progress=None,
-             clean: bool = False, update: bool = False, daw: str = "live", automation: bool = False):
+             clean: bool = False, update: bool = False, daw: str = "live", automation: bool = False, serum_live: bool = False):
         """Build the arrangement in the DAW. daw="live" (Ableton, the default): update=True redoes only what changed
         since the last push from this project (falling back to a full replace when the set no longer matches it).
         daw="logic": the song is rebuilt as a Logic Pro project (every push is a full one; automation=True also
@@ -274,7 +274,8 @@ class Project:
             from .logic import push_song as push_logic
             from .live.client import live_lock
             with live_lock(f"push {self.root.name}", progress=progress, port=port), LogicBridge(progress=progress, front="start") as b:
-                return push_logic(song, b, replace=replace, load_instruments=load_instruments, progress=progress, automation=automation)
+                return push_logic(song, b, replace=replace, load_instruments=load_instruments, progress=progress, automation=automation,
+                                  serum_live=serum_live)
         from .live import LiveBridge, push_song
         from .live.client import _fingerprints, live_lock, push_record, update_song
         with live_lock(f"push {self.root.name}", progress=progress, port=port), LiveBridge(host, port) as b:
@@ -506,7 +507,7 @@ class Project:
 SONG_PY = '''"""{title}
 
 The whole song lives in this file. Every other command (score, eval, view, push, capture...)
-rebuilds from it. Notation and API: SKILL.md, "Writing a song".
+rebuilds from it. Notation and API: skill/compose.md, "Writing a song".
 """
 from rick_rubin import Song
 

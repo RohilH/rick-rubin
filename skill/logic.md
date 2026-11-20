@@ -17,6 +17,8 @@ rick-rubin logic insert Pad "Kickstart 2" Mix=0.6
 rick-rubin logic insert Pad "Trackspacer 2.5" Ratio=60 --sidechain Vocal
 rick-rubin logic tweak Bass Compressor Threshold=-24 Ratio=4
 rick-rubin logic send Vocal 1 -14                # Bus 1; Logic makes its Aux when the bus is new
+rick-rubin logic add-serum serum/presets/night-bass.SerumPreset --dir ~/music/night-bus --name "Night Bass"
+rick-rubin logic serum "Night Bass" "BA - Real Bass"       # another patch into the Serum that is on the track
 rick-rubin logic add-audio ~/Music/take.wav --bar 17 --name "Vocal take"
 rick-rubin logic add-midi line.mid --bar 9
 rick-rubin logic bounce bounces/drop.wav --bars 33-48 --tracks Bass Kick
@@ -55,6 +57,14 @@ For a plug-in you have not used before, `rick-rubin logic devices "OTT"` reads i
 (closed without saving) and remembers them. Numbers take the displayed unit (dB, ms, Hz, %); switches take
 on/off; menus take the option's name.
 
+**A Serum sound on a track.** `logic add-serum "<preset>"` makes a new software-instrument track (an empty
+channel strip, not Logic's default patch), puts Serum 2 on it and loads the preset; `logic serum TRACK "<preset>"`
+loads one into a Serum that is already there. The preset is a name from Serum's library, a path, or a designed
+preset of a song project (`--dir`). It is handed to Serum as an Audio Unit preset through the plug-in window's
+Settings > Load…, so the track stays MIDI and Rohil can go on editing the patch in Serum. The Audio Unit preset
+is written to `<--dir>/serum/aupresets/` or, without `--dir`, `~/Music/rick-rubin/presets/` (file panels cannot
+reach hidden folders).
+
 **Timing.** A fader is instant. A parameter is 5 to 10 s. Inserting a plug-in is 10 to 140 s, most of it scrolling
 Logic's plug-in list on the surface (the order is remembered, so the second time is quicker). A bounce of a few
 bars is about 15 s.
@@ -82,6 +92,11 @@ measurements. What changes for you:
   Units are the displayed ones. `sidechain: true` is a Compressor keyed from the Kick, as in Live.
 - Serum tracks (`serum=`) arrive as their rendered stem on an audio track named after the track, from bar 1, with
   their effects, sends and mixer settings (checked: a Logic bounce of the track matches the offline stem, r = 0.985).
+  With `push --serum-live` they stay MIDI instead: the role's Logic patch is cleared from the strip, Serum 2 goes on
+  it and the patch (with the track's `serum_params`) is loaded as an Audio Unit preset from
+  `<project>/logic/presets/`. Use it when Rohil will keep working on the part in Logic; the rendered stem is the
+  exact sound the offline measurements saw, the live Serum is the same patch played by Logic (tempo-synced LFOs
+  follow Logic's tempo, free-running ones start where Logic starts them).
 - Pumping without routing: `sidechain="kickstart"` puts Kickstart 2 on the track, its shape repeating as often as
   the kick lands on the beat (every beat, every 2 beats, every bar). Explicitly: `{"device": "Kickstart 2",
   "params": {"Loop Length": 0.0, "Used Wave": 0.2, "Mix": 0.8}}` — Loop Length is a switch: 0.00 every beat, 0.33

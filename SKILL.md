@@ -60,6 +60,8 @@ rick-rubin logic sidechain TRACK PLUGIN SOURCE
 rick-rubin logic send TRACK BUS DB|off
 rick-rubin logic instrument TRACK NAME [KEY=VALUE ...]   # an instrument, Audio Unit or Library patch
 rick-rubin logic add-instrument NAME [--name TRACK]      # a new software-instrument track
+rick-rubin logic add-serum "<preset>" [--name TRACK] [--dir <song project>]   # a new track: Serum 2 with the patch loaded
+rick-rubin logic serum TRACK "<preset>" [--dir <song project>]              # a patch into the Serum 2 already on a track
 rick-rubin logic add-audio FILE [--bar N] [--name TRACK] # a new audio track holding the file
 rick-rubin logic add-midi FILE [--bar N]                 # a MIDI file's tracks as new instrument tracks
 rick-rubin logic bounce OUT.wav [--bars A-B] [--tracks T ...]
@@ -85,7 +87,7 @@ rick-rubin conform <dir> file.wav --bpm 128 [--transpose N] [--flex-mode "..."]
 rick-rubin init <dir> --title "..." --bpm 126 --key "A minor"
 rick-rubin check | build | score | eval | view | preview | midi <dir> [--bars A-B] [--tracks ...]
 rick-rubin ab <dir> name=value ... [--live]      rick-rubin --set name=value <command> ...
-rick-rubin push <dir>                            rick-rubin capture <dir> [--bars A-B] [--tracks ...]
+rick-rubin push <dir> [--serum-live]             rick-rubin capture <dir> [--bars A-B] [--tracks ...]
 rick-rubin reference add <files...> | list | compare <dir> | stems ref.wav mine.wav
 rick-rubin width | spectrum | hits | compare <dir> ...
 rick-rubin sample | samples | audition | transcribe | retime | notes <dir> ...

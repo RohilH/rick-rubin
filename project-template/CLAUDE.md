@@ -6,7 +6,7 @@ A song project for rick-rubin. {bpm} BPM, {key}.
 
 ## How this project works
 
-- Read `{repo}/SKILL.md` before doing anything: it is the manual (notation, commands, Live bridge, tools).
+- Read `{repo}/SKILL.md` before doing anything: it says which of `{repo}/skill/*.md` this job needs (`compose.md` for notation and the process, `logic.md` for the DAW, `serum.md`, `samples.md`, `mix.md`).
 - `song.py` is the song — the only file you compose in. Every other command rebuilds from it.
 - `project.md` is this song's memory: the brief, the exploration log, decisions, what is still weak.
   Read it first; add to it as you go, not only at the end.

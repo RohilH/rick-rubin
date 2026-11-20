@@ -56,7 +56,7 @@ def is_logic_instrument(name: str) -> bool:
 
 
 def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instruments: bool = True, sidechain: bool = True,
-              progress=None, save: bool = True, automation: bool = False, strict: bool = False) -> PushReport:
+              progress=None, save: bool = True, automation: bool = False, strict: bool = False, serum_live: bool = False) -> PushReport:
     """Render `song` as a Logic project. A project of ours (saved under the song's title) that is open is
     closed first; anyone else's open project is left alone (Logic keeps both open)."""
     say = progress or (lambda *_: None)
@@ -64,7 +64,7 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
     rep.live_version = f"Logic Pro {bridge.ping().get('logic_version') or '?'}"
     title = safe_name(song.title)
     out_dir = logic_dir(song)
-    smf = export_logic_midi(song, out_dir / f"{title}.mid")
+    smf = export_logic_midi(song, out_dir / f"{title}.mid", serum_live)
     say(f"wrote {smf['path'].name}: {len(smf['tracks'])} tracks, {smf['markers']} markers")
 
     ours = {title, f"{title}.logicx"} | our_projects()
@@ -82,7 +82,7 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
     say("opening the MIDI file in Logic")
     proj = bridge.open_midi_project(smf["path"], expect_tracks=len(song.tracks), ours=tuple(ours))
     say(f"Logic project {proj!r}")
-    midi_tracks = [t for t in song.tracks if not as_audio(t)]
+    midi_tracks = [t for t in song.tracks if not as_audio(t, serum_live)]
     try:
         names = bridge.name_tracks_by_regions()
     except LogicError as e:
@@ -91,7 +91,7 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
     # audio-loop and Serum tracks came in as empty MIDI tracks (so the import kept the song's order); their audio goes
     # on audio tracks below, so the placeholders go, bottom up
     order = [t.name for t in song.tracks]
-    for i in reversed([i for i, t in enumerate(song.tracks) if as_audio(t)]):
+    for i in reversed([i for i, t in enumerate(song.tracks) if as_audio(t, serum_live)]):
         try:
             bridge.delete_track(i)
             order.pop(i)
@@ -119,6 +119,27 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
         if before.inserts:
             info["patch_fx"] = list(before.inserts)
         loaded = None
+        if t.serum:
+            # a live Serum 2 on the track, carrying the patch: the role's Logic patch (and its inserts) is cleared first,
+            # Serum loaded, and the patch handed over as an Audio Unit preset through the plug-in window
+            try:
+                from ..serum import find as find_preset, write_aupreset
+                base = Path(song.base_dir) if song.base_dir is not None else Path(".")
+                src = base / t.serum if (base / t.serum).is_file() else find_preset(t.serum)
+                au = write_aupreset(src, out_dir / "presets" / f"{safe_name(t.name)}.aupreset", t.serum_params or None)
+                say(f"Serum 2 on {t.name} ({Path(t.serum).stem})")
+                if bridge.reset_strip(strip):
+                    info.pop("patch_fx", None)
+                else:
+                    rep.warnings.append(f"{t.name}: the role's Logic patch could not be cleared; its inserts stay in front of your effects")
+                strip = strip_of(t.name)
+                bridge.load_instrument(strip, "Serum 2")
+                strip = strip_of(t.name)
+                shown = bridge.load_setting(strip, au)
+                loaded = f"Serum 2 '{shown}' (live: MIDI on the track, patch from {au.name})"
+                info["instrument"] = loaded
+            except (LogicError, OSError, RuntimeError, FileNotFoundError, ValueError) as err:
+                rep.warnings.append(f"{t.name}: live Serum not set up ({err}); the role's patch plays the notes — push without --serum-live for the rendered part")
         if load_instruments and t.instrument and not t.sample and not t.serum:
             for q in t.instrument:
                 try:
@@ -177,7 +198,7 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
                 rep.warnings.append(f"{t.name}: sample part not placed ({err})")
     # Serum tracks: the part as Serum plays it (rendered offline through the plug-in, at the song's tempo, with any
     # filter/volume automation baked in, as for Live) on an audio track of its own, from bar 1
-    serum_tracks = [t for t in song.tracks if t.serum]
+    serum_tracks = [t for t in song.tracks if t.serum and not serum_live]
     if serum_tracks:
         from ..live.client import _baked_stem
         from ..serum import track_stem
@@ -200,7 +221,7 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
                 rep.notes += sum(len(c.notes) for c in mine)
             except (LogicError, OSError, RuntimeError, FileNotFoundError, ValueError) as err:
                 rep.warnings.append(f"{t.name}: Serum stem not placed ({err})")
-    rendered = [t for t in song.tracks if (t.serum or t.sample) and not t.audio]
+    rendered = [t for t in song.tracks if ((t.serum and not serum_live) or t.sample) and not t.audio]
     if rendered:
         if any(t.name in index for t in rendered):
             try:
@@ -251,7 +272,7 @@ def push_song(song: Song, bridge: LogicBridge, replace: bool = False, load_instr
         chain = [dict(e) for e in t.effects]
         if sidechain and t.sidechain and kick and not any(e.get("sidechain") == kick or e["device"].lower() == "kickstart 2" for e in chain):
             chain.append(kickstart_device(song, kick) if t.sidechain == "kickstart" else dict(LOGIC_SIDECHAIN, sidechain=kick))
-        if t.name in filtered and not as_audio(t) and not any(e["device"].lower() == "autofilter" for e in chain):
+        if t.name in filtered and not as_audio(t, serum_live) and not any(e["device"].lower() == "autofilter" for e in chain):
             chain.append({"device": "AutoFilter", "params": {}})          # the device the filter automation rides on
         if not chain:
             continue
